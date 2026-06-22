@@ -746,69 +746,70 @@ export default function App() {
               </button>
             </div>
           )}
-          <button
-            type="button"
-            disabled={!speechSupported}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.currentTarget.setPointerCapture(event.pointerId);
-              startVoiceInput();
-            }}
-            onPointerUp={(event) => {
-              event.preventDefault();
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                event.currentTarget.releasePointerCapture(event.pointerId);
-              }
-              stopVoiceInput();
-            }}
-            onPointerCancel={stopVoiceInput}
-            onLostPointerCapture={stopVoiceInput}
-            onKeyDown={(event) => {
-              if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+          <div className="flex justify-center py-1">
+            <button
+              type="button"
+              disabled={!speechSupported}
+              draggable={false}
+              onPointerDown={(event) => {
                 event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
                 startVoiceInput();
-              }
-            }}
-            onKeyUp={(event) => {
-              if (event.key === " " || event.key === "Enter") {
+              }}
+              onPointerUp={(event) => {
                 event.preventDefault();
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
                 stopVoiceInput();
-              }
-            }}
-            onContextMenu={(event) => event.preventDefault()}
-            aria-label="按住说话，松开自动记录"
-            className="w-full rounded-2xl flex items-center justify-center gap-2.5 transition-all active:scale-[0.98]"
-            style={{
-              height: 84,
-              background: isListening ? "#fee2e2" : speechSupported ? "#d97706" : "#ede9e1",
-              color: isListening ? "#dc2626" : speechSupported ? "#ffffff" : "#b5b0a8",
-              boxShadow: isListening
-                ? "0 0 0 6px rgba(220,38,38,0.14)"
-                : speechSupported
-                  ? "0 6px 18px rgba(217,119,6,0.3)"
-                  : "none",
-              touchAction: "none",
-              userSelect: "none",
-            }}
-          >
-            <Mic size={28} />
-            <span className="text-base font-medium">
-              {isListening
-                ? "正在录音…松开记录"
-                : voiceBusy > 0
-                  ? "识别并记录中…"
+              }}
+              onPointerCancel={stopVoiceInput}
+              onLostPointerCapture={stopVoiceInput}
+              onKeyDown={(event) => {
+                if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+                  event.preventDefault();
+                  startVoiceInput();
+                }
+              }}
+              onKeyUp={(event) => {
+                if (event.key === " " || event.key === "Enter") {
+                  event.preventDefault();
+                  stopVoiceInput();
+                }
+              }}
+              onContextMenu={(event) => event.preventDefault()}
+              aria-label="按住说话，松开自动记录"
+              className="rounded-full flex items-center justify-center transition-transform active:scale-95"
+              style={{
+                width: 88,
+                height: 88,
+                background: isListening ? "#fee2e2" : speechSupported ? "#d97706" : "#ede9e1",
+                color: isListening ? "#dc2626" : speechSupported ? "#ffffff" : "#b5b0a8",
+                boxShadow: isListening
+                  ? "0 0 0 8px rgba(220,38,38,0.12)"
                   : speechSupported
-                    ? "按住说话"
-                    : "录音需 HTTPS 环境"}
-            </span>
-          </button>
-          <p className="text-[10px] text-center mt-2" style={{ color: "#b5b0a8" }}>
+                    ? "0 8px 22px rgba(217,119,6,0.32)"
+                    : "none",
+                touchAction: "none",
+                userSelect: "none",
+                WebkitUserSelect: "none",
+                WebkitTouchCallout: "none",
+                WebkitTapHighlightColor: "transparent",
+              }}
+            >
+              <Mic size={34} />
+            </button>
+          </div>
+          <p
+            className="text-[10px] text-center mt-2"
+            style={{ color: "#b5b0a8", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
+          >
             {isListening
               ? "松开即自动记录"
               : voiceBusy > 0
                 ? "可继续按住说下一条"
                 : speechSupported
-                  ? "按住按钮说话 · 松开直接记录 · 记录后可撤销"
+                  ? "按住说话 · 松开直接记录 · 记录后可撤销"
                   : "录音需 HTTPS；可用手机键盘上的 🎤"}
           </p>
         </div>
