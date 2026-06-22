@@ -618,12 +618,11 @@ export default function App() {
             {me && (
               <button
                 onClick={() => { if (window.confirm("退出当前账号？")) handleLogout(); }}
-                title="点击退出 / 切换账号"
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-full transition-all"
+                title="退出 / 切换账号"
+                className="flex items-center justify-center w-8 h-8 rounded-full transition-all"
                 style={{ background: "#ede9e1", color: "#8a8680" }}
               >
-                <span className="text-[11px] font-medium" style={{ color: "#6b665f" }}>{me}</span>
-                <LogOut size={11} />
+                <LogOut size={13} />
               </button>
             )}
             <button
