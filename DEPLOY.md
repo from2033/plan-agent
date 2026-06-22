@@ -24,7 +24,7 @@ npm run build      # 生成 dist/
 
 ## 二、部署后端
 
-1. 服务器装 **Node 20**。
+1. 服务器装 **Node 22.5+**（后端用到内置 `node:sqlite`，Node 20 会报 `ERR_UNKNOWN_BUILTIN_MODULE`）。
 2. 拷 [server/](server/) 到服务器，进目录执行：
    ```bash
    npm ci
@@ -87,6 +87,7 @@ your-domain.com {
 
 ## 六、更新
 
+- **一键部署**：在服务器仓库根目录执行 `.\deploy.ps1`（拉代码 → 构建前后端 → 重启服务 → 健康检查）。
 - **改前端**：重新 `npm run build`，覆盖 `dist/`。已配 `registerType: 'autoUpdate'`，下次打开自动更新。
 - **改后端**：`npm run build` 后 `nssm restart PersonalAssistant`。
 - **数据**：都存在 `server/data.db`，记得纳入备份。
