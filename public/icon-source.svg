@@ -1,0 +1,15 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <!-- sparkle / assistant glyph -->
+  <g fill="#ffffff">
+    <path d="M512 232c14 0 26 9 30 22l36 116a64 64 0 0 0 42 42l116 36c13 4 22 16 22 30s-9 26-22 30l-116 36a64 64 0 0 0-42 42l-36 116c-4 13-16 22-30 22s-26-9-30-22l-36-116a64 64 0 0 0-42-42l-116-36c-13-4-22-16-22-30s9-26 22-30l116-36a64 64 0 0 0 42-42l36-116c4-13 16-22 30-22z"/>
+    <circle cx="772" cy="276" r="40"/>
+    <circle cx="276" cy="748" r="30"/>
+  </g>
+</svg>

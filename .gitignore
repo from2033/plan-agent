@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+server/node_modules/
+
+# build output
+dist/
+server/dist/
+
+# local env (secrets — never commit)
+.env
+.env.local
+.env.*.local
+server/.env
+
+# database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# misc
+*.log
+.DS_Store
