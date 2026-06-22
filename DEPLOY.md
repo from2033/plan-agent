@@ -87,7 +87,7 @@ your-domain.com {
 
 ## 六、更新
 
-- **一键部署**：在服务器仓库根目录执行 `.\deploy.ps1`（拉代码 → 构建前后端 → 重启服务 → 健康检查）。
+- **一键部署**：在服务器执行 `powershell -ExecutionPolicy Bypass -File deploy.ps1`。脚本会克隆/更新到 `C:\pa-build` 构建前后端，停掉计划任务 `personal-assistant`，用 robocopy 覆盖 `C:\personal-assistant` 下的 `dist/`、`server/dist/`、`server/node_modules`（保留 `server/.env` 和 `data.db`），再启动任务并健康检查。当前线上：后端 `PORT=8001`，Caddy（`C:\caddy\Caddyfile`）反代到 `127.0.0.1:8001`，公开地址 `https://139-224-226-80.sslip.io/app/`。
 - **改前端**：重新 `npm run build`，覆盖 `dist/`。已配 `registerType: 'autoUpdate'`，下次打开自动更新。
 - **改后端**：`npm run build` 后 `nssm restart PersonalAssistant`。
 - **数据**：都存在 `server/data.db`，记得纳入备份。
