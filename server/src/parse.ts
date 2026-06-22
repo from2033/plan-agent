@@ -121,20 +121,26 @@ const EntrySchema = z.object({
 
 const ParseSchema = z.object({ entries: z.array(EntrySchema) });
 
-const SYSTEM_PROMPT = `你是一个中文「流水账」记录助手。用户会说一句或几句话，里面可能包含**多件事**，你要把它们拆成**一条或多条**结构化记录，放进 entries 数组。
+function buildSystemPrompt(nowStr: string): string {
+  return `你是一个中文「流水账」记录助手。用户会说一句或几句话，里面可能包含**多件事**，你要把它们拆成**一条或多条**结构化记录，放进 entries 数组。
+
+当前时间：${nowStr}。请据此判断每件事是否「已经发生」——综合时态（"了/过/在"=已发生或进行中；"待会/等下/下午/晚上/明天/准备/要去"=将来）和提到的时间点与当前时间的先后。
 
 拆分原则：
 - 一句话里若包含多件事（比如先吃饭、之后去唱歌），每件事各出一条。
 - 同一件事若**既有时间段、又有花费**，拆成两条：一条 activity（带 timeRange，记行程/时长）+ 一条 expense（带 amount，记账）。例如"12点到13点吃饭花了30"→ 一条 activity(饮食, 12:00–13:00) + 一条 expense(餐饮, 30)。
-- 只有花费没有时间 → 只出 expense；只有活动没有花费 → 只出 activity。
+- **还没发生**的、带时间的安排（提到的时间晚于当前时间，或用"下午/晚上/明天"等指将来且尚未到），要同时生成两条：一条 activity（行程，带 timeRange）+ 一条 memo（备忘，提醒自己去做，description 里带上时间，例如"下午2点开会"）。例如现在是早上6点、用户说"下午2点到3点开会"→ 一条 activity(工作, 14:00–15:00) + 一条 memo(备忘, "下午2点到3点开会")。
+- **已经发生**的活动（时间早于当前、或用过去时）只出 activity，不要 memo。
+- 只有花费没有时间 → 只出 expense。
 
 每条记录判断 type：
 - expense（消费）：涉及花钱、买东西、付款、充值。抽取 amount（数字，单位元）和 currency（统一写 "CNY"）。category 从这些里选最贴切的一个：${EXPENSE_CATS.join("、")}。
-- memo（备忘/提醒）：要去做、要记住、提醒类的待办事项（含"记得/提醒/别忘了/待办"等）。category 固定为 "备忘"。根据语气判断 priority：含"重要/紧急"→high，含"尽快"→medium，否则 low。
-- activity（活动/行程）：其它日常记录，既包括**已经做过的事**，也包括**有明确时间安排的计划**（如"15:00-16:00去唱歌"）。category 从这些里选最贴切的一个：${ACTIVITY_CATS.join("、")}。有时间段就填 timeRange（start/end 用 "HH:MM" 24 小时制）。
+- memo（备忘/提醒）：要去做、要记住、提醒类的待办，或上面规则里"还没发生的带时间安排"。category 固定为 "备忘"。根据语气判断 priority：含"重要/紧急"→high，含"尽快"→medium，否则 low。
+- activity（活动/行程）：日常记录，既包括**已经做过的事**，也包括**有明确时间安排的计划**（如"15:00-16:00去唱歌"）。category 从这些里选最贴切的一个：${ACTIVITY_CATS.join("、")}。有时间段就填 timeRange（start/end 用 "HH:MM" 24 小时制）。
 
-description：对这件事的简洁描述（去掉"记得/提醒/花了/在"等口头词，去掉金额和时间表达，但保留核心内容）。
+description：简洁描述（去掉"记得/提醒/花了/在"等口头词、去掉金额）。activity 和 expense 的 description 去掉时间表达；memo 的 description 可保留时间，方便提醒。
 category 必须从上面对应的列表里选，不要自创新分类。每条只输出与该 type 相关的字段。`;
+}
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic | null {
@@ -148,11 +154,16 @@ export async function parseEntry(raw: string): Promise<{ fields: ParsedFields[];
   const c = getClient();
   if (!c) return { fields: parseWithRegex(raw), via: "regex" };
 
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][now.getDay()];
+  const nowStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())} ${wd}`;
+
   try {
     const message = await c.beta.messages.parse({
       model: "claude-opus-4-8",
       max_tokens: 1024,
-      system: SYSTEM_PROMPT,
+      system: buildSystemPrompt(nowStr),
       output_format: betaZodOutputFormat(ParseSchema),
       messages: [{ role: "user", content: raw }],
     });

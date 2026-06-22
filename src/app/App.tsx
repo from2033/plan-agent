@@ -383,6 +383,10 @@ export default function App() {
   const [voiceBusy, setVoiceBusy] = useState(0);
   // 最近一次语音可能拆出的多条记录，用于“撤销刚才说的话”。
   const [undo, setUndo] = useState<{ ids: string[]; text: string } | null>(null);
+  // 松手后短暂的“已发送”动画。
+  const [justSent, setJustSent] = useState(false);
+  const sentKeyRef = useRef(0);
+  const sentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<WavRecorder | null>(null);
   const holdingToTalkRef = useRef(false);
@@ -500,6 +504,12 @@ export default function App() {
     recorderRef.current = null;
     setIsListening(false);
     if (!rec) return;
+    // 松手即时反馈“已发送”：动画 + 轻微震动（安卓有效，iOS 自动忽略），让人感觉完成了。
+    sentKeyRef.current += 1;
+    setJustSent(true);
+    if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
+    sentTimerRef.current = setTimeout(() => setJustSent(false), 1000);
+    navigator.vibrate?.(15);
     // 松开即开始“识别 + 入库”，全程后台进行，用户无需等待，可继续说下一条或去做别的事。
     setVoiceBusy((n) => n + 1);
     try {
@@ -773,7 +783,17 @@ export default function App() {
               </button>
             </div>
           )}
-          <div className="flex justify-center py-1">
+          <div className="relative flex justify-center py-1">
+            {justSent && (
+              <div
+                key={sentKeyRef.current}
+                className="sent-float absolute -top-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 rounded-full pointer-events-none"
+                style={{ background: "#16a34a", color: "#ffffff", zIndex: 10 }}
+              >
+                <CheckCircle size={13} />
+                <span className="text-[11px] font-medium">已发送</span>
+              </div>
+            )}
             <button
               type="button"
               disabled={!speechSupported}
@@ -806,14 +826,14 @@ export default function App() {
               }}
               onContextMenu={(event) => event.preventDefault()}
               aria-label="按住说话，松开自动记录"
-              className="rounded-full flex items-center justify-center transition-transform active:scale-95"
+              className={`rounded-full flex items-center justify-center transition-transform active:scale-95${isListening ? " mic-pulse" : ""}`}
               style={{
                 width: 88,
                 height: 88,
                 background: isListening ? "#fee2e2" : speechSupported ? "#d97706" : "#ede9e1",
                 color: isListening ? "#dc2626" : speechSupported ? "#ffffff" : "#b5b0a8",
                 boxShadow: isListening
-                  ? "0 0 0 8px rgba(220,38,38,0.12)"
+                  ? "none"
                   : speechSupported
                     ? "0 8px 22px rgba(217,119,6,0.32)"
                     : "none",
