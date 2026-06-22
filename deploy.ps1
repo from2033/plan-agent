@@ -27,19 +27,22 @@ function Run($cmd) {
   if ($LASTEXITCODE -ne 0) { throw "命令失败 ($LASTEXITCODE): $cmd" }
 }
 
-# 只有 package-lock.json 变化（或 node_modules 缺失）才 npm ci，否则跳过——
-# 这是把每次部署从几分钟降到几十秒的关键：依赖没变就别重装。
+# Run npm ci only when package-lock.json changed (or node_modules is missing); otherwise skip.
+# This is what cuts deploy time from minutes to seconds: don't reinstall when deps are unchanged.
+# NOTE: keep this script ASCII-only. Windows PowerShell 5.1 on a zh-CN box reads a UTF-8 (no BOM)
+# file as GBK, which can mangle CJK chars before a newline and break parsing.
 function Install-IfNeeded($dir) {
   $lock = Join-Path $dir 'package-lock.json'
   $nm = Join-Path $dir 'node_modules'
   $marker = Join-Path $nm '.deploy-lock-hash'
-  $h = if (Test-Path $lock) { (Get-FileHash $lock -Algorithm SHA1).Hash } else { '' }
+  $h = ''
+  if (Test-Path $lock) { $h = (Get-FileHash $lock -Algorithm SHA1).Hash }
   if ((Test-Path $nm) -and (Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $h)) {
-    Write-Host "    依赖未变，跳过 npm ci（$dir）" -ForegroundColor DarkGray
+    Write-Host "    deps unchanged, skipping npm ci ($dir)" -ForegroundColor DarkGray
     return
   }
   Push-Location $dir; Run 'npm ci'; Pop-Location
-  if ($h) { $h | Out-File -Encoding ascii $marker }
+  if ($h -ne '') { $h | Out-File -Encoding ascii $marker }
 }
 
 Write-Host '==> 检查 Node 版本' -ForegroundColor Cyan
