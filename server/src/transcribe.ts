@@ -18,7 +18,7 @@ export function nlsConfigured(): boolean {
 // ─── Token 缓存 ───────────────────────────────────────────────────────────────
 let cached: { id: string; expireAt: number } | null = null;
 
-async function getToken(): Promise<string> {
+export async function getNlsToken(): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   if (cached && now < cached.expireAt - 60) return cached.id;
 
@@ -39,7 +39,7 @@ async function getToken(): Promise<string> {
 // ─── 一句话识别 ───────────────────────────────────────────────────────────────
 // audio: 16kHz 单声道 16-bit PCM 的 WAV。
 export async function transcribe(audio: Buffer): Promise<string> {
-  const token = await getToken();
+  const token = await getNlsToken();
   const appkey = process.env.ALIYUN_NLS_APPKEY as string;
   const url =
     `https://nls-gateway-${REGION}.aliyuncs.com/stream/v1/asr` +

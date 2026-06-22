@@ -6,10 +6,12 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
-import { requireAuth } from "./auth.js";
+import { WebSocketServer } from "ws";
+import { requireAuth, resolveUserId } from "./auth.js";
 import { listEntries, insertEntry, setDone, deleteEntry } from "./db.js";
 import { parseEntry } from "./parse.js";
 import { transcribe, nlsConfigured } from "./transcribe.js";
+import { bridgeToNls } from "./asr.js";
 import type { Entry } from "./types.js";
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -135,8 +137,41 @@ if (existsSync(WEB_DIST)) {
   console.warn(`[static] 未找到前端构建目录: ${WEB_DIST}（仅提供 API）`);
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`后端已启动: http://localhost:${PORT}${BASE_PATH}/`);
   console.log(`前端目录: ${existsSync(WEB_DIST) ? WEB_DIST : "（未找到）"}`);
   console.log(`大模型解析: ${process.env.ANTHROPIC_API_KEY ? "已启用 (Claude)" : "未配置 (回退正则)"}`);
+});
+
+// ─── 实时语音识别 WebSocket（流式）：${API}/asr?token=<访问令牌> ───────────────
+const wss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, socket, head) => {
+  let pathname = "";
+  let token = "";
+  try {
+    const u = new URL(req.url || "", "http://localhost");
+    pathname = u.pathname;
+    token = u.searchParams.get("token") || "";
+  } catch {
+    socket.destroy();
+    return;
+  }
+  if (pathname !== `${API}/asr`) {
+    socket.destroy();
+    return;
+  }
+  if (!resolveUserId(token) || !nlsConfigured()) {
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    bridgeToNls(ws).catch((e) => {
+      console.error("[asr] bridge 失败:", e);
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+    });
+  });
 });

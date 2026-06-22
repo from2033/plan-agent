@@ -34,7 +34,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 // 在已配置的 token 里匹配，返回 userId，匹配不到返回 null。
-function resolveUser(token: string): string | null {
+export function resolveUserId(token: string): string | null {
   for (const [t, userId] of USERS) {
     if (safeEqual(token, t)) return userId;
   }
@@ -57,7 +57,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
   const header = req.header("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const userId = token ? resolveUser(token) : null;
+  const userId = token ? resolveUserId(token) : null;
   if (!userId) {
     res.status(401).json({ error: "未授权" });
     return;

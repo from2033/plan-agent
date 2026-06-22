@@ -49,6 +49,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+// 实时识别 WebSocket 地址（带访问令牌）。API_BASE 可能是相对 '/app/api' 或绝对 'http://host/api'。
+export function asrWsUrl(): string {
+  let base = API_BASE;
+  if (base.startsWith("/")) base = window.location.origin + base;
+  const u = new URL(base + "/asr");
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  u.searchParams.set("token", getToken());
+  return u.toString();
+}
+
 export function getMe(): Promise<{ user: string }> {
   return request<{ user: string }>("/me");
 }

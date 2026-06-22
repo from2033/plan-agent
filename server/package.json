@@ -11,10 +11,12 @@
   "dependencies": {
     "@alicloud/pop-core": "^1.7.13",
     "@anthropic-ai/sdk": "^0.70.0",
+    "@types/ws": "^8.18.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "undici": "^6.27.0",
+    "ws": "^8.21.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

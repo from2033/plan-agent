@@ -23,7 +23,7 @@ import {
   LogOut,
 } from "lucide-react";
 import * as api from "./api";
-import { WavRecorder, recordingSupported } from "./recorder";
+import { StreamingAsr, recordingSupported } from "./asrStream";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -391,10 +391,12 @@ export default function App() {
   const [undo, setUndo] = useState<{ ids: string[]; text: string } | null>(null);
   // 松手后短暂的“已发送”动画。
   const [justSent, setJustSent] = useState(false);
+  // 正在说话时的实时识别文字。
+  const [liveText, setLiveText] = useState("");
   const sentKeyRef = useRef(0);
   const sentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
-  const recorderRef = useRef<WavRecorder | null>(null);
+  const asrRef = useRef<StreamingAsr | null>(null);
   const holdingToTalkRef = useRef(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -482,23 +484,54 @@ export default function App() {
     await Promise.all(target.ids.map(handleDelete));
   }
 
+  // 最终识别文字 → 入库（在 onFinal 回调里调用）。
+  async function finalizeUtterance(text: string) {
+    setVoiceBusy((n) => Math.max(0, n - 1));
+    const t = text.trim();
+    if (!t) {
+      setError("没听清，请再说一次");
+      return;
+    }
+    try {
+      await pushEntry(t);
+    } catch (err) {
+      if (err instanceof api.UnauthorizedError) {
+        api.clearToken();
+        setTokenState("");
+      } else {
+        setError("记录失败，请重试");
+      }
+    }
+  }
+
   async function startVoiceInput() {
     if (!speechSupported) {
-      setError("此环境不支持录音（需 HTTPS）。可用 iPhone 键盘上的 🎤 语音输入。");
+      setError("此环境不支持语音（需 HTTPS）。可用 iPhone 键盘上的 🎤 语音输入。");
       return;
     }
     if (holdingToTalkRef.current) return;
     holdingToTalkRef.current = true;
     setError(null);
+    setLiveText("");
     try {
-      const rec = new WavRecorder();
-      await rec.start();
-      // 若用户在录音启动完成前已松手，则直接收尾
+      if (!asrRef.current) asrRef.current = new StreamingAsr();
+      await asrRef.current.start({
+        onPartial: (t) => setLiveText(t),
+        onFinal: (t) => {
+          setLiveText("");
+          finalizeUtterance(t);
+        },
+        onError: (m) => {
+          setLiveText("");
+          setVoiceBusy((n) => Math.max(0, n - 1));
+          setError(m);
+        },
+      });
+      // 若在连接/授权完成前已松手，则直接收尾
       if (!holdingToTalkRef.current) {
-        await rec.stop();
+        asrRef.current.stop();
         return;
       }
-      recorderRef.current = rec;
       setIsListening(true);
     } catch {
       holdingToTalkRef.current = false;
@@ -507,39 +540,20 @@ export default function App() {
     }
   }
 
-  async function stopVoiceInput() {
+  function stopVoiceInput() {
     if (!holdingToTalkRef.current) return;
     holdingToTalkRef.current = false;
-    const rec = recorderRef.current;
-    recorderRef.current = null;
     setIsListening(false);
-    if (!rec) return;
+    if (!asrRef.current) return;
     // 松手即时反馈“已发送”：动画 + 轻微震动（安卓有效，iOS 自动忽略），让人感觉完成了。
     sentKeyRef.current += 1;
     setJustSent(true);
     if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
     sentTimerRef.current = setTimeout(() => setJustSent(false), 2400);
     navigator.vibrate?.(15);
-    // 松开即开始“识别 + 入库”，全程后台进行，用户无需等待，可继续说下一条或去做别的事。
+    // 通知后端停止；最终结果通过 onFinal 回调入库（voiceBusy 在 finalize/onError 里减回）。
     setVoiceBusy((n) => n + 1);
-    try {
-      const wav = await rec.stop();
-      const text = await api.transcribe(wav);
-      if (text) {
-        await pushEntry(text);
-      } else {
-        setError("没听清，请再说一次");
-      }
-    } catch (err) {
-      if (err instanceof api.UnauthorizedError) {
-        api.clearToken();
-        setTokenState("");
-      } else {
-        setError("语音识别失败，请重试");
-      }
-    } finally {
-      setVoiceBusy((n) => n - 1);
-    }
+    asrRef.current.stop();
   }
 
   async function handleDelete(id: string) {
@@ -568,6 +582,8 @@ export default function App() {
 
   // 退出登录 / 切换账号。
   function handleLogout() {
+    asrRef.current?.dispose().catch(() => {});
+    asrRef.current = null;
     api.clearToken();
     setTokenState("");
     setMe("");
@@ -780,6 +796,15 @@ export default function App() {
           className="px-4 pb-5 pt-2"
           style={{ flexShrink: 0, borderTop: "1px solid rgba(0,0,0,0.06)" }}
         >
+          {/* 实时识别的文字（边说边出） */}
+          {isListening && (
+            <div
+              className="rounded-xl px-3 py-2 mb-2 text-sm min-h-[2.4rem] flex items-center"
+              style={{ background: "#fff", border: "1px solid rgba(0,0,0,0.09)", color: liveText ? "#1a1a1e" : "#b5b0a8" }}
+            >
+              {liveText || "正在听…"}
+            </div>
+          )}
           {/* 撤销刚才说过的话 */}
           {undo && (
             <div
@@ -865,12 +890,12 @@ export default function App() {
             style={{ color: "#b5b0a8", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
           >
             {isListening
-              ? "松开即自动记录"
+              ? "边说边出字 · 松开即记录"
               : voiceBusy > 0
-                ? "可继续按住说下一条"
+                ? "正在记录…可继续按住说下一条"
                 : speechSupported
                   ? "按住说话 · 松开直接记录 · 记录后可撤销"
-                  : "录音需 HTTPS；可用手机键盘上的 🎤"}
+                  : "语音需 HTTPS；可用手机键盘上的 🎤"}
           </p>
         </div>
       </div>
