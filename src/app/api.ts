@@ -3,7 +3,7 @@
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) || "/api";
 const TOKEN_KEY = "pa_access_token";
 
-export type EntryType = "activity" | "expense" | "memo";
+export type EntryType = "activity" | "expense" | "memo" | "wish";
 
 export interface Entry {
   id: string;

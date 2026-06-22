@@ -27,7 +27,7 @@ import { WavRecorder, recordingSupported } from "./recorder";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type EntryType = "activity" | "expense" | "memo";
+type EntryType = "activity" | "expense" | "memo" | "wish";
 
 interface Entry {
   id: string;
@@ -44,7 +44,7 @@ interface Entry {
   timestamp: Date;
 }
 
-type Tab = "today" | "ledger" | "memo";
+type Tab = "today" | "ledger" | "memo" | "wish";
 
 interface SpeechRecognitionResultEventLike {
   resultIndex: number;
@@ -100,6 +100,7 @@ function CategoryIcon({ cat, size = 14 }: { cat: string; size?: number }) {
   if (cat === "休息") return <Coffee size={size} />;
   if (cat === "生活") return <Home size={size} />;
   if (cat === "备忘") return <AlertCircle size={size} />;
+  if (cat === "心愿") return <Sparkles size={size} />;
   return <Star size={size} />;
 }
 
@@ -118,6 +119,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   娱乐: "#9333ea",
   健康: "#15803d",
   备忘: "#b45309",
+  心愿: "#9333ea",
   其他: "#64748b",
 };
 
@@ -245,7 +247,11 @@ function EntryCard({ entry, onDelete, onToggleDone }: {
           >
             {entry.type === "memo" && (
               <button
-                onClick={() => onToggleDone?.(entry.id)}
+                onClick={() => {
+                  // 标记完成时确认；取消完成不确认。
+                  if (!entry.done && !window.confirm("标记为已完成？")) return;
+                  onToggleDone?.(entry.id);
+                }}
                 className="p-1 rounded-md transition-colors"
                 style={{ color: entry.done ? "#16a34a" : "#8a8680" }}
               >
@@ -253,7 +259,7 @@ function EntryCard({ entry, onDelete, onToggleDone }: {
               </button>
             )}
             <button
-              onClick={() => onDelete(entry.id)}
+              onClick={() => { if (window.confirm("确定删除这条记录？")) onDelete(entry.id); }}
               className="p-1 rounded-md transition-colors"
               style={{ color: "#8a8680" }}
             >
@@ -437,6 +443,10 @@ export default function App() {
   const activityEntries = todayEntries.filter(e => e.type === "activity");
   const expenseEntries = todayEntries.filter(e => e.type === "expense");
   const memoEntries = todayEntries.filter(e => e.type === "memo");
+  // 心愿不限于今天，是长期清单，按最近添加排序。
+  const wishEntries = entries
+    .filter(e => e.type === "wish")
+    .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
   // 把一句语音文本提交到后端并入库（后端可能拆成多条），弹出“撤销”浮条。
   async function pushEntry(text: string) {
@@ -573,7 +583,8 @@ export default function App() {
 
   const tabEntries = tab === "today" ? activityEntries
     : tab === "ledger" ? expenseEntries
-    : memoEntries;
+    : tab === "memo" ? memoEntries
+    : wishEntries;
 
   return (
     <div
@@ -655,6 +666,7 @@ export default function App() {
             { key: "today" as Tab, label: "行程", icon: <Clock size={11} />, count: activityEntries.length },
             { key: "ledger" as Tab, label: "账单", icon: <CreditCard size={11} />, count: expenseEntries.length },
             { key: "memo" as Tab, label: "备忘", icon: <BookOpen size={11} />, count: memoEntries.filter(m => !m.done).length },
+            { key: "wish" as Tab, label: "心愿", icon: <Star size={11} />, count: wishEntries.length },
           ].map(({ key, label, icon, count }) => (
             <button
               key={key}
@@ -697,10 +709,11 @@ export default function App() {
                   <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "#ede9e1" }}>
                     {tab === "today" ? <Clock size={18} style={{ color: "#8a8680" }} />
                       : tab === "ledger" ? <CreditCard size={18} style={{ color: "#8a8680" }} />
-                      : <BookOpen size={18} style={{ color: "#8a8680" }} />}
+                      : tab === "memo" ? <BookOpen size={18} style={{ color: "#8a8680" }} />
+                      : <Star size={18} style={{ color: "#8a8680" }} />}
                   </div>
                   <p className="text-xs" style={{ color: "#8a8680" }}>
-                    {tab === "today" ? "还没有行程记录" : tab === "ledger" ? "今天还没有消费记录" : "没有待办备忘"}
+                    {tab === "today" ? "还没有行程记录" : tab === "ledger" ? "今天还没有消费记录" : tab === "memo" ? "没有待办备忘" : "还没有心愿，说说想做的事吧"}
                   </p>
                 </div>
               ) : (
@@ -791,7 +804,7 @@ export default function App() {
                 style={{ background: "#16a34a", color: "#ffffff", zIndex: 10 }}
               >
                 <CheckCircle size={13} />
-                <span className="text-[11px] font-medium">已发送</span>
+                <span className="text-[11px] font-medium">已发送，记录中…</span>
               </div>
             )}
             <button
@@ -828,8 +841,8 @@ export default function App() {
               aria-label="按住说话，松开自动记录"
               className={`rounded-full flex items-center justify-center transition-transform active:scale-95${isListening ? " mic-pulse" : ""}`}
               style={{
-                width: 88,
-                height: 88,
+                width: 108,
+                height: 108,
                 background: isListening ? "#fee2e2" : speechSupported ? "#d97706" : "#ede9e1",
                 color: isListening ? "#dc2626" : speechSupported ? "#ffffff" : "#b5b0a8",
                 boxShadow: isListening
@@ -844,7 +857,7 @@ export default function App() {
                 WebkitTapHighlightColor: "transparent",
               }}
             >
-              <Mic size={34} />
+              <Mic size={42} />
             </button>
           </div>
           <p

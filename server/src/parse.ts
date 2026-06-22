@@ -7,6 +7,7 @@ import type { ParsedFields } from "./types.js";
 
 const EXPENSE_KEYWORDS = /花了|花|消费了|消费|买了|买|付了|付|充值|转账|打车|吃饭|喝|点了/;
 const MEMO_KEYWORDS = /记得|提醒|备忘|别忘了|记一下|记住|要|待办|TODO|todo/;
+const WISH_KEYWORDS = /找个时间|找时间|有空|抽空|以后想|将来想|总有一天|哪天|有机会|梦想|心愿/;
 const TIME_RANGE = /(\d{1,2})[点:时](?:(\d{1,2})分?)?\s*[到至~～]\s*(\d{1,2})[点:时](?:(\d{1,2})分?)?/;
 const AMOUNT = /([\d.]+)\s*[元块钱rmb￥]/i;
 
@@ -83,6 +84,10 @@ export function parseWithRegex(raw: string): ParsedFields[] {
 
   if (out.length) return out;
 
+  if (WISH_KEYWORDS.test(text)) {
+    return [{ type: "wish", description: cleanDescription(text), category: "心愿" }];
+  }
+
   if (MEMO_KEYWORDS.test(text)) {
     const priority = text.includes("重要") || text.includes("紧急")
       ? "high"
@@ -110,7 +115,7 @@ const EXPENSE_CATS = ["餐饮", "交通", "购物", "娱乐", "生活", "健康"
 const ACTIVITY_CATS = ["工作", "运动", "饮食", "休息", "学习", "生活", "社交", "日常"] as const;
 
 const EntrySchema = z.object({
-  type: z.enum(["activity", "expense", "memo"]),
+  type: z.enum(["activity", "expense", "memo", "wish"]),
   description: z.string(),
   category: z.string(),
   amount: z.number().optional(),
@@ -138,6 +143,7 @@ function buildSystemPrompt(nowStr: string): string {
 每条记录判断 type：
 - expense（消费）：涉及花钱、买东西、付款、充值。抽取 amount（数字，单位元）和 currency（统一写 "CNY"）。category 从这些里选最贴切的一个：${EXPENSE_CATS.join("、")}。
 - memo（备忘/提醒）：明确的待办/提醒事项（含"记得/提醒/别忘了/待办"等），或上面规则里"还没发生的带时间安排"的提醒副本。category 固定为 "备忘"。根据语气判断 priority：含"重要/紧急"→high，含"尽快"→medium，否则 low。
+- wish（心愿/期待）：**没有具体时间**的将来愿望、打算、想做的事（如"找个时间去丽江旅游"、"有空想学钢琴"、"以后想买房"、"总有一天去看极光"）。和 memo 的区别：memo 是近期要落实的待办，wish 是没排期的长期心愿。category 固定为 "心愿"。
 - activity（活动/行程）：日常记录，既包括**已经做过的事**，也包括**有明确时间安排的计划**（如"15:00-16:00去唱歌"）。category 从这些里选最贴切的一个：${ACTIVITY_CATS.join("、")}。有时间段就填 timeRange（start/end 用 "HH:MM" 24 小时制）。
 
 description：简洁描述（去掉"记得/提醒/花了/在"等口头词、去掉金额）。activity 和 expense 的 description 去掉时间表达；memo 的 description 可保留时间，方便提醒。

@@ -1,6 +1,6 @@
 // 与前端 src/app/App.tsx 的 Entry 接口保持一致（timestamp 在 API 上用 ISO 字符串）。
 
-export type EntryType = "activity" | "expense" | "memo";
+export type EntryType = "activity" | "expense" | "memo" | "wish";
 export type Priority = "low" | "medium" | "high";
 
 export interface Entry {
