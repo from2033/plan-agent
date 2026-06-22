@@ -57,8 +57,13 @@ app.post(
 // 以下 API 都需要鉴权
 app.use(API, requireAuth);
 
-app.get(`${API}/entries`, (_req, res) => {
-  res.json(listEntries());
+// 当前登录用户（用于前端显示是谁、以及校验 token 是否有效）。
+app.get(`${API}/me`, (req, res) => {
+  res.json({ user: req.userId });
+});
+
+app.get(`${API}/entries`, (req, res) => {
+  res.json(listEntries(req.userId!));
 });
 
 app.post(`${API}/entries`, async (req, res) => {
@@ -79,7 +84,7 @@ app.post(`${API}/entries`, async (req, res) => {
       timestamp: new Date(now.getTime() + i).toISOString(),
       ...f,
     }));
-    for (const entry of entries) insertEntry(entry);
+    for (const entry of entries) insertEntry(entry, req.userId!);
     res.status(201).json({ entries, via });
   } catch (err) {
     console.error("[POST entries] 失败:", err);
@@ -92,7 +97,7 @@ app.patch(`${API}/entries/:id`, (req, res) => {
     res.status(400).json({ error: "done 必须是布尔值" });
     return;
   }
-  const updated = setDone(req.params.id, req.body.done);
+  const updated = setDone(req.params.id, req.body.done, req.userId!);
   if (!updated) {
     res.status(404).json({ error: "记录不存在" });
     return;
@@ -101,7 +106,7 @@ app.patch(`${API}/entries/:id`, (req, res) => {
 });
 
 app.delete(`${API}/entries/:id`, (req, res) => {
-  const ok = deleteEntry(req.params.id);
+  const ok = deleteEntry(req.params.id, req.userId!);
   if (!ok) {
     res.status(404).json({ error: "记录不存在" });
     return;

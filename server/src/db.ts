@@ -20,10 +20,21 @@ db.exec(`
     currency    TEXT,
     priority    TEXT,
     done        INTEGER,
-    timestamp   TEXT NOT NULL
+    timestamp   TEXT NOT NULL,
+    user_id     TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_entries_ts ON entries(timestamp);
 `);
+
+// 迁移：老库没有 user_id 列时补上，并把历史数据归到主用户（你）。
+const hasUserId = (db.prepare("PRAGMA table_info(entries)").all() as unknown as { name: string }[])
+  .some((c) => c.name === "user_id");
+if (!hasUserId) {
+  db.exec("ALTER TABLE entries ADD COLUMN user_id TEXT");
+}
+const PRIMARY_USER = process.env.PRIMARY_USER || "我";
+db.prepare("UPDATE entries SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(PRIMARY_USER);
+db.exec("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)");
 
 interface Row {
   id: string;
@@ -59,22 +70,23 @@ function rowToEntry(r: Row): Entry {
   return entry;
 }
 
-const stmtAll = db.prepare("SELECT * FROM entries ORDER BY timestamp ASC");
+// 所有读写都按 user_id 过滤，保证用户之间数据隔离。
+const stmtAll = db.prepare("SELECT * FROM entries WHERE user_id = ? ORDER BY timestamp ASC");
 const stmtInsert = db.prepare(`
   INSERT INTO entries
-    (id, type, raw, time, time_start, time_end, description, category, amount, currency, priority, done, timestamp)
+    (id, type, raw, time, time_start, time_end, description, category, amount, currency, priority, done, timestamp, user_id)
   VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
-const stmtSetDone = db.prepare("UPDATE entries SET done = ? WHERE id = ?");
-const stmtDelete = db.prepare("DELETE FROM entries WHERE id = ?");
-const stmtGet = db.prepare("SELECT * FROM entries WHERE id = ?");
+const stmtSetDone = db.prepare("UPDATE entries SET done = ? WHERE id = ? AND user_id = ?");
+const stmtDelete = db.prepare("DELETE FROM entries WHERE id = ? AND user_id = ?");
+const stmtGet = db.prepare("SELECT * FROM entries WHERE id = ? AND user_id = ?");
 
-export function listEntries(): Entry[] {
-  return (stmtAll.all() as unknown as Row[]).map(rowToEntry);
+export function listEntries(userId: string): Entry[] {
+  return (stmtAll.all(userId) as unknown as Row[]).map(rowToEntry);
 }
 
-export function insertEntry(entry: Entry): Entry {
+export function insertEntry(entry: Entry, userId: string): Entry {
   stmtInsert.run(
     entry.id,
     entry.type,
@@ -89,17 +101,18 @@ export function insertEntry(entry: Entry): Entry {
     entry.priority ?? null,
     entry.done == null ? null : entry.done ? 1 : 0,
     entry.timestamp,
+    userId,
   );
   return entry;
 }
 
-export function setDone(id: string, done: boolean): Entry | null {
-  const res = stmtSetDone.run(done ? 1 : 0, id);
+export function setDone(id: string, done: boolean, userId: string): Entry | null {
+  const res = stmtSetDone.run(done ? 1 : 0, id, userId);
   if (Number(res.changes) === 0) return null;
-  const row = stmtGet.get(id) as unknown as Row | undefined;
+  const row = stmtGet.get(id, userId) as unknown as Row | undefined;
   return row ? rowToEntry(row) : null;
 }
 
-export function deleteEntry(id: string): boolean {
-  return Number(stmtDelete.run(id).changes) > 0;
+export function deleteEntry(id: string, userId: string): boolean {
+  return Number(stmtDelete.run(id, userId).changes) > 0;
 }

@@ -20,6 +20,7 @@ import {
   CheckCircle,
   Trash2,
   BarChart2,
+  LogOut,
 } from "lucide-react";
 import * as api from "./api";
 import { WavRecorder, recordingSupported } from "./recorder";
@@ -374,6 +375,7 @@ export default function App() {
   const [showSummary, setShowSummary] = useState(false);
   const [lastAdded, setLastAdded] = useState<string | null>(null);
   const [token, setTokenState] = useState<string>(api.getToken());
+  const [me, setMe] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
@@ -400,9 +402,10 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await api.getEntries();
+        const [data, meRes] = await Promise.all([api.getEntries(), api.getMe()]);
         if (!cancelled) {
           setEntries(data.map(toLocal));
+          setMe(meRes.user);
           setError(null);
         }
       } catch (err) {
@@ -543,6 +546,14 @@ export default function App() {
     }
   }
 
+  // 退出登录 / 切换账号。
+  function handleLogout() {
+    api.clearToken();
+    setTokenState("");
+    setMe("");
+    setEntries([]);
+  }
+
   // 未输入访问令牌时，先显示令牌录入界面。
   if (!token) {
     return <TokenGate onSubmit={(t) => { api.setToken(t); setTokenState(t); }} />;
@@ -603,17 +614,30 @@ export default function App() {
               {todayEntries.length} 条记录 · ¥{totalExpense} 花费
             </p>
           </div>
-          <button
-            onClick={() => setShowSummary(!showSummary)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all"
-            style={{
-              background: showSummary ? "#d97706" : "#ede9e1",
-              color: showSummary ? "#ffffff" : "#d97706",
-            }}
-          >
-            <Sparkles size={12} />
-            <span className="text-[11px] font-medium">日报</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {me && (
+              <button
+                onClick={() => { if (window.confirm("退出当前账号？")) handleLogout(); }}
+                title="点击退出 / 切换账号"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-full transition-all"
+                style={{ background: "#ede9e1", color: "#8a8680" }}
+              >
+                <span className="text-[11px] font-medium" style={{ color: "#6b665f" }}>{me}</span>
+                <LogOut size={11} />
+              </button>
+            )}
+            <button
+              onClick={() => setShowSummary(!showSummary)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all"
+              style={{
+                background: showSummary ? "#d97706" : "#ede9e1",
+                color: showSummary ? "#ffffff" : "#d97706",
+              }}
+            >
+              <Sparkles size={12} />
+              <span className="text-[11px] font-medium">日报</span>
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}

@@ -49,6 +49,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+export function getMe(): Promise<{ user: string }> {
+  return request<{ user: string }>("/me");
+}
+
 export function getEntries(): Promise<Entry[]> {
   return request<Entry[]>("/entries");
 }
