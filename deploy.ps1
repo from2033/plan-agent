@@ -27,6 +27,21 @@ function Run($cmd) {
   if ($LASTEXITCODE -ne 0) { throw "命令失败 ($LASTEXITCODE): $cmd" }
 }
 
+# 只有 package-lock.json 变化（或 node_modules 缺失）才 npm ci，否则跳过——
+# 这是把每次部署从几分钟降到几十秒的关键：依赖没变就别重装。
+function Install-IfNeeded($dir) {
+  $lock = Join-Path $dir 'package-lock.json'
+  $nm = Join-Path $dir 'node_modules'
+  $marker = Join-Path $nm '.deploy-lock-hash'
+  $h = if (Test-Path $lock) { (Get-FileHash $lock -Algorithm SHA1).Hash } else { '' }
+  if ((Test-Path $nm) -and (Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $h)) {
+    Write-Host "    依赖未变，跳过 npm ci（$dir）" -ForegroundColor DarkGray
+    return
+  }
+  Push-Location $dir; Run 'npm ci'; Pop-Location
+  if ($h) { $h | Out-File -Encoding ascii $marker }
+}
+
 Write-Host '==> 检查 Node 版本' -ForegroundColor Cyan
 if ([int](node -p "process.versions.node.split('.')[0]") -lt 22) {
   throw "需要 Node 22.5+（当前 $(node -v)）。后端依赖内置 node:sqlite。"
@@ -42,13 +57,13 @@ if (Test-Path "$BuildDir\.git") {
 }
 
 Write-Host '==> 构建前端 (dist/)' -ForegroundColor Cyan
+Install-IfNeeded $BuildDir
 Set-Location $BuildDir
-Run 'npm ci'
 Run 'npm run build'
 
 Write-Host '==> 构建后端 (server/dist/)' -ForegroundColor Cyan
+Install-IfNeeded "$BuildDir\server"
 Set-Location "$BuildDir\server"
-Run 'npm ci'
 Run 'npm run build'
 
 Write-Host '==> 停止后端任务' -ForegroundColor Cyan
