@@ -518,7 +518,7 @@ export default function App() {
     sentKeyRef.current += 1;
     setJustSent(true);
     if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
-    sentTimerRef.current = setTimeout(() => setJustSent(false), 1000);
+    sentTimerRef.current = setTimeout(() => setJustSent(false), 2400);
     navigator.vibrate?.(15);
     // 松开即开始“识别 + 入库”，全程后台进行，用户无需等待，可继续说下一条或去做别的事。
     setVoiceBusy((n) => n + 1);
@@ -800,11 +800,11 @@ export default function App() {
             {justSent && (
               <div
                 key={sentKeyRef.current}
-                className="sent-float absolute -top-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 rounded-full pointer-events-none"
-                style={{ background: "#16a34a", color: "#ffffff", zIndex: 10 }}
+                className="sent-float absolute -top-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 rounded-full pointer-events-none whitespace-nowrap"
+                style={{ background: "#16a34a", color: "#ffffff", zIndex: 10, boxShadow: "0 4px 14px rgba(22,163,74,0.4)" }}
               >
-                <CheckCircle size={13} />
-                <span className="text-[11px] font-medium">已发送，记录中…</span>
+                <CheckCircle size={15} />
+                <span className="text-[13px] font-medium">已发送，正在记录…</span>
               </div>
             )}
             <button

@@ -2,14 +2,14 @@
 @import './tailwind.css';
 @import './theme.css';
 
-/* 松手后“已发送”反馈：上浮+淡出 */
+/* 松手后“已发送”反馈：快速出现，稳定停留一会儿（方便看清），最后才淡出上浮 */
 @keyframes sentFloat {
   0%   { opacity: 0; transform: translateY(10px) scale(0.85); }
-  25%  { opacity: 1; transform: translateY(0) scale(1); }
-  70%  { opacity: 1; transform: translateY(-6px) scale(1); }
-  100% { opacity: 0; transform: translateY(-22px) scale(0.95); }
+  10%  { opacity: 1; transform: translateY(0) scale(1); }
+  85%  { opacity: 1; transform: translateY(-2px) scale(1); }
+  100% { opacity: 0; transform: translateY(-16px) scale(0.96); }
 }
-.sent-float { animation: sentFloat 1s ease-out forwards; }
+.sent-float { animation: sentFloat 2.4s ease-out forwards; }
 
 /* 录音时麦克风按钮的呼吸光圈 */
 @keyframes micPulse {
