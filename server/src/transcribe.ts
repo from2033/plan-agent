@@ -1,8 +1,13 @@
 // 阿里云智能语音交互（NLS）一句话识别。
 // 需要环境变量：ALIYUN_NLS_APPKEY、ALIYUN_AK_ID、ALIYUN_AK_SECRET，可选 NLS_REGION（默认 cn-shanghai）。
 import RPCClient from "@alicloud/pop-core";
+import { Agent } from "undici";
 
 const REGION = process.env.NLS_REGION || "cn-shanghai";
+
+// 阿里云 NLS 在国内，直连即可。proxy.ts 给全局 fetch 设了"经海外代理访问 Anthropic"
+// 的 dispatcher，会把阿里云（国内）请求也带进海外代理导致连接超时，所以这里单独用直连 Agent 绕开它。
+const directDispatcher = new Agent();
 
 export function nlsConfigured(): boolean {
   return Boolean(
@@ -46,7 +51,9 @@ export async function transcribe(audio: Buffer): Promise<string> {
     method: "POST",
     headers: { "X-NLS-Token": token, "Content-Type": "application/octet-stream" },
     body: new Uint8Array(audio),
-  });
+    // 绕开全局海外代理，直连阿里云。
+    dispatcher: directDispatcher,
+  } as RequestInit & { dispatcher: Agent });
   const data = (await resp.json()) as { status?: number; result?: string; message?: string };
   if (data.status !== 20000000) {
     throw new Error(`NLS 识别失败: status=${data.status} message=${data.message ?? ""}`);
