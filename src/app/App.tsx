@@ -379,8 +379,8 @@ export default function App() {
   const [speechSupported, setSpeechSupported] = useState(true);
   // 后台“识别+记录”的并发数（>0 表示有语音正在处理，用户无需等待）。
   const [voiceBusy, setVoiceBusy] = useState(0);
-  // 最近一条语音记录，用于“撤销刚才说的话”。
-  const [undo, setUndo] = useState<{ id: string; text: string } | null>(null);
+  // 最近一次语音可能拆出的多条记录，用于“撤销刚才说的话”。
+  const [undo, setUndo] = useState<{ ids: string[]; text: string } | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<WavRecorder | null>(null);
   const holdingToTalkRef = useRef(false);
@@ -431,34 +431,38 @@ export default function App() {
   const expenseEntries = todayEntries.filter(e => e.type === "expense");
   const memoEntries = todayEntries.filter(e => e.type === "memo");
 
-  // 把一条语音文本提交到后端并入库，弹出“撤销”浮条。
+  // 把一句语音文本提交到后端并入库（后端可能拆成多条），弹出“撤销”浮条。
   async function pushEntry(text: string) {
-    const created = toLocal(await api.addEntry(text));
-    setEntries(prev => [...prev, created]);
-    setLastAdded(created.id);
+    const created = (await api.addEntry(text)).map(toLocal);
+    if (!created.length) return [];
+    setEntries(prev => [...prev, ...created]);
+    setLastAdded(created[created.length - 1].id);
     setError(null);
     setTimeout(() => setLastAdded(null), 2000);
     setTimeout(() => {
       feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
     }, 100);
-    showUndo(created.id, created.description);
+    const label = created.length > 1
+      ? `${created.length} 条：${created.map(e => e.description).join("、")}`
+      : created[0].description;
+    showUndo(created.map(e => e.id), label);
     return created;
   }
 
   // 显示“撤销”浮条，几秒后自动消失。
-  function showUndo(id: string, text: string) {
+  function showUndo(ids: string[], text: string) {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    setUndo({ id, text });
+    setUndo({ ids, text });
     undoTimerRef.current = setTimeout(() => setUndo(null), 6000);
   }
 
-  // 撤销刚才那条语音记录（删除已入库的条目）。
+  // 撤销刚才那句话拆出的所有记录（删除已入库的条目）。
   async function handleUndoVoice() {
     const target = undo;
     if (!target) return;
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     setUndo(null);
-    await handleDelete(target.id);
+    await Promise.all(target.ids.map(handleDelete));
   }
 
   async function startVoiceInput() {
@@ -736,7 +740,7 @@ export default function App() {
               className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 mb-2"
               style={{ background: "#1a1a1e", color: "#f5f4f0" }}
             >
-              <span className="text-[11px] truncate flex-1">已记录：{undo.text}</span>
+              <span className="text-[11px] truncate flex-1">已记录 {undo.text}</span>
               <button
                 onClick={handleUndoVoice}
                 className="text-[11px] font-medium px-2 py-0.5 rounded-md flex-shrink-0"

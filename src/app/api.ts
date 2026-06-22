@@ -53,12 +53,12 @@ export function getEntries(): Promise<Entry[]> {
   return request<Entry[]>("/entries");
 }
 
-export async function addEntry(raw: string): Promise<Entry> {
-  const data = await request<{ entry: Entry; via: string }>("/entries", {
+export async function addEntry(raw: string): Promise<Entry[]> {
+  const data = await request<{ entries: Entry[]; via: string }>("/entries", {
     method: "POST",
     body: JSON.stringify({ raw }),
   });
-  return data.entry;
+  return data.entries;
 }
 
 export function toggleDone(id: string, done: boolean): Promise<Entry> {

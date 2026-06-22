@@ -71,15 +71,16 @@ app.post(`${API}/entries`, async (req, res) => {
     const { fields, via } = await parseEntry(raw);
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    const entry: Entry = {
+    // 一句话可能拆成多条；逐条入库。timestamp 加毫秒偏移，保证拆出的顺序稳定。
+    const entries: Entry[] = fields.map((f, i) => ({
       id: crypto.randomUUID(),
       raw,
       time,
-      timestamp: now.toISOString(),
-      ...fields,
-    };
-    insertEntry(entry);
-    res.status(201).json({ entry, via });
+      timestamp: new Date(now.getTime() + i).toISOString(),
+      ...f,
+    }));
+    for (const entry of entries) insertEntry(entry);
+    res.status(201).json({ entries, via });
   } catch (err) {
     console.error("[POST entries] 失败:", err);
     res.status(500).json({ error: "记录失败" });
