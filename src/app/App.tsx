@@ -4,7 +4,6 @@ import {
   CreditCard,
   BookOpen,
   Mic,
-  Send,
   ChevronRight,
   TrendingUp,
   Calendar,
@@ -371,12 +370,10 @@ function TokenGate({ onSubmit }: { onSubmit: (token: string) => void }) {
 
 export default function App() {
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [input, setInput] = useState("");
   const [tab, setTab] = useState<Tab>("today");
   const [showSummary, setShowSummary] = useState(false);
   const [lastAdded, setLastAdded] = useState<string | null>(null);
   const [token, setTokenState] = useState<string>(api.getToken());
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
@@ -384,7 +381,6 @@ export default function App() {
   const [voiceBusy, setVoiceBusy] = useState(0);
   // 最近一条语音记录，用于“撤销刚才说的话”。
   const [undo, setUndo] = useState<{ id: string; text: string } | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<WavRecorder | null>(null);
   const holdingToTalkRef = useRef(false);
@@ -435,8 +431,8 @@ export default function App() {
   const expenseEntries = todayEntries.filter(e => e.type === "expense");
   const memoEntries = todayEntries.filter(e => e.type === "memo");
 
-  // 提交一条文本到后端并入库；offerUndo 为 true 时弹出“撤销”浮条（语音用）。
-  async function pushEntry(text: string, offerUndo: boolean) {
+  // 把一条语音文本提交到后端并入库，弹出“撤销”浮条。
+  async function pushEntry(text: string) {
     const created = toLocal(await api.addEntry(text));
     setEntries(prev => [...prev, created]);
     setLastAdded(created.id);
@@ -445,7 +441,7 @@ export default function App() {
     setTimeout(() => {
       feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
     }, 100);
-    if (offerUndo) showUndo(created.id, created.description);
+    showUndo(created.id, created.description);
     return created;
   }
 
@@ -463,24 +459,6 @@ export default function App() {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     setUndo(null);
     await handleDelete(target.id);
-  }
-
-  async function handleSubmit() {
-    if (!input.trim() || submitting) return;
-    setSubmitting(true);
-    try {
-      await pushEntry(input.trim(), false);
-      setInput("");
-    } catch (err) {
-      if (err instanceof api.UnauthorizedError) {
-        api.clearToken();
-        setTokenState("");
-      } else {
-        setError("记录失败，请重试");
-      }
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   async function startVoiceInput() {
@@ -521,7 +499,7 @@ export default function App() {
       const wav = await rec.stop();
       const text = await api.transcribe(wav);
       if (text) {
-        await pushEntry(text, true);
+        await pushEntry(text);
       } else {
         setError("没听清，请再说一次");
       }
@@ -747,26 +725,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Hint chips */}
-        {!showSummary && (
-          <div className="px-5 pb-2 flex gap-1.5 overflow-x-auto" style={{ flexShrink: 0, scrollbarWidth: "none" }}>
-            {[
-              "9点到11点在开会",
-              "花了35块吃饭",
-              "记得明天交报告",
-            ].map((hint) => (
-              <button
-                key={hint}
-                onClick={() => setInput(hint)}
-                className="text-[10px] px-2.5 py-1 rounded-full flex-shrink-0 transition-all"
-                style={{ background: "#ede9e1", color: "#8a8680", border: "1px solid rgba(0,0,0,0.05)" }}
-              >
-                {hint}
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* Input area */}
         <div
           className="px-4 pb-5 pt-2"
@@ -788,97 +746,70 @@ export default function App() {
               </button>
             </div>
           )}
-          <div
-            className="flex items-end gap-2 rounded-2xl px-4 py-3"
-            style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.09)" }}
-          >
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSubmit();
-                }
-              }}
-              placeholder="告诉我你在做什么，花了多少，或者提醒事项…"
-              rows={1}
-              className="flex-1 bg-transparent text-sm resize-none outline-none leading-relaxed"
-              style={{
-                color: "#1a1a1e",
-                caretColor: "#d97706",
-                maxHeight: 80,
-                fontFamily: "'Inter', sans-serif",
-              }}
-            />
-            <button
-              type="button"
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                startVoiceInput();
-              }}
-              onPointerUp={(event) => {
-                event.preventDefault();
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                }
-                stopVoiceInput();
-              }}
-              onPointerCancel={stopVoiceInput}
-              onLostPointerCapture={stopVoiceInput}
-              onKeyDown={(event) => {
-                if ((event.key === " " || event.key === "Enter") && !event.repeat) {
-                  event.preventDefault();
-                  startVoiceInput();
-                }
-              }}
-              onKeyUp={(event) => {
-                if (event.key === " " || event.key === "Enter") {
-                  event.preventDefault();
-                  stopVoiceInput();
-                }
-              }}
-              onContextMenu={(event) => event.preventDefault()}
-              aria-label="按住说话，松开自动记录"
-              title={
-                speechSupported
-                  ? "按住说话，松开自动记录"
-                  : "当前浏览器不支持语音输入"
+          <button
+            type="button"
+            disabled={!speechSupported}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              startVoiceInput();
+            }}
+            onPointerUp={(event) => {
+              event.preventDefault();
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
               }
-              className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all active:scale-95"
-              style={{
-                background: isListening ? "#fee2e2" : "#d97706",
-                color: isListening ? "#dc2626" : speechSupported ? "#ffffff" : "#f3e3cf",
-                boxShadow: isListening
-                  ? "0 0 0 5px rgba(220,38,38,0.14)"
-                  : "0 4px 12px rgba(217,119,6,0.28)",
-                touchAction: "none",
-                userSelect: "none",
-              }}
-            >
-              <Mic size={24} />
-            </button>
-            {input.trim() && (
-              <button
-                onClick={handleSubmit}
-                aria-label="发送"
-                className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all active:scale-95"
-                style={{ background: "#ede9e1", color: "#6b665f" }}
-              >
-                <Send size={20} />
-              </button>
-            )}
-          </div>
+              stopVoiceInput();
+            }}
+            onPointerCancel={stopVoiceInput}
+            onLostPointerCapture={stopVoiceInput}
+            onKeyDown={(event) => {
+              if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+                event.preventDefault();
+                startVoiceInput();
+              }
+            }}
+            onKeyUp={(event) => {
+              if (event.key === " " || event.key === "Enter") {
+                event.preventDefault();
+                stopVoiceInput();
+              }
+            }}
+            onContextMenu={(event) => event.preventDefault()}
+            aria-label="按住说话，松开自动记录"
+            className="w-full rounded-2xl flex items-center justify-center gap-2.5 transition-all active:scale-[0.98]"
+            style={{
+              height: 84,
+              background: isListening ? "#fee2e2" : speechSupported ? "#d97706" : "#ede9e1",
+              color: isListening ? "#dc2626" : speechSupported ? "#ffffff" : "#b5b0a8",
+              boxShadow: isListening
+                ? "0 0 0 6px rgba(220,38,38,0.14)"
+                : speechSupported
+                  ? "0 6px 18px rgba(217,119,6,0.3)"
+                  : "none",
+              touchAction: "none",
+              userSelect: "none",
+            }}
+          >
+            <Mic size={28} />
+            <span className="text-base font-medium">
+              {isListening
+                ? "正在录音…松开记录"
+                : voiceBusy > 0
+                  ? "识别并记录中…"
+                  : speechSupported
+                    ? "按住说话"
+                    : "录音需 HTTPS 环境"}
+            </span>
+          </button>
           <p className="text-[10px] text-center mt-2" style={{ color: "#b5b0a8" }}>
             {isListening
-              ? "正在录音，松开自动记录"
+              ? "松开即自动记录"
               : voiceBusy > 0
-                ? "识别并记录中…可继续说下一条"
+                ? "可继续按住说下一条"
                 : speechSupported
-                  ? "按住麦克风说话 · 松开直接记录"
-                  : "录音需 HTTPS；可用键盘上的 🎤"}
+                  ? "按住按钮说话 · 松开直接记录 · 记录后可撤销"
+                  : "录音需 HTTPS；可用手机键盘上的 🎤"}
           </p>
         </div>
       </div>
