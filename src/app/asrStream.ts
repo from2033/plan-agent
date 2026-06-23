@@ -58,6 +58,11 @@ export class StreamingAsr {
   private sending = false;
   private settled = false;
 
+  // 本次识别是否已出结果/结束（final 可能在松手前就到达）。用于上层避免重复计数。
+  get isSettled(): boolean {
+    return this.settled;
+  }
+
   // 保温音频引擎：AudioContext + ScriptProcessor 常驻并连到 destination，让 iOS 音频会话
   // 保持激活，避免开关会话的提示音。不持有麦克风，所以此时没有橙色录音点。
   private async ensureEngine(): Promise<void> {

@@ -195,6 +195,60 @@ function generateSummary(entries: Entry[]): {
   return { highlights, improvements, suggestions, totalExpense, workHours };
 }
 
+// 月报：对当月全部记录做汇总（与日报一样在本地即时计算，非定时、非 AI）。
+function generateMonthlySummary(entries: Entry[]): {
+  highlights: string[];
+  improvements: string[];
+  suggestions: string[];
+  totalExpense: number;
+  recordDays: number;
+} {
+  const expenses = entries.filter(e => e.type === "expense");
+  const activities = entries.filter(e => e.type === "activity");
+  const memos = entries.filter(e => e.type === "memo");
+  const totalExpense = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+
+  // 有记录的天数、运动天数
+  const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const recordDays = new Set(entries.map(e => dayKey(e.timestamp))).size;
+  const exerciseDays = new Set(
+    activities.filter(a => a.category === "运动").map(a => dayKey(a.timestamp))
+  ).size;
+
+  // 消费分类排行
+  const byCat = expenses.reduce((acc, e) => {
+    acc[e.category] = (acc[e.category] || 0) + (e.amount || 0);
+    return acc;
+  }, {} as Record<string, number>);
+  const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+
+  const highlights: string[] = [];
+  const improvements: string[] = [];
+  const suggestions: string[] = [];
+
+  if (entries.length > 0) highlights.push(`本月共记录 ${entries.length} 条，覆盖 ${recordDays} 天`);
+  if (totalExpense > 0) {
+    const avg = recordDays ? Math.round(totalExpense / recordDays) : totalExpense;
+    highlights.push(`总花费 ¥${totalExpense}，有记录的日子日均约 ¥${avg}`);
+  }
+  if (exerciseDays > 0) highlights.push(`坚持运动 ${exerciseDays} 天，状态不错`);
+  if (topCats.length > 0) highlights.push(`花费最多在「${topCats[0][0]}」，合计 ¥${topCats[0][1]}`);
+  if (memos.some(m => m.done)) highlights.push(`完成了 ${memos.filter(m => m.done).length} 条备忘`);
+
+  if (exerciseDays < 8) improvements.push(`本月运动 ${exerciseDays} 天，偏少，下月争取多动动`);
+  if (totalExpense > 3000) improvements.push(`本月花费 ¥${totalExpense}，偏高，留意大额支出`);
+  const undone = memos.filter(m => !m.done);
+  if (undone.length > 0) improvements.push(`还有 ${undone.length} 条备忘没处理`);
+  if (recordDays > 0 && recordDays < 10) improvements.push(`本月只记了 ${recordDays} 天，坚持记录才看得清规律`);
+
+  suggestions.push("月初给自己定一个消费预算，月底回看是否守住");
+  if (exerciseDays < 12) suggestions.push("把运动排进固定时段，比如每周三次");
+  if (topCats.length > 1) suggestions.push(`下月可重点盯一下「${topCats[0][0]}」这块开销`);
+  suggestions.push("每月末花十分钟回顾，比每天零散看更有收获");
+
+  return { highlights, improvements, suggestions, totalExpense, recordDays };
+}
+
 // ─── Components ──────────────────────────────────────────────────────────────
 
 function EntryCard({ entry, onDelete, onToggleDone, showDate }: {
@@ -310,25 +364,150 @@ function StatPill({ label, value, color }: { label: string; value: string; color
   );
 }
 
-function SummaryPanel({ entries }: { entries: Entry[] }) {
-  const summary = generateSummary(entries);
+// AI 报告缓存（按记录签名缓存，避免每次切换/重开都重新调用 Claude）。
+const reportCache = new Map<string, api.Report>();
+
+function SummaryPanel({ dayEntries, monthEntries, selectedDate }: {
+  dayEntries: Entry[];
+  monthEntries: Entry[];
+  selectedDate: Date;
+}) {
+  const [mode, setMode] = useState<"day" | "month">("day");
   const [expanded, setExpanded] = useState<"highlights" | "improvements" | "suggestions" | null>("highlights");
+  const [aiReport, setAiReport] = useState<api.Report | null>(null);
+  // idle=没记录用本地 / loading=AI 生成中 / ok=用 AI / fallback=AI 不可用，用本地
+  const [status, setStatus] = useState<"idle" | "loading" | "ok" | "fallback">("idle");
+
+  const isDay = mode === "day";
+  const daySummary = generateSummary(dayEntries);
+  const monthSummary = generateMonthlySummary(monthEntries);
+  const local = isDay ? daySummary : monthSummary;
+  const monthLabel = `${selectedDate.getMonth() + 1}月`;
+  const relevant = isDay ? dayEntries : monthEntries;
+  // 记录签名：内容变了（增删/勾选完成）就重新生成。
+  const sig = `${mode}|${relevant.map((e) => e.id + (e.done ? "·" : "")).join(",")}`;
+
+  useEffect(() => {
+    if (relevant.length === 0) {
+      setAiReport(null);
+      setStatus("idle");
+      return;
+    }
+    if (reportCache.has(sig)) {
+      setAiReport(reportCache.get(sig)!);
+      setStatus("ok");
+      return;
+    }
+    let cancelled = false;
+    setStatus("loading");
+    const dateLabel = isDay
+      ? formatDate(selectedDate)
+      : `${selectedDate.getFullYear()}年${selectedDate.getMonth() + 1}月`;
+    const payload: api.ReportEntryInput[] = relevant.map((e) => ({
+      type: e.type,
+      category: e.category,
+      description: e.description,
+      amount: e.amount,
+      timeRange: e.timeRange,
+      done: e.done,
+    }));
+    api
+      .getSummary(mode, dateLabel, payload)
+      .then((r) => {
+        if (cancelled) return;
+        if (r && (r.highlights.length || r.improvements.length || r.suggestions.length)) {
+          reportCache.set(sig, r);
+          setAiReport(r);
+          setStatus("ok");
+        } else {
+          setStatus("fallback"); // 后端没配 LLM 等
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStatus("fallback");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
+
+  const useAi = status === "ok" && aiReport;
+  const src = useAi ? aiReport! : local;
+
+  const sections = isDay
+    ? [
+        { key: "highlights" as const, label: "✦ 今日亮点", items: src.highlights, color: "#16a34a" },
+        { key: "improvements" as const, label: "◈ 待改进", items: src.improvements, color: "#d97706" },
+        { key: "suggestions" as const, label: "→ 明日建议", items: src.suggestions, color: "#4f6ef7" },
+      ]
+    : [
+        { key: "highlights" as const, label: `✦ ${monthLabel}亮点`, items: src.highlights, color: "#16a34a" },
+        { key: "improvements" as const, label: "◈ 待改进", items: src.improvements, color: "#d97706" },
+        { key: "suggestions" as const, label: "→ 下月建议", items: src.suggestions, color: "#4f6ef7" },
+      ];
 
   return (
     <div className="space-y-3">
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-2">
-        <StatPill label="总花费" value={`¥${summary.totalExpense}`} color="#d97706" />
-        <StatPill label="工作时长" value={`${summary.workHours.toFixed(1)}h`} color="#4f6ef7" />
-        <StatPill label="记录条数" value={`${entries.length}条`} color="#16a34a" />
+      {/* 日报 / 月报 切换 */}
+      <div className="flex gap-1 p-1 rounded-full" style={{ background: "#ede9e1" }}>
+        {([["day", "日报"], ["month", "月报"]] as const).map(([m, label]) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className="flex-1 py-1.5 rounded-full text-[12px] font-medium transition-all"
+            style={{
+              background: mode === m ? "#d97706" : "transparent",
+              color: mode === m ? "#ffffff" : "#8a8680",
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {/* AI summary sections */}
-      {[
-        { key: "highlights" as const, label: "✦ 今日亮点", items: summary.highlights, color: "#16a34a" },
-        { key: "improvements" as const, label: "◈ 待改进", items: summary.improvements, color: "#d97706" },
-        { key: "suggestions" as const, label: "→ 明日建议", items: summary.suggestions, color: "#4f6ef7" },
-      ].map(({ key, label, items, color }) => (
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-2">
+        {isDay ? (
+          <>
+            <StatPill label="总花费" value={`¥${daySummary.totalExpense}`} color="#d97706" />
+            <StatPill label="工作时长" value={`${daySummary.workHours.toFixed(1)}h`} color="#4f6ef7" />
+            <StatPill label="记录条数" value={`${dayEntries.length}条`} color="#16a34a" />
+          </>
+        ) : (
+          <>
+            <StatPill label="月度花费" value={`¥${monthSummary.totalExpense}`} color="#d97706" />
+            <StatPill label="记录天数" value={`${monthSummary.recordDays}天`} color="#4f6ef7" />
+            <StatPill label="记录条数" value={`${monthEntries.length}条`} color="#16a34a" />
+          </>
+        )}
+      </div>
+
+      {/* 数据来源提示 */}
+      {status === "ok" && (
+        <p className="text-[10px] text-center" style={{ color: "#9b968d" }}>✨ 由 AI 根据你的记录生成</p>
+      )}
+      {status === "fallback" && (
+        <p className="text-[10px] text-center" style={{ color: "#9b968d" }}>AI 暂不可用，已按规则生成</p>
+      )}
+
+      {relevant.length === 0 && (
+        <p className="text-xs text-center py-4" style={{ color: "#8a8680" }}>
+          {isDay ? "这一天还没有足够的记录" : "本月还没有足够的记录"}
+        </p>
+      )}
+
+      {status === "loading" && (
+        <div
+          className="rounded-xl px-4 py-6 text-center text-xs"
+          style={{ border: "1px solid rgba(0,0,0,0.07)", background: "#ffffff", color: "#8a8680" }}
+        >
+          AI 正在阅读你的记录，生成{isDay ? "日报" : "月报"}…
+        </div>
+      )}
+
+      {/* summary sections */}
+      {status !== "loading" && relevant.length > 0 && sections.map(({ key, label, items, color }) => (
         <div
           key={key}
           className="rounded-xl overflow-hidden"
@@ -485,6 +664,12 @@ export default function App() {
   const activityEntries = dayEntries.filter(e => e.type === "activity");
   const expenseEntries = dayEntries.filter(e => e.type === "expense");
   const memoEntries = dayEntries.filter(e => e.type === "memo");
+  // 所选日期所在月份的全部记录（供月报用）。
+  const monthEntries = entries.filter(
+    e =>
+      e.timestamp.getFullYear() === selectedDate.getFullYear() &&
+      e.timestamp.getMonth() === selectedDate.getMonth()
+  );
   // 心愿不限于今天，是长期清单，按最近添加排序。
   const wishEntries = entries
     .filter(e => e.type === "wish")
@@ -604,7 +789,9 @@ export default function App() {
     sentTimerRef.current = setTimeout(() => setJustSent(false), 2400);
     navigator.vibrate?.(15);
     // 通知后端停止；最终结果通过 onFinal 回调入库（voiceBusy 在 finalize/onError 里减回）。
-    setVoiceBusy((n) => n + 1);
+    // 仅当本次识别还没结束时才计数：若 final 已在松手前到达（长句中途结算），
+    // 这条已入库且计数已减回，此处不能再加，否则“正在记录…”会永久卡住。
+    if (!asrRef.current.isSettled) setVoiceBusy((n) => n + 1);
     asrRef.current.stop();
   }
 
@@ -806,7 +993,7 @@ export default function App() {
           style={{ scrollbarWidth: "none" }}
         >
           {showSummary ? (
-            <SummaryPanel entries={dayEntries} />
+            <SummaryPanel dayEntries={dayEntries} monthEntries={monthEntries} selectedDate={selectedDate} />
           ) : (
             <>
               {tabEntries.length === 0 ? (

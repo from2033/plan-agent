@@ -86,6 +86,32 @@ export function deleteEntry(id: string): Promise<void> {
   return request<void>(`/entries/${id}`, { method: "DELETE" });
 }
 
+// AI 报告：传当天/当月记录，返回文字点评。后端未配置 LLM 时返回 null（前端回退本地文案）。
+export interface Report {
+  highlights: string[];
+  improvements: string[];
+  suggestions: string[];
+  via?: string;
+}
+export interface ReportEntryInput {
+  type: string;
+  category: string;
+  description: string;
+  amount?: number;
+  timeRange?: { start: string; end: string };
+  done?: boolean;
+}
+export async function getSummary(
+  scope: "day" | "month",
+  dateLabel: string,
+  entries: ReportEntryInput[],
+): Promise<Report | null> {
+  return request<Report | null>("/summary", {
+    method: "POST",
+    body: JSON.stringify({ scope, dateLabel, entries }),
+  });
+}
+
 // 上传录音（WAV）做语音识别，返回识别文本。
 export async function transcribe(audio: Blob): Promise<string> {
   const res = await fetch(`${API_BASE}/transcribe`, {

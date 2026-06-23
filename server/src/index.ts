@@ -10,6 +10,7 @@ import { WebSocketServer } from "ws";
 import { requireAuth, resolveUserId } from "./auth.js";
 import { listEntries, insertEntry, setDone, deleteEntry } from "./db.js";
 import { parseEntry } from "./parse.js";
+import { generateReport, type ReportEntry, type ReportScope } from "./summary.js";
 import { transcribe, nlsConfigured } from "./transcribe.js";
 import { bridgeToNls } from "./asr.js";
 import type { Entry } from "./types.js";
@@ -91,6 +92,25 @@ app.post(`${API}/entries`, async (req, res) => {
   } catch (err) {
     console.error("[POST entries] 失败:", err);
     res.status(500).json({ error: "记录失败" });
+  }
+});
+
+// AI 报告（日报/月报）：前端把当天/当月记录传上来，Claude 生成文字点评。
+// 失败或未配置 LLM 时返回 204，前端回退到本地规则文案。
+app.post(`${API}/summary`, async (req, res) => {
+  const scope: ReportScope = req.body?.scope === "month" ? "month" : "day";
+  const dateLabel = typeof req.body?.dateLabel === "string" ? req.body.dateLabel : "";
+  const entries: ReportEntry[] = Array.isArray(req.body?.entries) ? req.body.entries : [];
+  try {
+    const result = await generateReport(scope, dateLabel, entries);
+    if (!result) {
+      res.status(204).end();
+      return;
+    }
+    res.json({ ...result.report, via: result.via });
+  } catch (err) {
+    console.error("[summary] 生成失败:", err);
+    res.status(502).json({ error: "报告生成失败" });
   }
 });
 
