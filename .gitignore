@@ -4,7 +4,16 @@ server/node_modules/
 
 # build output
 dist/
+dist-native/
 server/dist/
+
+# Capacitor iOS — generated / build artifacts（源码 AppDelegate.swift、Info.plist、工程文件仍提交）
+ios/App/Pods/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/capacitor-cordova-ios-plugins/
+ios/DerivedData/
+**/*.xcuserstate
 
 # local env (secrets — never commit)
 .env

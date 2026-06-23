@@ -5,6 +5,7 @@ import {
   BookOpen,
   Mic,
   ChevronRight,
+  ChevronLeft,
   TrendingUp,
   Calendar,
   Sparkles,
@@ -85,6 +86,28 @@ function formatTime(d: Date): string {
 function formatDate(d: Date): string {
   const days = ["日", "一", "二", "三", "四", "五", "六"];
   return `${d.getMonth() + 1}月${d.getDate()}日 周${days[d.getDay()]}`;
+}
+
+function isSameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+// Date ↔ <input type="date"> 的 YYYY-MM-DD（按本地时区，避免 UTC 偏移串日期）。
+function toYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function fromYMD(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function addDays(d: Date, n: number): Date {
+  const r = new Date(d);
+  r.setDate(r.getDate() + n);
+  return r;
 }
 
 // ─── Category icons ──────────────────────────────────────────────────────────
@@ -174,10 +197,11 @@ function generateSummary(entries: Entry[]): {
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-function EntryCard({ entry, onDelete, onToggleDone }: {
+function EntryCard({ entry, onDelete, onToggleDone, showDate }: {
   entry: Entry;
   onDelete: (id: string) => void;
   onToggleDone?: (id: string) => void;
+  showDate?: boolean;
 }) {
   const color = CATEGORY_COLORS[entry.category] || "#64748b";
   const [hovering, setHovering] = useState(false);
@@ -240,6 +264,11 @@ function EntryCard({ entry, onDelete, onToggleDone }: {
 
         {/* Right side */}
         <div className="flex flex-col items-end gap-1 ml-1 flex-shrink-0">
+          {showDate && (
+            <span className="text-[10px] font-mono" style={{ color: "#b5b0a8" }}>
+              {entry.timestamp.getMonth() + 1}月{entry.timestamp.getDate()}日
+            </span>
+          )}
           <span className="text-[11px] font-mono" style={{ color: "#8a8680" }}>{entry.time}</span>
           <div
             className="flex gap-1 transition-opacity duration-150"
@@ -379,6 +408,8 @@ export default function App() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [tab, setTab] = useState<Tab>("today");
   const [showSummary, setShowSummary] = useState(false);
+  // 当前查看的日期（默认今天，可往前翻看历史）。心愿是长期清单，不受此限制。
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const [lastAdded, setLastAdded] = useState<string | null>(null);
   const [token, setTokenState] = useState<string>(api.getToken());
   const [me, setMe] = useState<string>("");
@@ -399,6 +430,16 @@ export default function App() {
   const asrRef = useRef<StreamingAsr | null>(null);
   const holdingToTalkRef = useRef(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 按下说话的起始时刻 + 是否因按太短而取消，用于过滤误触。
+  const pressStartRef = useRef(0);
+  const utteranceCanceledRef = useRef(false);
+
+  // 错误提示几秒后自动消失（也可手动点 ✕）。
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 4000);
+    return () => clearTimeout(t);
+  }, [error]);
 
   // 录音是否可用（需 HTTPS 安全环境 + 麦克风 API）。
   useEffect(() => {
@@ -435,16 +476,15 @@ export default function App() {
     };
   }, [token]);
 
-  const todayEntries = entries.filter(e => {
-    const d = e.timestamp;
-    return d.getDate() === today.getDate() &&
-      d.getMonth() === today.getMonth() &&
-      d.getFullYear() === today.getFullYear();
-  }).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+  const isViewingToday = isSameDay(selectedDate, today);
+  // 当前所选日期的记录（行程/账单/备忘按这天筛选）。
+  const dayEntries = entries
+    .filter(e => isSameDay(e.timestamp, selectedDate))
+    .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
-  const activityEntries = todayEntries.filter(e => e.type === "activity");
-  const expenseEntries = todayEntries.filter(e => e.type === "expense");
-  const memoEntries = todayEntries.filter(e => e.type === "memo");
+  const activityEntries = dayEntries.filter(e => e.type === "activity");
+  const expenseEntries = dayEntries.filter(e => e.type === "expense");
+  const memoEntries = dayEntries.filter(e => e.type === "memo");
   // 心愿不限于今天，是长期清单，按最近添加排序。
   const wishEntries = entries
     .filter(e => e.type === "wish")
@@ -455,6 +495,7 @@ export default function App() {
     const created = (await api.addEntry(text)).map(toLocal);
     if (!created.length) return [];
     setEntries(prev => [...prev, ...created]);
+    setSelectedDate(new Date()); // 新记录归入今天，自动跳回今天以便看到
     setLastAdded(created[created.length - 1].id);
     setError(null);
     setTimeout(() => setLastAdded(null), 2000);
@@ -511,6 +552,8 @@ export default function App() {
     }
     if (holdingToTalkRef.current) return;
     holdingToTalkRef.current = true;
+    pressStartRef.current = Date.now();
+    utteranceCanceledRef.current = false;
     setError(null);
     setLiveText("");
     try {
@@ -527,9 +570,10 @@ export default function App() {
           setError(m);
         },
       });
-      // 若在连接/授权完成前已松手，则直接收尾
+      // 若在连接/授权完成前已松手，则按当时的决定收尾（误触取消 / 正常提交）。
       if (!holdingToTalkRef.current) {
-        asrRef.current.stop();
+        if (utteranceCanceledRef.current) asrRef.current.cancel();
+        else asrRef.current.stop();
         return;
       }
       setIsListening(true);
@@ -545,6 +589,14 @@ export default function App() {
     holdingToTalkRef.current = false;
     setIsListening(false);
     if (!asrRef.current) return;
+    // 按得太短（误触）：取消本次，不提交、不弹“已发送”，给一句会自动消失的轻提示。
+    if (Date.now() - pressStartRef.current < 350) {
+      utteranceCanceledRef.current = true;
+      asrRef.current.cancel();
+      setLiveText("");
+      setError("按住多说一会儿再松手哦");
+      return;
+    }
     // 松手即时反馈“已发送”：动画 + 轻微震动（安卓有效，iOS 自动忽略），让人感觉完成了。
     sentKeyRef.current += 1;
     setJustSent(true);
@@ -604,41 +656,78 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen w-full flex items-center justify-center"
-      style={{ background: "#e8e5df", fontFamily: "'Inter', sans-serif" }}
+      className="w-full flex justify-center"
+      style={{ background: "#f5f4f0", fontFamily: "'Inter', sans-serif", minHeight: "100dvh" }}
     >
-      {/* Phone shell */}
+      {/* App 主体：真机上铺满屏幕（无圆角/边框），桌面上限宽居中 */}
       <div
-        className="relative flex flex-col overflow-hidden"
+        className="relative flex flex-col overflow-hidden w-full"
         style={{
-          width: 375,
-          height: 780,
-          maxHeight: "100vh",
+          maxWidth: 480,
+          height: "100dvh",
           background: "#f5f4f0",
-          borderRadius: 28,
-          boxShadow: "0 0 0 1px rgba(0,0,0,0.08), 0 24px 64px rgba(0,0,0,0.15)",
         }}
       >
         {/* 错误提示 */}
         {error && (
           <div
-            className="absolute left-0 right-0 top-0 z-50 mx-3 mt-2 rounded-lg px-3 py-2 text-xs flex items-center justify-between"
-            style={{ background: "#fee2e2", color: "#dc2626", border: "1px solid #fca5a5" }}
+            className="absolute left-0 right-0 z-50 mx-3 rounded-lg px-3 py-2 text-xs flex items-center justify-between"
+            style={{
+              background: "#fee2e2",
+              color: "#dc2626",
+              border: "1px solid #fca5a5",
+              top: "calc(env(safe-area-inset-top) + 8px)",
+            }}
           >
             <span>{error}</span>
             <button onClick={() => setError(null)} className="ml-2 font-mono">✕</button>
           </div>
         )}
-        {/* Status bar */}
-        <div className="flex items-center justify-between px-6 pt-3 pb-1" style={{ flexShrink: 0 }}>
-          <span className="text-[11px] font-mono" style={{ color: "#8a8680" }}>
-            {formatDate(today)}
-          </span>
+        {/* Status bar：日期导航（可往前翻看历史） */}
+        <div
+          className="flex items-center justify-between px-5 pb-1"
+          style={{ flexShrink: 0, paddingTop: "calc(env(safe-area-inset-top) + 12px)" }}
+        >
           <div className="flex items-center gap-1">
-            <span className="text-[11px] font-mono" style={{ color: "#8a8680" }}>
-              {formatTime(today)}
-            </span>
+            <button
+              onClick={() => { setSelectedDate(addDays(selectedDate, -1)); setShowSummary(false); }}
+              className="flex items-center justify-center w-6 h-6 rounded-full"
+              style={{ background: "#ede9e1", color: "#8a8680" }}
+              aria-label="前一天"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <label className="relative flex items-center px-1">
+              <span className="text-[11px] font-mono" style={{ color: "#1a1a1e" }}>
+                {formatDate(selectedDate)}{isViewingToday ? " · 今天" : ""}
+              </span>
+              <input
+                type="date"
+                value={toYMD(selectedDate)}
+                max={toYMD(today)}
+                onChange={(e) => { if (e.target.value) { setSelectedDate(fromYMD(e.target.value)); setShowSummary(false); } }}
+                className="absolute inset-0 w-full h-full opacity-0"
+              />
+            </label>
+            <button
+              onClick={() => { if (!isViewingToday) { setSelectedDate(addDays(selectedDate, 1)); setShowSummary(false); } }}
+              disabled={isViewingToday}
+              className="flex items-center justify-center w-6 h-6 rounded-full"
+              style={{ background: "#ede9e1", color: isViewingToday ? "#cfcabf" : "#8a8680" }}
+              aria-label="后一天"
+            >
+              <ChevronRight size={14} />
+            </button>
           </div>
+          {!isViewingToday && (
+            <button
+              onClick={() => { setSelectedDate(new Date()); setShowSummary(false); }}
+              className="text-[11px] font-mono px-2 py-0.5 rounded-full"
+              style={{ background: "#ede9e1", color: "#d97706" }}
+            >
+              回今天
+            </button>
+          )}
         </div>
 
         {/* Header */}
@@ -648,7 +737,7 @@ export default function App() {
               我的流水账
             </h1>
             <p className="text-[11px]" style={{ color: "#8a8680" }}>
-              {todayEntries.length} 条记录 · ¥{totalExpense} 花费
+              {dayEntries.length} 条记录 · ¥{totalExpense} 花费
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -717,7 +806,7 @@ export default function App() {
           style={{ scrollbarWidth: "none" }}
         >
           {showSummary ? (
-            <SummaryPanel entries={todayEntries} />
+            <SummaryPanel entries={dayEntries} />
           ) : (
             <>
               {tabEntries.length === 0 ? (
@@ -729,7 +818,7 @@ export default function App() {
                       : <Star size={18} style={{ color: "#8a8680" }} />}
                   </div>
                   <p className="text-xs" style={{ color: "#8a8680" }}>
-                    {tab === "today" ? "还没有行程记录" : tab === "ledger" ? "今天还没有消费记录" : tab === "memo" ? "没有待办备忘" : "还没有心愿，说说想做的事吧"}
+                    {tab === "today" ? "还没有行程记录" : tab === "ledger" ? "这一天还没有消费记录" : tab === "memo" ? "没有待办备忘" : "还没有心愿，说说想做的事吧"}
                   </p>
                 </div>
               ) : (
@@ -745,6 +834,7 @@ export default function App() {
                       entry={entry}
                       onDelete={handleDelete}
                       onToggleDone={handleToggleDone}
+                      showDate={tab === "wish"}
                     />
                   </div>
                 ))
@@ -793,8 +883,12 @@ export default function App() {
 
         {/* Input area */}
         <div
-          className="px-4 pb-5 pt-2"
-          style={{ flexShrink: 0, borderTop: "1px solid rgba(0,0,0,0.06)" }}
+          className="px-4 pt-2"
+          style={{
+            flexShrink: 0,
+            borderTop: "1px solid rgba(0,0,0,0.06)",
+            paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)",
+          }}
         >
           {/* 实时识别的文字（边说边出） */}
           {isListening && (
