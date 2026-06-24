@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import type { Entry, ParsedFields } from "./types.js";
+import crypto from "node:crypto";
+import type { Entry, ParsedFields, KnowledgeItem } from "./types.js";
 import { encField, encOpt, decField, decOpt } from "./crypto-field.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
@@ -36,6 +37,18 @@ if (!hasUserId) {
 const PRIMARY_USER = process.env.PRIMARY_USER || "我";
 db.prepare("UPDATE entries SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(PRIMARY_USER);
 db.exec("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)");
+
+// 知识库表（title/content 加密存储）。
+db.exec(`
+  CREATE TABLE IF NOT EXISTS knowledge (
+    id        TEXT PRIMARY KEY,
+    title     TEXT NOT NULL,
+    content   TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    user_id   TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_knowledge_user ON knowledge(user_id);
+`);
 
 interface Row {
   id: string;
@@ -150,4 +163,49 @@ export function updateEntry(id: string, userId: string, fields: ParsedFields): E
   if (Number(res.changes) === 0) return null;
   const row = stmtGet.get(id, userId) as unknown as Row | undefined;
   return row ? rowToEntry(row) : null;
+}
+
+// ─── 知识库 ────────────────────────────────────────────────────────────────────
+
+interface KnowledgeRow {
+  id: string;
+  title: string;
+  content: string;
+  timestamp: string;
+}
+
+function rowToKnowledge(r: KnowledgeRow): KnowledgeItem {
+  return {
+    id: r.id,
+    title: decField(r.title),
+    content: decField(r.content),
+    timestamp: r.timestamp,
+  };
+}
+
+const stmtKnAll = db.prepare(
+  "SELECT id, title, content, timestamp FROM knowledge WHERE user_id = ? ORDER BY timestamp DESC",
+);
+const stmtKnInsert = db.prepare(
+  "INSERT INTO knowledge (id, title, content, timestamp, user_id) VALUES (?, ?, ?, ?, ?)",
+);
+const stmtKnDelete = db.prepare("DELETE FROM knowledge WHERE id = ? AND user_id = ?");
+
+export function listKnowledge(userId: string): KnowledgeItem[] {
+  return (stmtKnAll.all(userId) as unknown as KnowledgeRow[]).map(rowToKnowledge);
+}
+
+export function insertKnowledge(userId: string, title: string, content: string): KnowledgeItem {
+  const item: KnowledgeItem = {
+    id: crypto.randomUUID(),
+    title,
+    content,
+    timestamp: new Date().toISOString(),
+  };
+  stmtKnInsert.run(item.id, encField(title), encField(content), item.timestamp, userId);
+  return item;
+}
+
+export function deleteKnowledge(id: string, userId: string): boolean {
+  return Number(stmtKnDelete.run(id, userId).changes) > 0;
 }

@@ -8,9 +8,20 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { WebSocketServer } from "ws";
 import { requireAuth, resolveUserId } from "./auth.js";
-import { listEntries, insertEntry, setDone, deleteEntry, getEntry, updateEntry } from "./db.js";
+import {
+  listEntries,
+  insertEntry,
+  setDone,
+  deleteEntry,
+  getEntry,
+  updateEntry,
+  listKnowledge,
+  insertKnowledge,
+  deleteKnowledge,
+} from "./db.js";
 import { parseEntry } from "./parse.js";
 import { correctEntry } from "./correct.js";
+import { answerQuestion } from "./knowledge.js";
 import { encryptionEnabled } from "./crypto-field.js";
 import { generateReport, type ReportEntry, type ReportScope } from "./summary.js";
 import { transcribe, nlsConfigured } from "./transcribe.js";
@@ -71,6 +82,7 @@ app.get(`${API}/entries`, (req, res) => {
   res.json(listEntries(req.userId!));
 });
 
+// 统一语音入口：先判意图，再分流为「记录 / 存入知识库 / 查询知识库」。
 app.post(`${API}/entries`, async (req, res) => {
   const raw = typeof req.body?.raw === "string" ? req.body.raw.trim() : "";
   if (!raw) {
@@ -78,11 +90,32 @@ app.post(`${API}/entries`, async (req, res) => {
     return;
   }
   try {
-    const { fields, via } = await parseEntry(raw);
+    const result = await parseEntry(raw);
+
+    // 存入知识库
+    if (result.kind === "save") {
+      const item = insertKnowledge(req.userId!, result.title, result.content);
+      res.status(201).json({ kind: "save", item });
+      return;
+    }
+
+    // 查询知识库
+    if (result.kind === "ask") {
+      const notes = listKnowledge(req.userId!);
+      const ans = await answerQuestion(notes, result.query);
+      if (!ans) {
+        res.status(503).json({ kind: "ask", answer: "未配置 AI，无法查询知识库。", sources: [] });
+        return;
+      }
+      res.json({ kind: "ask", answer: ans.answer, sources: ans.sources });
+      return;
+    }
+
+    // 默认：记录入库
     const now = new Date();
     const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     // 一句话可能拆成多条；逐条入库。timestamp 加毫秒偏移，保证拆出的顺序稳定。
-    const entries: Entry[] = fields.map((f, i) => ({
+    const entries: Entry[] = result.fields.map((f, i) => ({
       id: crypto.randomUUID(),
       raw,
       time,
@@ -90,11 +123,25 @@ app.post(`${API}/entries`, async (req, res) => {
       ...f,
     }));
     for (const entry of entries) insertEntry(entry, req.userId!);
-    res.status(201).json({ entries, via });
+    res.status(201).json({ kind: "record", entries, via: result.via });
   } catch (err) {
     console.error("[POST entries] 失败:", err);
     res.status(500).json({ error: "记录失败" });
   }
+});
+
+// 知识库：列出 / 删除
+app.get(`${API}/knowledge`, (req, res) => {
+  res.json(listKnowledge(req.userId!));
+});
+
+app.delete(`${API}/knowledge/:id`, (req, res) => {
+  const ok = deleteKnowledge(req.params.id, req.userId!);
+  if (!ok) {
+    res.status(404).json({ error: "知识不存在" });
+    return;
+  }
+  res.status(204).end();
 });
 
 // AI 报告（日报/月报）：前端把当天/当月记录传上来，Claude 生成文字点评。

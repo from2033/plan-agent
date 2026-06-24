@@ -22,6 +22,8 @@ import {
   Trash2,
   BarChart2,
   LogOut,
+  Lightbulb,
+  X,
 } from "lucide-react";
 import * as api from "./api";
 import { StreamingAsr, recordingSupported } from "./asrStream";
@@ -45,7 +47,7 @@ interface Entry {
   timestamp: Date;
 }
 
-type Tab = "today" | "ledger" | "memo" | "wish";
+type Tab = "today" | "ledger" | "memo" | "wish" | "knowledge";
 
 interface SpeechRecognitionResultEventLike {
   resultIndex: number;
@@ -389,6 +391,86 @@ function EntryCard({ entry, onDelete, onToggleDone, onLongPress, isCorrecting, s
   );
 }
 
+// 知识库条目卡片
+function KnowledgeCard({ item, onDelete }: {
+  item: api.KnowledgeItem;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div
+      className="relative rounded-xl p-3.5"
+      style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.07)" }}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
+          style={{ background: "#9333ea18", color: "#9333ea" }}
+        >
+          <Lightbulb size={13} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium leading-snug" style={{ color: "#1a1a1e" }}>{item.title}</p>
+          <p className="text-xs leading-relaxed mt-1 whitespace-pre-wrap" style={{ color: "#5a5650" }}>
+            {item.content}
+          </p>
+        </div>
+        <button
+          onClick={() => { if (window.confirm("删除这条知识？")) onDelete(item.id); }}
+          className="p-1 rounded-md flex-shrink-0"
+          style={{ color: "#b5b0a8" }}
+          aria-label="删除"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// 知识库提问的答案卡
+function AnswerCard({ answer, sources, onClose }: {
+  answer: string;
+  sources: api.KnowledgeItem[];
+  onClose: () => void;
+}) {
+  const [showSrc, setShowSrc] = useState(false);
+  return (
+    <div className="rounded-xl p-3.5 mb-1" style={{ background: "#fff", border: "1.5px solid #9333ea" }}>
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <div className="flex items-center gap-1.5" style={{ color: "#9333ea" }}>
+          <Sparkles size={13} />
+          <span className="text-[11px] font-medium">知识库回答</span>
+        </div>
+        <button onClick={onClose} className="p-0.5 rounded" style={{ color: "#b5b0a8" }} aria-label="关闭">
+          <X size={14} />
+        </button>
+      </div>
+      <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#1a1a1e" }}>{answer}</p>
+      {sources.length > 0 && (
+        <div className="mt-2 pt-2" style={{ borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+          <button
+            onClick={() => setShowSrc((s) => !s)}
+            className="text-[11px]"
+            style={{ color: "#8a8680" }}
+          >
+            {showSrc ? "收起来源" : `查看来源（${sources.length}）`}
+          </button>
+          {showSrc && (
+            <div className="space-y-1.5 mt-1.5">
+              {sources.map((s) => (
+                <div key={s.id} className="rounded-lg px-2.5 py-1.5" style={{ background: "#faf8f4" }}>
+                  <p className="text-[11px] font-medium" style={{ color: "#1a1a1e" }}>{s.title}</p>
+                  <p className="text-[11px] leading-relaxed mt-0.5 whitespace-pre-wrap" style={{ color: "#8a8680" }}>{s.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatPill({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div className="rounded-xl p-3 flex flex-col gap-1" style={{ background: color + "15", border: `1px solid ${color}25` }}>
@@ -654,6 +736,12 @@ function TokenGate({ onSubmit }: { onSubmit: (token: string) => void }) {
 
 export default function App() {
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [knowledge, setKnowledge] = useState<api.KnowledgeItem[]>([]);
+  // 知识库提问的答案（展示在知识标签顶部）。
+  const [answer, setAnswer] = useState<{ answer: string; sources: api.KnowledgeItem[] } | null>(null);
+  // 刚存入知识库的提示（带撤销=删除）。
+  const [savedNote, setSavedNote] = useState<api.KnowledgeItem | null>(null);
+  const [loading, setLoading] = useState(true); // 首次加载记录时显示骨架，避免空白
   const [tab, setTab] = useState<Tab>("today");
   const [showSummary, setShowSummary] = useState(false);
   // 当前查看的日期（默认今天，可往前翻看历史）。心愿是长期清单，不受此限制。
@@ -685,6 +773,7 @@ export default function App() {
   const asrRef = useRef<StreamingAsr | null>(null);
   const holdingToTalkRef = useRef(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 按下说话的起始时刻 + 是否因按太短而取消，用于过滤误触。
   const pressStartRef = useRef(0);
   const utteranceCanceledRef = useRef(false);
@@ -708,12 +797,14 @@ export default function App() {
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
+    setLoading(true);
     (async () => {
       try {
-        const [data, meRes] = await Promise.all([api.getEntries(), api.getMe()]);
+        const [data, meRes, kn] = await Promise.all([api.getEntries(), api.getMe(), api.listKnowledge()]);
         if (!cancelled) {
           setEntries(data.map(toLocal));
           setMe(meRes.user);
+          setKnowledge(kn);
           setError(null);
         }
       } catch (err) {
@@ -724,6 +815,8 @@ export default function App() {
         } else {
           setError("加载失败，请检查后端是否运行");
         }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
@@ -751,14 +844,34 @@ export default function App() {
     .filter(e => e.type === "wish")
     .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
-  // 把一句语音文本提交到后端并入库（后端可能拆成多条），弹出“撤销”浮条。
+  // 把一句语音文本提交到后端：后端判意图，分流为「记录 / 存知识 / 问知识」。
   async function pushEntry(text: string) {
-    const created = (await api.addEntry(text)).map(toLocal);
-    if (!created.length) return [];
+    const res = await api.addEntry(text);
+    setError(null);
+
+    // 存入知识库：提示“已存入”，并切到知识标签。
+    if (res.kind === "save") {
+      setKnowledge(prev => [res.item, ...prev]);
+      showSavedNote(res.item);
+      setTab("knowledge");
+      setShowSummary(false);
+      return;
+    }
+
+    // 查询知识库：展示答案卡（在知识标签顶部）。
+    if (res.kind === "ask") {
+      setAnswer({ answer: res.answer, sources: res.sources });
+      setTab("knowledge");
+      setShowSummary(false);
+      return;
+    }
+
+    // 默认：记录入库（可能拆多条），弹“撤销”浮条。
+    const created = res.entries.map(toLocal);
+    if (!created.length) return;
     setEntries(prev => [...prev, ...created]);
     setSelectedDate(new Date()); // 新记录归入今天，自动跳回今天以便看到
     setLastAdded(created[created.length - 1].id);
-    setError(null);
     setTimeout(() => setLastAdded(null), 2000);
     setTimeout(() => {
       feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
@@ -767,7 +880,33 @@ export default function App() {
       ? `${created.length} 条：${created.map(e => e.description).join("、")}`
       : created[0].description;
     showUndo(created.map(e => e.id), label);
-    return created;
+  }
+
+  // “已存入知识库”提示，几秒后自动消失（可撤销=删除该条）。
+  function showSavedNote(item: api.KnowledgeItem) {
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    setSavedNote(item);
+    savedTimerRef.current = setTimeout(() => setSavedNote(null), 6000);
+  }
+
+  async function handleUndoSave() {
+    const item = savedNote;
+    if (!item) return;
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    setSavedNote(null);
+    setKnowledge(prev => prev.filter(k => k.id !== item.id));
+    try { await api.deleteKnowledge(item.id); } catch { /* ignore */ }
+  }
+
+  async function handleDeleteKnowledge(id: string) {
+    const prev = knowledge;
+    setKnowledge(p => p.filter(k => k.id !== id));
+    try {
+      await api.deleteKnowledge(id);
+    } catch {
+      setKnowledge(prev);
+      setError("删除失败");
+    }
   }
 
   // 显示“撤销”浮条，几秒后自动消失。
@@ -826,6 +965,7 @@ export default function App() {
     utteranceCanceledRef.current = false;
     setError(null);
     setLiveText("");
+    setIsListening(true); // 立刻给反馈，不等 getUserMedia/连接（否则像是没反应）
     try {
       if (!asrRef.current) asrRef.current = new StreamingAsr();
       await asrRef.current.start({
@@ -874,9 +1014,13 @@ export default function App() {
     sentTimerRef.current = setTimeout(() => setJustSent(false), 2400);
     navigator.vibrate?.(15);
     // 通知后端停止；最终结果通过 onFinal 回调入库（voiceBusy 在 finalize/onError 里减回）。
-    // 仅当本次识别还没结束时才计数：若 final 已在松手前到达（长句中途结算），
-    // 这条已入库且计数已减回，此处不能再加，否则“正在记录…”会永久卡住。
-    if (!asrRef.current.isSettled) setVoiceBusy((n) => n + 1);
+    // 仅当会话已建立且还没结束时才计数：
+    // - 连接还没建好就松手（没采到音频）→ stop() 会作废本次、不会有回调，故不能计数；
+    // - final 已在松手前到达（长句中途结算）→ 已入库且已减回，也不能再加。
+    // 否则“正在记录…”会永久卡住。
+    if (asrRef.current.isActive() && !asrRef.current.isSettled) {
+      setVoiceBusy((n) => n + 1);
+    }
     asrRef.current.stop();
   }
 
@@ -913,6 +1057,9 @@ export default function App() {
     setTokenState("");
     setMe("");
     setEntries([]);
+    setKnowledge([]);
+    setAnswer(null);
+    setSavedNote(null);
   }
 
   // 未输入访问令牌时，先显示令牌录入界面。
@@ -1039,17 +1186,21 @@ export default function App() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 px-5 pb-3" style={{ flexShrink: 0 }}>
+        <div
+          className="flex gap-1 px-5 pb-3"
+          style={{ flexShrink: 0, overflowX: "auto", scrollbarWidth: "none" }}
+        >
           {[
             { key: "today" as Tab, label: "行程", icon: <Clock size={11} />, count: activityEntries.length },
             { key: "ledger" as Tab, label: "账单", icon: <CreditCard size={11} />, count: expenseEntries.length },
             { key: "memo" as Tab, label: "备忘", icon: <BookOpen size={11} />, count: memoEntries.filter(m => !m.done).length },
             { key: "wish" as Tab, label: "心愿", icon: <Star size={11} />, count: wishEntries.length },
+            { key: "knowledge" as Tab, label: "知识", icon: <Lightbulb size={11} />, count: knowledge.length },
           ].map(({ key, label, icon, count }) => (
             <button
               key={key}
               onClick={() => { setTab(key); setShowSummary(false); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-[11px] font-medium"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-[11px] font-medium flex-shrink-0"
               style={{
                 background: tab === key && !showSummary ? "#d97706" : "#ede9e1",
                 color: tab === key && !showSummary ? "#ffffff" : "#8a8680",
@@ -1078,8 +1229,44 @@ export default function App() {
           className="flex-1 overflow-y-auto px-5 space-y-2 pb-4"
           style={{ scrollbarWidth: "none" }}
         >
-          {showSummary ? (
+          {loading && entries.length === 0 ? (
+            <div className="space-y-2 pt-1">
+              {[0, 1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="rounded-xl p-3.5 flex items-start gap-3 skeleton-pulse"
+                  style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.06)" }}
+                >
+                  <div className="w-7 h-7 rounded-lg flex-shrink-0" style={{ background: "#ece9e3" }} />
+                  <div className="flex-1 space-y-2 pt-0.5">
+                    <div className="h-2.5 rounded" style={{ width: "35%", background: "#ece9e3" }} />
+                    <div className="h-3 rounded" style={{ width: "80%", background: "#ece9e3" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : showSummary ? (
             <SummaryPanel dayEntries={dayEntries} monthEntries={monthEntries} selectedDate={selectedDate} />
+          ) : tab === "knowledge" ? (
+            <>
+              {answer && (
+                <AnswerCard answer={answer.answer} sources={answer.sources} onClose={() => setAnswer(null)} />
+              )}
+              {knowledge.length === 0 && !answer ? (
+                <div className="flex flex-col items-center justify-center h-32 gap-2">
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: "#ede9e1" }}>
+                    <Lightbulb size={18} style={{ color: "#8a8680" }} />
+                  </div>
+                  <p className="text-xs text-center px-6" style={{ color: "#8a8680" }}>
+                    还没有知识。按住麦克风说「记到知识库：……」存一条；以后想不起来直接问它。
+                  </p>
+                </div>
+              ) : (
+                knowledge.map((item) => (
+                  <KnowledgeCard key={item.id} item={item} onDelete={handleDeleteKnowledge} />
+                ))
+              )}
+            </>
           ) : (
             <>
               {tabEntries.length === 0 ? (
@@ -1192,8 +1379,24 @@ export default function App() {
               </button>
             </div>
           )}
+          {/* 已存入知识库 */}
+          {!correcting && savedNote && (
+            <div
+              className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 mb-2"
+              style={{ background: "#581c87", color: "#faf5ff" }}
+            >
+              <span className="text-[11px] truncate flex-1">已存入知识库：{savedNote.title}</span>
+              <button
+                onClick={handleUndoSave}
+                className="text-[11px] font-medium px-2 py-0.5 rounded-md flex-shrink-0"
+                style={{ background: "rgba(255,255,255,0.18)", color: "#f0d9ff" }}
+              >
+                撤销
+              </button>
+            </div>
+          )}
           {/* 撤销刚才说过的话 */}
-          {!correcting && undo && (
+          {!correcting && !savedNote && undo && (
             <div
               className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 mb-2"
               style={{ background: "#1a1a1e", color: "#f5f4f0" }}
@@ -1216,7 +1419,7 @@ export default function App() {
                 style={{ background: "#16a34a", color: "#ffffff", zIndex: 10, boxShadow: "0 4px 14px rgba(22,163,74,0.4)" }}
               >
                 <CheckCircle size={15} />
-                <span className="text-[13px] font-medium">{correcting ? "已发送，正在修正…" : "已发送，正在记录…"}</span>
+                <span className="text-[13px] font-medium">{correcting ? "已发送，正在修正…" : "已发送，正在处理…"}</span>
               </div>
             )}
             <button

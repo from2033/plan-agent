@@ -67,12 +67,33 @@ export function getEntries(): Promise<Entry[]> {
   return request<Entry[]>("/entries");
 }
 
-export async function addEntry(raw: string): Promise<Entry[]> {
-  const data = await request<{ entries: Entry[]; via: string }>("/entries", {
+// 知识库条目（与后端 KnowledgeItem 对应）。
+export interface KnowledgeItem {
+  id: string;
+  title: string;
+  content: string;
+  timestamp: string;
+}
+
+// 统一语音入口的判别式结果：记录 / 存知识 / 问知识。
+export type IngestResult =
+  | { kind: "record"; entries: Entry[]; via: string }
+  | { kind: "save"; item: KnowledgeItem }
+  | { kind: "ask"; answer: string; sources: KnowledgeItem[] };
+
+export async function addEntry(raw: string): Promise<IngestResult> {
+  return request<IngestResult>("/entries", {
     method: "POST",
     body: JSON.stringify({ raw }),
   });
-  return data.entries;
+}
+
+export function listKnowledge(): Promise<KnowledgeItem[]> {
+  return request<KnowledgeItem[]>("/knowledge");
+}
+
+export function deleteKnowledge(id: string): Promise<void> {
+  return request<void>(`/knowledge/${id}`, { method: "DELETE" });
 }
 
 export function toggleDone(id: string, done: boolean): Promise<Entry> {

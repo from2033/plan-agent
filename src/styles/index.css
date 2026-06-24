@@ -17,3 +17,10 @@
   100% { box-shadow: 0 0 0 16px rgba(220,38,38,0); }
 }
 .mic-pulse { animation: micPulse 1.2s ease-out infinite; }
+
+/* 首次加载时的骨架占位呼吸效果 */
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+.skeleton-pulse { animation: skeletonPulse 1.3s ease-in-out infinite; }

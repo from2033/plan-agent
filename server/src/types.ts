@@ -23,3 +23,11 @@ export type ParsedFields = Pick<
   Entry,
   "type" | "description" | "category" | "amount" | "currency" | "timeRange" | "priority"
 >;
+
+// 知识库条目（长期参考型知识，独立于日常 entries）。
+export interface KnowledgeItem {
+  id: string;
+  title: string;
+  content: string;
+  timestamp: string; // ISO 8601
+}

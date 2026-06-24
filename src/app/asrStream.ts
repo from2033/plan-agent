@@ -57,10 +57,20 @@ export class StreamingAsr {
   private ws: WebSocket | null = null;
   private sending = false;
   private settled = false;
+  // 会话代号：每次 start 自增。中途 stop/cancel 会让 in-flight 的 start 与旧连接的回调失效，
+  // 避免"按住后在 getUserMedia 完成前松手 → 取消又被 start 复活"的竞态。
+  private epoch = 0;
+  // 连接就绪前先缓存音频，OPEN 后补发，避免丢掉开头的话。
+  private pending: ArrayBuffer[] = [];
 
   // 本次识别是否已出结果/结束（final 可能在松手前就到达）。用于上层避免重复计数。
   get isSettled(): boolean {
     return this.settled;
+  }
+
+  // 会话是否已建立（或正在建立）。用于上层判断松手时是否该计入"处理中"。
+  isActive(): boolean {
+    return this.ws !== null;
   }
 
   // 保温音频引擎：AudioContext + ScriptProcessor 常驻并连到 destination，让 iOS 音频会话
@@ -78,9 +88,15 @@ export class StreamingAsr {
     this.inRate = this.ctx.sampleRate;
     this.processor = this.ctx.createScriptProcessor(4096, 1, 1);
     this.processor.onaudioprocess = (e) => {
-      if (!this.sending || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (!this.sending) return;
       const pcm = toPcm16(e.inputBuffer.getChannelData(0), this.inRate);
-      this.ws.send(pcm);
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(pcm);
+      } else {
+        // 连接还没就绪：先缓存，OPEN 后补发，避免丢掉开头几句。上限约 7 秒防溢出。
+        this.pending.push(pcm);
+        if (this.pending.length > 80) this.pending.shift();
+      }
     };
     this.processor.connect(this.ctx.destination); // 处理器不写输出 → 静音
   }
@@ -109,17 +125,41 @@ export class StreamingAsr {
     this.stream = null;
   }
 
-  // 开始一次识别：连 WS、开始发送音频。
+  // 开始一次识别：取麦克风、连 WS、开始采集。采集在连接就绪前就开始（先缓存、OPEN 后补发）。
   async start(handlers: AsrHandlers): Promise<void> {
-    await this.acquireMic();
-    if (this.ctx && this.ctx.state === "suspended") await this.ctx.resume();
+    const myEpoch = ++this.epoch;
     this.settled = false;
+    this.pending = [];
+
+    await this.acquireMic();
+    // getUserMedia 期间若已 stop/cancel（epoch 变了），放弃本次，不建连、不回调。
+    if (myEpoch !== this.epoch) {
+      this.releaseMic();
+      return;
+    }
+    if (this.ctx && this.ctx.state === "suspended") await this.ctx.resume();
+
+    // 麦克风已接好才开始采集（之前置 true 会把 getUserMedia 期间的静音灌进缓存）。
+    // 连接就绪前采到的音频先进 pending，OPEN 后补发，避免丢掉开头几句。
+    this.sending = true;
 
     const ws = new WebSocket(asrWsUrl());
     ws.binaryType = "arraybuffer";
     this.ws = ws;
 
+    ws.onopen = () => {
+      if (myEpoch !== this.epoch || ws.readyState !== WebSocket.OPEN) return;
+      for (const buf of this.pending) {
+        try { ws.send(buf); } catch { /* ignore */ }
+      }
+      this.pending = [];
+      // 若连接就绪前用户已松手，则补发 stop 让后端结算。
+      if (!this.sending) {
+        try { ws.send(JSON.stringify({ action: "stop" })); } catch { /* ignore */ }
+      }
+    };
     ws.onmessage = (ev) => {
+      if (myEpoch !== this.epoch) return; // 旧会话回调，忽略
       let msg: { type?: string; text?: string; message?: string };
       try {
         msg = JSON.parse(typeof ev.data === "string" ? ev.data : "");
@@ -132,11 +172,7 @@ export class StreamingAsr {
           this.settled = true;
           handlers.onFinal(msg.text ?? "");
         }
-        try {
-          ws.close();
-        } catch {
-          /* ignore */
-        }
+        try { ws.close(); } catch { /* ignore */ }
       } else if (msg.type === "error") {
         if (!this.settled) {
           this.settled = true;
@@ -145,41 +181,49 @@ export class StreamingAsr {
       }
     };
     ws.onerror = () => {
+      if (myEpoch !== this.epoch) return;
       if (!this.settled) {
         this.settled = true;
         handlers.onError("识别连接失败");
       }
     };
     ws.onclose = () => {
-      if (!this.settled) {
-        this.settled = true;
-        handlers.onError("识别中断");
+      if (myEpoch === this.epoch) {
+        if (!this.settled) {
+          this.settled = true;
+          handlers.onError("识别中断");
+        }
+        this.sending = false;
+        this.ws = null;
       }
-      this.sending = false;
     };
-
-    // 连接尚未 open 时也先开采集；onaudioprocess 里已判断 ws 状态，OPEN 后才真正发。
-    this.sending = true;
   }
 
-  // 结束本次说话：通知后端停止，松开麦克风（橙点熄灭），等待最终结果（通过 onFinal 回调）。
-  // 只放麦克风，不销毁音频引擎（引擎保温、会话不关 → 无停止声）。
+  // 结束本次说话：松开麦克风（橙点熄灭），等待最终结果（onFinal）。
+  // 若连接已建立 → 通知后端停止；若还在取麦克风（连接未建）→ 放弃本次（没采到音频）。
   stop(): void {
     this.sending = false;
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify({ action: "stop" }));
-      } catch {
-        /* ignore */
+    if (this.ws) {
+      if (this.ws.readyState === WebSocket.OPEN) {
+        try { this.ws.send(JSON.stringify({ action: "stop" })); } catch { /* ignore */ }
       }
+      // CONNECTING 时：onopen 里会在 sending=false 的情况下补发 stop。
+      this.releaseMic();
+    } else {
+      // start 还在取麦克风、连接尚未建立：作废本次（onaudioprocess 已采的缓存丢弃）。
+      this.epoch += 1;
+      this.settled = true;
+      this.pending = [];
+      this.releaseMic();
     }
-    this.releaseMic();
   }
 
-  // 取消本次说话：按得太短（误触）时调用。直接关连接、放麦克风，不提交、不回调结果。
+  // 取消本次说话：按得太短（误触）时调用。作废本次会话、放麦克风，不提交、不回调结果。
   cancel(): void {
+    this.epoch += 1; // 作废 in-flight start 与已建连的回调
+    this.settled = true;
     this.sending = false;
-    this.settled = true; // 抑制 onclose 触发的“识别中断”错误
+    this.pending = [];
     try {
       this.ws?.close();
     } catch {

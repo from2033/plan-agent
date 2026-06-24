@@ -124,10 +124,36 @@ const EntrySchema = z.object({
   priority: z.enum(["low", "medium", "high"]).optional(),
 });
 
-const ParseSchema = z.object({ entries: z.array(EntrySchema) });
+// 一次调用同时完成「意图判定」与（record/save 的）解析。
+const IngestSchema = z.object({
+  intent: z.enum(["record", "save", "ask"]),
+  entries: z.array(EntrySchema).optional(), // intent=record
+  title: z.string().optional(), // intent=save：提炼的简短标题
+  content: z.string().optional(), // intent=save：清理后的知识正文
+  query: z.string().optional(), // intent=ask：要查询的问题
+});
+
+// 统一入口的判别式结果。
+export type IngestResult =
+  | { kind: "record"; fields: ParsedFields[]; via: "claude" | "regex" }
+  | { kind: "save"; title: string; content: string }
+  | { kind: "ask"; query: string };
 
 function buildSystemPrompt(nowStr: string): string {
-  return `你是一个中文「流水账」记录助手。用户会说一句或几句话，里面可能包含**多件事**，你要把它们拆成**一条或多条**结构化记录，放进 entries 数组。
+  return `你是一个中文助手，先判断用户这句话的**意图**（intent），再据此输出：
+
+- intent="save"（存入知识库）：用户想**记下一条长期参考型知识**以便日后查阅，通常是经验/技巧/做法/路线/总结，或明确说"记到知识库/存一下这个知识/记住这个方法"等。
+  → 输出 title（一个简短标题，便于以后检索）和 content（把口语整理清楚、去掉"记一下/记到知识库"这类口头词的正文）。不要输出 entries。
+- intent="ask"（查询知识库）：用户在**提问、想回忆/查找**之前记过的东西（如"……怎么做来着""……的路线是什么""我之前记的……"）。
+  → 输出 query（要查询的问题，通常等于用户原话）。不要输出 entries。
+- intent="record"（默认）：其余日常流水（已发生或要做的事、花费、提醒、心愿等）。
+  → 按下面规则把它拆成一条或多条结构化记录放进 entries 数组。
+
+判断要点：知识(save)是"沉淀下来供以后看的方法/资料"；备忘(memo,属于 record)是"近期要做的待办"；提问(ask)是疑问句/检索意图。拿不准时优先按 record 处理。
+
+以下是 intent=record 时的拆分规则：
+
+用户会说一句或几句话，里面可能包含**多件事**，你要把它们拆成**一条或多条**结构化记录，放进 entries 数组。
 
 当前时间：${nowStr}。请据此判断每件事是否「已经发生」——综合时态（"了/过/在"=已发生或进行中；"待会/等下/下午/晚上/明天/准备/要去"=将来）和提到的时间点与当前时间的先后。
 
@@ -158,9 +184,10 @@ function getClient(): Anthropic | null {
   return client;
 }
 
-export async function parseEntry(raw: string): Promise<{ fields: ParsedFields[]; via: "claude" | "regex" }> {
+export async function parseEntry(raw: string): Promise<IngestResult> {
   const c = getClient();
-  if (!c) return { fields: parseWithRegex(raw), via: "regex" };
+  // 无 LLM：只能按记录处理（正则），不支持存知识/查询。
+  if (!c) return { kind: "record", fields: parseWithRegex(raw), via: "regex" };
 
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -172,21 +199,39 @@ export async function parseEntry(raw: string): Promise<{ fields: ParsedFields[];
       model: "claude-opus-4-8",
       max_tokens: 1024,
       system: buildSystemPrompt(nowStr),
-      output_format: betaZodOutputFormat(ParseSchema),
+      output_format: betaZodOutputFormat(IngestSchema),
       messages: [{ role: "user", content: raw }],
     });
 
-    const parsed = message.parsed_output as { entries?: ParsedFields[] } | null;
-    if (message.stop_reason === "refusal" || !parsed?.entries?.length) {
-      return { fields: parseWithRegex(raw), via: "regex" };
+    const parsed = message.parsed_output as {
+      intent?: string;
+      entries?: ParsedFields[];
+      title?: string;
+      content?: string;
+      query?: string;
+    } | null;
+
+    if (message.stop_reason === "refusal" || !parsed) {
+      return { kind: "record", fields: parseWithRegex(raw), via: "regex" };
     }
-    return { fields: parsed.entries, via: "claude" };
+    if (parsed.intent === "save" && (parsed.content || parsed.title)) {
+      const content = (parsed.content || raw).trim();
+      const title = (parsed.title || content.slice(0, 16)).trim();
+      return { kind: "save", title, content };
+    }
+    if (parsed.intent === "ask") {
+      return { kind: "ask", query: (parsed.query || raw).trim() };
+    }
+    if (parsed.entries?.length) {
+      return { kind: "record", fields: parsed.entries, via: "claude" };
+    }
+    return { kind: "record", fields: parseWithRegex(raw), via: "regex" };
   } catch (err) {
     if (err instanceof Anthropic.APIError) {
       console.error(`[parse] Claude API error ${err.status ?? ""}: ${err.message} — 回退到正则`);
     } else {
       console.error("[parse] 未知错误，回退到正则:", err);
     }
-    return { fields: parseWithRegex(raw), via: "regex" };
+    return { kind: "record", fields: parseWithRegex(raw), via: "regex" };
   }
 }
