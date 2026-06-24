@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import type { Entry } from "./types.js";
+import type { Entry, ParsedFields } from "./types.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 
@@ -81,6 +81,13 @@ const stmtInsert = db.prepare(`
 const stmtSetDone = db.prepare("UPDATE entries SET done = ? WHERE id = ? AND user_id = ?");
 const stmtDelete = db.prepare("DELETE FROM entries WHERE id = ? AND user_id = ?");
 const stmtGet = db.prepare("SELECT * FROM entries WHERE id = ? AND user_id = ?");
+// 语音修正：更新一条记录的可解析字段（type/分类/时间段/金额/优先级等）。
+const stmtUpdate = db.prepare(`
+  UPDATE entries SET
+    type = ?, time_start = ?, time_end = ?, description = ?,
+    category = ?, amount = ?, currency = ?, priority = ?
+  WHERE id = ? AND user_id = ?
+`);
 
 export function listEntries(userId: string): Entry[] {
   return (stmtAll.all(userId) as unknown as Row[]).map(rowToEntry);
@@ -115,4 +122,28 @@ export function setDone(id: string, done: boolean, userId: string): Entry | null
 
 export function deleteEntry(id: string, userId: string): boolean {
   return Number(stmtDelete.run(id, userId).changes) > 0;
+}
+
+export function getEntry(id: string, userId: string): Entry | null {
+  const row = stmtGet.get(id, userId) as unknown as Row | undefined;
+  return row ? rowToEntry(row) : null;
+}
+
+// 用修正后的字段更新一条记录（保留 id/raw/time/timestamp/done 不变）。
+export function updateEntry(id: string, userId: string, fields: ParsedFields): Entry | null {
+  const res = stmtUpdate.run(
+    fields.type,
+    fields.timeRange?.start ?? null,
+    fields.timeRange?.end ?? null,
+    fields.description,
+    fields.category,
+    fields.amount ?? null,
+    fields.currency ?? null,
+    fields.priority ?? null,
+    id,
+    userId,
+  );
+  if (Number(res.changes) === 0) return null;
+  const row = stmtGet.get(id, userId) as unknown as Row | undefined;
+  return row ? rowToEntry(row) : null;
 }

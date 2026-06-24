@@ -251,21 +251,55 @@ function generateMonthlySummary(entries: Entry[]): {
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-function EntryCard({ entry, onDelete, onToggleDone, showDate }: {
+function EntryCard({ entry, onDelete, onToggleDone, onLongPress, isCorrecting, showDate }: {
   entry: Entry;
   onDelete: (id: string) => void;
   onToggleDone?: (id: string) => void;
+  onLongPress?: (entry: Entry) => void;
+  isCorrecting?: boolean;
   showDate?: boolean;
 }) {
   const color = CATEGORY_COLORS[entry.category] || "#64748b";
   const [hovering, setHovering] = useState(false);
+  // 长按（约 500ms 不移动）触发修正；移动/抬手则取消。
+  const lpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lpStart = useRef<{ x: number; y: number } | null>(null);
+  const clearLp = () => {
+    if (lpTimer.current) clearTimeout(lpTimer.current);
+    lpTimer.current = null;
+    lpStart.current = null;
+  };
 
   return (
     <div
       className="relative group rounded-xl p-3.5 transition-all duration-200"
-      style={{ background: hovering ? "#f0ede6" : "#ffffff", border: "1px solid rgba(0,0,0,0.07)" }}
+      style={{
+        background: isCorrecting ? "#fff7ed" : hovering ? "#f0ede6" : "#ffffff",
+        border: isCorrecting ? "1.5px solid #d97706" : "1px solid rgba(0,0,0,0.07)",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+        WebkitTouchCallout: "none",
+      }}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
+      onPointerDown={(e) => {
+        if (!onLongPress) return;
+        lpStart.current = { x: e.clientX, y: e.clientY };
+        lpTimer.current = setTimeout(() => {
+          navigator.vibrate?.(20);
+          onLongPress(entry);
+          clearLp();
+        }, 500);
+      }}
+      onPointerMove={(e) => {
+        if (!lpStart.current) return;
+        const dx = e.clientX - lpStart.current.x;
+        const dy = e.clientY - lpStart.current.y;
+        if (Math.hypot(dx, dy) > 10) clearLp(); // 滚动/拖动则取消
+      }}
+      onPointerUp={clearLp}
+      onPointerCancel={clearLp}
+      onContextMenu={(e) => e.preventDefault()}
     >
       <div className="flex items-start gap-3">
         {/* Color bar + icon */}
@@ -638,6 +672,13 @@ export default function App() {
   const [justSent, setJustSent] = useState(false);
   // 正在说话时的实时识别文字。
   const [liveText, setLiveText] = useState("");
+  // 正在「语音修正」的记录（长按某条进入）。ref 供录音回调读取，避免闭包过期。
+  const [correcting, setCorrectingState] = useState<Entry | null>(null);
+  const correctingRef = useRef<Entry | null>(null);
+  const setCorrecting = (e: Entry | null) => {
+    correctingRef.current = e;
+    setCorrectingState(e);
+  };
   const sentKeyRef = useRef(0);
   const sentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
@@ -745,7 +786,7 @@ export default function App() {
     await Promise.all(target.ids.map(handleDelete));
   }
 
-  // 最终识别文字 → 入库（在 onFinal 回调里调用）。
+  // 最终识别文字 → 入库；若处于「语音修正」模式则改为修正那条记录（在 onFinal 回调里调用）。
   async function finalizeUtterance(text: string) {
     setVoiceBusy((n) => Math.max(0, n - 1));
     const t = text.trim();
@@ -753,14 +794,23 @@ export default function App() {
       setError("没听清，请再说一次");
       return;
     }
+    const target = correctingRef.current;
     try {
-      await pushEntry(t);
+      if (target) {
+        const updated = toLocal(await api.correctEntry(target.id, t));
+        setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+        setCorrecting(null);
+        setLastAdded(updated.id);
+        setTimeout(() => setLastAdded(null), 2000);
+      } else {
+        await pushEntry(t);
+      }
     } catch (err) {
       if (err instanceof api.UnauthorizedError) {
         api.clearToken();
         setTokenState("");
       } else {
-        setError("记录失败，请重试");
+        setError(target ? "修正失败，请重试" : "记录失败，请重试");
       }
     }
   }
@@ -1057,6 +1107,8 @@ export default function App() {
                       entry={entry}
                       onDelete={handleDelete}
                       onToggleDone={handleToggleDone}
+                      onLongPress={(e) => { setError(null); setCorrecting(e); }}
+                      isCorrecting={correcting?.id === entry.id}
                       showDate={tab === "wish"}
                     />
                   </div>
@@ -1122,8 +1174,26 @@ export default function App() {
               {liveText || "正在听…"}
             </div>
           )}
+          {/* 语音修正提示条 */}
+          {correcting && (
+            <div
+              className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 mb-2"
+              style={{ background: "#7c2d12", color: "#fff7ed" }}
+            >
+              <span className="text-[11px] truncate flex-1">
+                修正「{correcting.description}」· 按住说出修改，如「改成下午3点」
+              </span>
+              <button
+                onClick={() => setCorrecting(null)}
+                className="text-[11px] font-medium px-2 py-0.5 rounded-md flex-shrink-0"
+                style={{ background: "rgba(255,255,255,0.18)", color: "#ffd9a8" }}
+              >
+                取消
+              </button>
+            </div>
+          )}
           {/* 撤销刚才说过的话 */}
-          {undo && (
+          {!correcting && undo && (
             <div
               className="flex items-center justify-between gap-2 rounded-xl px-3 py-2 mb-2"
               style={{ background: "#1a1a1e", color: "#f5f4f0" }}
@@ -1146,7 +1216,7 @@ export default function App() {
                 style={{ background: "#16a34a", color: "#ffffff", zIndex: 10, boxShadow: "0 4px 14px rgba(22,163,74,0.4)" }}
               >
                 <CheckCircle size={15} />
-                <span className="text-[13px] font-medium">已发送，正在记录…</span>
+                <span className="text-[13px] font-medium">{correcting ? "已发送，正在修正…" : "已发送，正在记录…"}</span>
               </div>
             )}
             <button
@@ -1207,12 +1277,14 @@ export default function App() {
             style={{ color: "#b5b0a8", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }}
           >
             {isListening
-              ? "边说边出字 · 松开即记录"
-              : voiceBusy > 0
-                ? "正在记录…可继续按住说下一条"
-                : speechSupported
-                  ? "按住说话 · 松开直接记录 · 记录后可撤销"
-                  : "语音需 HTTPS；可用手机键盘上的 🎤"}
+              ? correcting ? "边说边出字 · 松开即修正" : "边说边出字 · 松开即记录"
+              : correcting
+                ? "按住说出对这条的修改 · 松开生效"
+                : voiceBusy > 0
+                  ? "正在记录…可继续按住说下一条"
+                  : speechSupported
+                    ? "按住说话 · 松开直接记录 · 长按某条可语音修正"
+                    : "语音需 HTTPS；可用手机键盘上的 🎤"}
           </p>
         </div>
       </div>

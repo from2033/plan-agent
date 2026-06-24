@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { WebSocketServer } from "ws";
 import { requireAuth, resolveUserId } from "./auth.js";
-import { listEntries, insertEntry, setDone, deleteEntry } from "./db.js";
+import { listEntries, insertEntry, setDone, deleteEntry, getEntry, updateEntry } from "./db.js";
 import { parseEntry } from "./parse.js";
+import { correctEntry } from "./correct.js";
 import { generateReport, type ReportEntry, type ReportScope } from "./summary.js";
 import { transcribe, nlsConfigured } from "./transcribe.js";
 import { bridgeToNls } from "./asr.js";
@@ -111,6 +112,36 @@ app.post(`${API}/summary`, async (req, res) => {
   } catch (err) {
     console.error("[summary] 生成失败:", err);
     res.status(502).json({ error: "报告生成失败" });
+  }
+});
+
+// 语音口述修正：把一句修改要求应用到指定记录上（Claude 解析后更新）。
+app.post(`${API}/entries/:id/correct`, async (req, res) => {
+  const correction = typeof req.body?.correction === "string" ? req.body.correction.trim() : "";
+  if (!correction) {
+    res.status(400).json({ error: "correction 不能为空" });
+    return;
+  }
+  const entry = getEntry(req.params.id, req.userId!);
+  if (!entry) {
+    res.status(404).json({ error: "记录不存在" });
+    return;
+  }
+  try {
+    const fields = await correctEntry(entry, correction);
+    if (!fields) {
+      res.status(503).json({ error: "修正未生效（未配置 AI 或无法理解）" });
+      return;
+    }
+    const updated = updateEntry(entry.id, req.userId!, fields);
+    if (!updated) {
+      res.status(404).json({ error: "记录不存在" });
+      return;
+    }
+    res.json(updated);
+  } catch (err) {
+    console.error("[correct] 失败:", err);
+    res.status(502).json({ error: "修正失败" });
   }
 });
 

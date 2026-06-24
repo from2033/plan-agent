@@ -86,6 +86,14 @@ export function deleteEntry(id: string): Promise<void> {
   return request<void>(`/entries/${id}`, { method: "DELETE" });
 }
 
+// 语音口述修正：把一句修改要求应用到指定记录，返回修改后的记录。
+export function correctEntry(id: string, correction: string): Promise<Entry> {
+  return request<Entry>(`/entries/${id}/correct`, {
+    method: "POST",
+    body: JSON.stringify({ correction }),
+  });
+}
+
 // AI 报告：传当天/当月记录，返回文字点评。后端未配置 LLM 时返回 null（前端回退本地文案）。
 export interface Report {
   highlights: string[];
