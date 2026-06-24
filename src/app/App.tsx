@@ -364,8 +364,40 @@ function StatPill({ label, value, color }: { label: string; value: string; color
   );
 }
 
-// AI 报告缓存（按记录签名缓存，避免每次切换/重开都重新调用 Claude）。
-const reportCache = new Map<string, api.Report>();
+// AI 报告持久化缓存：每个日/月一个槽位，存「记录签名 + 报告」。
+// 只有当天/当月记录真的变了（签名变），才会重新调用 Claude；否则一直读缓存、跨重启有效。
+const REPORT_KEY_PREFIX = "pa_report_";
+function reportSlotKey(mode: "day" | "month", d: Date): string {
+  const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return mode === "day" ? `${REPORT_KEY_PREFIX}day_${toYMD(d)}` : `${REPORT_KEY_PREFIX}month_${ym}`;
+}
+function loadCachedReport(key: string, sig: string): api.Report | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const o = JSON.parse(raw) as { sig: string; report: api.Report };
+    return o.sig === sig ? o.report : null;
+  } catch {
+    return null;
+  }
+}
+function saveCachedReport(key: string, sig: string, report: api.Report): void {
+  try {
+    localStorage.setItem(key, JSON.stringify({ sig, report }));
+  } catch {
+    /* localStorage 满/不可用时忽略 */
+  }
+}
+// 退出登录时清掉所有报告缓存（换账号不串内容）。
+function clearReportCache(): void {
+  try {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith(REPORT_KEY_PREFIX)) localStorage.removeItem(k);
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 function SummaryPanel({ dayEntries, monthEntries, selectedDate }: {
   dayEntries: Entry[];
@@ -393,8 +425,11 @@ function SummaryPanel({ dayEntries, monthEntries, selectedDate }: {
       setStatus("idle");
       return;
     }
-    if (reportCache.has(sig)) {
-      setAiReport(reportCache.get(sig)!);
+    // 记录没变（签名一致）→ 直接用缓存，不调 AI。跨重启有效。
+    const slotKey = reportSlotKey(mode, selectedDate);
+    const cached = loadCachedReport(slotKey, sig);
+    if (cached) {
+      setAiReport(cached);
       setStatus("ok");
       return;
     }
@@ -416,7 +451,7 @@ function SummaryPanel({ dayEntries, monthEntries, selectedDate }: {
       .then((r) => {
         if (cancelled) return;
         if (r && (r.highlights.length || r.improvements.length || r.suggestions.length)) {
-          reportCache.set(sig, r);
+          saveCachedReport(slotKey, sig, r);
           setAiReport(r);
           setStatus("ok");
         } else {
@@ -823,6 +858,7 @@ export default function App() {
   function handleLogout() {
     asrRef.current?.dispose().catch(() => {});
     asrRef.current = null;
+    clearReportCache();
     api.clearToken();
     setTokenState("");
     setMe("");
