@@ -11,6 +11,7 @@ import { requireAuth, resolveUserId } from "./auth.js";
 import { listEntries, insertEntry, setDone, deleteEntry, getEntry, updateEntry } from "./db.js";
 import { parseEntry } from "./parse.js";
 import { correctEntry } from "./correct.js";
+import { encryptionEnabled } from "./crypto-field.js";
 import { generateReport, type ReportEntry, type ReportScope } from "./summary.js";
 import { transcribe, nlsConfigured } from "./transcribe.js";
 import { bridgeToNls } from "./asr.js";
@@ -192,6 +193,11 @@ const server = app.listen(PORT, () => {
   console.log(`后端已启动: http://localhost:${PORT}${BASE_PATH}/`);
   console.log(`前端目录: ${existsSync(WEB_DIST) ? WEB_DIST : "（未找到）"}`);
   console.log(`大模型解析: ${process.env.ANTHROPIC_API_KEY ? "已启用 (Claude)" : "未配置 (回退正则)"}`);
+  if (encryptionEnabled()) {
+    console.log("数据库字段加密: 已启用 (AES-256-GCM)");
+  } else {
+    console.warn("⚠️ 数据库字段加密: 未启用（未配置 DB_ENCRYPTION_KEY，记录将以明文存储）");
+  }
 });
 
 // ─── 实时语音识别 WebSocket（流式）：${API}/asr?token=<访问令牌> ───────────────

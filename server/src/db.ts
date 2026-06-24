@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import type { Entry, ParsedFields } from "./types.js";
+import { encField, encOpt, decField, decOpt } from "./crypto-field.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 
@@ -45,7 +46,7 @@ interface Row {
   time_end: string | null;
   description: string;
   category: string;
-  amount: number | null;
+  amount: string | number | null; // 加密后存的是字符串密文
   currency: string | null;
   priority: string | null;
   done: number | null;
@@ -53,17 +54,20 @@ interface Row {
 }
 
 function rowToEntry(r: Row): Entry {
+  // 敏感字段读取时解密：raw / description / category / 金额 / 时间段。
   const entry: Entry = {
     id: r.id,
     type: r.type as Entry["type"],
-    raw: r.raw,
+    raw: decField(r.raw),
     time: r.time,
-    description: r.description,
-    category: r.category,
+    description: decField(r.description),
+    category: decField(r.category),
     timestamp: r.timestamp,
   };
-  if (r.time_start && r.time_end) entry.timeRange = { start: r.time_start, end: r.time_end };
-  if (r.amount != null) entry.amount = r.amount;
+  const ts = decOpt(r.time_start);
+  const te = decOpt(r.time_end);
+  if (ts && te) entry.timeRange = { start: ts, end: te };
+  if (r.amount != null) entry.amount = Number(decField(String(r.amount)));
   if (r.currency) entry.currency = r.currency;
   if (r.priority) entry.priority = r.priority as Entry["priority"];
   if (r.done != null) entry.done = r.done === 1;
@@ -97,13 +101,13 @@ export function insertEntry(entry: Entry, userId: string): Entry {
   stmtInsert.run(
     entry.id,
     entry.type,
-    entry.raw,
+    encField(entry.raw),
     entry.time,
-    entry.timeRange?.start ?? null,
-    entry.timeRange?.end ?? null,
-    entry.description,
-    entry.category,
-    entry.amount ?? null,
+    encOpt(entry.timeRange?.start),
+    encOpt(entry.timeRange?.end),
+    encField(entry.description),
+    encField(entry.category),
+    entry.amount == null ? null : encField(String(entry.amount)),
     entry.currency ?? null,
     entry.priority ?? null,
     entry.done == null ? null : entry.done ? 1 : 0,
@@ -133,11 +137,11 @@ export function getEntry(id: string, userId: string): Entry | null {
 export function updateEntry(id: string, userId: string, fields: ParsedFields): Entry | null {
   const res = stmtUpdate.run(
     fields.type,
-    fields.timeRange?.start ?? null,
-    fields.timeRange?.end ?? null,
-    fields.description,
-    fields.category,
-    fields.amount ?? null,
+    encOpt(fields.timeRange?.start),
+    encOpt(fields.timeRange?.end),
+    encField(fields.description),
+    encField(fields.category),
+    fields.amount == null ? null : encField(String(fields.amount)),
     fields.currency ?? null,
     fields.priority ?? null,
     id,
