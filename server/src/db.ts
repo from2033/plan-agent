@@ -22,6 +22,7 @@ db.exec(`
     currency    TEXT,
     priority    TEXT,
     done        INTEGER,
+    reminder_at TEXT,
     timestamp   TEXT NOT NULL,
     user_id     TEXT
   );
@@ -37,6 +38,11 @@ if (!hasUserId) {
 const PRIMARY_USER = process.env.PRIMARY_USER || "我";
 db.prepare("UPDATE entries SET user_id = ? WHERE user_id IS NULL OR user_id = ''").run(PRIMARY_USER);
 db.exec("CREATE INDEX IF NOT EXISTS idx_entries_user ON entries(user_id)");
+const hasReminderAt = (db.prepare("PRAGMA table_info(entries)").all() as unknown as { name: string }[])
+  .some((c) => c.name === "reminder_at");
+if (!hasReminderAt) {
+  db.exec("ALTER TABLE entries ADD COLUMN reminder_at TEXT");
+}
 
 // 知识库表（title/content 加密存储）。
 db.exec(`
@@ -48,6 +54,12 @@ db.exec(`
     user_id   TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_knowledge_user ON knowledge(user_id);
+  CREATE TABLE IF NOT EXISTS client_imports (
+    user_id TEXT NOT NULL,
+    migration_id TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, migration_id)
+  );
 `);
 
 interface Row {
@@ -63,6 +75,7 @@ interface Row {
   currency: string | null;
   priority: string | null;
   done: number | null;
+  reminder_at: string | null;
   timestamp: string;
 }
 
@@ -84,6 +97,7 @@ function rowToEntry(r: Row): Entry {
   if (r.currency) entry.currency = r.currency;
   if (r.priority) entry.priority = r.priority as Entry["priority"];
   if (r.done != null) entry.done = r.done === 1;
+  if (r.reminder_at) entry.reminderAt = r.reminder_at;
   return entry;
 }
 
@@ -91,18 +105,21 @@ function rowToEntry(r: Row): Entry {
 const stmtAll = db.prepare("SELECT * FROM entries WHERE user_id = ? ORDER BY timestamp ASC");
 const stmtInsert = db.prepare(`
   INSERT INTO entries
-    (id, type, raw, time, time_start, time_end, description, category, amount, currency, priority, done, timestamp, user_id)
+    (id, type, raw, time, time_start, time_end, description, category, amount, currency, priority, done, reminder_at, timestamp, user_id)
   VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const stmtSetDone = db.prepare("UPDATE entries SET done = ? WHERE id = ? AND user_id = ?");
 const stmtDelete = db.prepare("DELETE FROM entries WHERE id = ? AND user_id = ?");
 const stmtGet = db.prepare("SELECT * FROM entries WHERE id = ? AND user_id = ?");
+const stmtRepairReminder = db.prepare(`UPDATE entries SET
+  type='memo', time=?, category=?, priority=COALESCE(priority,'medium'), reminder_at=?, timestamp=?
+  WHERE id=? AND user_id=? AND reminder_at IS NULL`);
 // 语音修正：更新一条记录的可解析字段（type/分类/时间段/金额/优先级等）。
 const stmtUpdate = db.prepare(`
   UPDATE entries SET
     type = ?, time_start = ?, time_end = ?, description = ?,
-    category = ?, amount = ?, currency = ?, priority = ?
+    category = ?, amount = ?, currency = ?, priority = ?, reminder_at = ?
   WHERE id = ? AND user_id = ?
 `);
 
@@ -124,6 +141,7 @@ export function insertEntry(entry: Entry, userId: string): Entry {
     entry.currency ?? null,
     entry.priority ?? null,
     entry.done == null ? null : entry.done ? 1 : 0,
+    entry.reminderAt ?? null,
     entry.timestamp,
     userId,
   );
@@ -146,6 +164,16 @@ export function getEntry(id: string, userId: string): Entry | null {
   return row ? rowToEntry(row) : null;
 }
 
+export function repairEntryReminder(
+  id: string,
+  userId: string,
+  time: string,
+  reminderAt: string,
+): Entry | null {
+  stmtRepairReminder.run(time, encField("备忘"), reminderAt, reminderAt, id, userId);
+  return getEntry(id, userId);
+}
+
 // 用修正后的字段更新一条记录（保留 id/raw/time/timestamp/done 不变）。
 export function updateEntry(id: string, userId: string, fields: ParsedFields): Entry | null {
   const res = stmtUpdate.run(
@@ -157,6 +185,7 @@ export function updateEntry(id: string, userId: string, fields: ParsedFields): E
     fields.amount == null ? null : encField(String(fields.amount)),
     fields.currency ?? null,
     fields.priority ?? null,
+    null,
     id,
     userId,
   );
@@ -195,9 +224,14 @@ export function listKnowledge(userId: string): KnowledgeItem[] {
   return (stmtKnAll.all(userId) as unknown as KnowledgeRow[]).map(rowToKnowledge);
 }
 
-export function insertKnowledge(userId: string, title: string, content: string): KnowledgeItem {
+export function insertKnowledge(
+  userId: string,
+  title: string,
+  content: string,
+  id: string = crypto.randomUUID(),
+): KnowledgeItem {
   const item: KnowledgeItem = {
-    id: crypto.randomUUID(),
+    id,
     title,
     content,
     timestamp: new Date().toISOString(),
@@ -208,4 +242,65 @@ export function insertKnowledge(userId: string, title: string, content: string):
 
 export function deleteKnowledge(id: string, userId: string): boolean {
   return Number(stmtKnDelete.run(id, userId).changes) > 0;
+}
+
+export function importClientData(
+  userId: string,
+  migrationId: string,
+  entries: Entry[],
+  knowledge: Array<Omit<KnowledgeItem, "timestamp"> & { timestamp?: string }>,
+): { entries: number; knowledge: number; alreadyImported: boolean } {
+  const existing = db.prepare(
+    "SELECT 1 FROM client_imports WHERE user_id=? AND migration_id=?",
+  ).get(userId, migrationId);
+  if (existing) return { entries: 0, knowledge: 0, alreadyImported: true };
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const entry of entries) insertEntry(entry, userId);
+    for (const item of knowledge) {
+      stmtKnInsert.run(
+        item.id,
+        encField(item.title),
+        encField(item.content),
+        item.timestamp || new Date().toISOString(),
+        userId,
+      );
+    }
+    db.prepare(
+      "INSERT INTO client_imports (user_id,migration_id,imported_at) VALUES (?,?,?)",
+    ).run(userId, migrationId, new Date().toISOString());
+    db.exec("COMMIT");
+    return {
+      entries: entries.length,
+      knowledge: knowledge.length,
+      alreadyImported: false,
+    };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+// Permanently remove every piece of server-side data tied to an account.
+// Keep this list explicit so newly introduced per-user tables are easy to audit.
+export function deleteAccountData(userId: string): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM entries WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM knowledge WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM client_imports WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM report_cache WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM ai_jobs WHERE user_id = ?").run(userId);
+    // Remove outstanding codes for the account's email addresses before its
+    // sessions are removed, then revoke every session on every device.
+    db.prepare(`DELETE FROM email_codes WHERE email IN
+      (SELECT email FROM auth_sessions WHERE user_id = ?)`)
+      .run(userId);
+    db.prepare("DELETE FROM auth_sessions WHERE user_id = ?").run(userId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }

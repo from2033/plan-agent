@@ -1,0 +1,29 @@
+upstream personal_assistant_backend {
+  server __UPSTREAM__:8787;
+  keepalive 32;
+}
+
+server {
+  listen 8787;
+  server_name _;
+  client_max_body_size 20m;
+
+  location / {
+    proxy_pass http://personal_assistant_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+  }
+}
+
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  '' close;
+}

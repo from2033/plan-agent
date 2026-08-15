@@ -15,6 +15,7 @@ export interface Entry {
   currency?: string;
   priority?: Priority;
   done?: boolean;
+  reminderAt?: string; // ISO 8601，备忘到点提醒
   timestamp: string; // ISO 8601
 }
 
@@ -22,7 +23,7 @@ export interface Entry {
 export type ParsedFields = Pick<
   Entry,
   "type" | "description" | "category" | "amount" | "currency" | "timeRange" | "priority"
->;
+> & { date?: string; reminderTime?: string };
 
 // 知识库条目（长期参考型知识，独立于日常 entries）。
 export interface KnowledgeItem {

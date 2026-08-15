@@ -30,3 +30,4 @@ server/.env
 # misc
 *.log
 .DS_Store
+.codex-worker/

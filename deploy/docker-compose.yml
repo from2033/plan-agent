@@ -1,0 +1,17 @@
+name: personal-assistant
+
+services:
+  api:
+    image: ${PERSONAL_ASSISTANT_IMAGE:?Set PERSONAL_ASSISTANT_IMAGE to a prebuilt registry image}
+    container_name: personal-assistant
+    restart: unless-stopped
+    env_file: /etc/personal-assistant/server.env
+    volumes:
+      - /opt/personal-assistant/data:/data
+    networks:
+      - shared_web
+
+networks:
+  shared_web:
+    external: true
+    name: deploy_default

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.5656ai.personal-assistant-codex-worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/dcw/.nvm/versions/node/v20.20.2/bin/node</string>
+    <string>/Users/dcw/Desktop/projects/Personal Assistant App/scripts/codex-worker.mjs</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/dcw/Desktop/projects/Personal Assistant App</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/dcw</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/dcw/Library/Logs/PersonalAssistantCodexWorker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/dcw/Library/Logs/PersonalAssistantCodexWorker.error.log</string>
+</dict>
+</plist>

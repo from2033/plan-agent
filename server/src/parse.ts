@@ -122,6 +122,7 @@ const EntrySchema = z.object({
   currency: z.string().optional(),
   timeRange: z.object({ start: z.string(), end: z.string() }).optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 // 一次调用同时完成「意图判定」与（record/save 的）解析。
@@ -160,18 +161,17 @@ function buildSystemPrompt(nowStr: string): string {
 拆分原则：
 - 一句话里若包含多件事（比如先吃饭、之后去唱歌），每件事各出一条。
 - 同一件事若**既有时间段、又有花费**，拆成两条：一条 activity（带 timeRange，记行程/时长）+ 一条 expense（带 amount，记账）。例如"12点到13点吃饭花了30"→ 一条 activity(饮食, 12:00–13:00) + 一条 expense(餐饮, 30)。
-- **还没发生**的带时间安排（提到的时间晚于当前时间，或用"下午/晚上/明天/待会"等指将来且尚未到）：**必须输出 2 条，缺一不可** —— 一条 type=activity（行程，带 timeRange）＋ 一条 type=memo（备忘提醒，description 带上时间）。绝不能只出其中一条。
-  例：现在是早上 06:55，用户说"下午2点到3点开会"，必须输出这两条：
-  {"type":"activity","category":"工作","description":"开会","timeRange":{"start":"14:00","end":"15:00"}} 和 {"type":"memo","category":"备忘","description":"下午2点到3点开会","priority":"low"}
+- **还没发生**的安排仍然只记一条 activity；只有用户明确说"提醒我/别忘了/记得"才记 memo，不要额外复制。
 - **已经发生**的活动（时间早于当前、或用过去时"了/过"）只出 activity，不要 memo。
 - 只有花费没有时间 → 只出 expense。
 
 每条记录判断 type：
 - expense（消费）：涉及花钱、买东西、付款、充值。抽取 amount（数字，单位元）和 currency（统一写 "CNY"）。category 从这些里选最贴切的一个：${EXPENSE_CATS.join("、")}。
-- memo（备忘/提醒）：明确的待办/提醒事项（含"记得/提醒/别忘了/待办"等），或上面规则里"还没发生的带时间安排"的提醒副本。category 固定为 "备忘"。根据语气判断 priority：含"重要/紧急"→high，含"尽快"→medium，否则 low。
+- memo（备忘/提醒）：明确的待办/提醒事项（含"记得/提醒/别忘了/待办"等）。category 固定为 "备忘"。根据语气判断 priority：含"重要/紧急"→high，含"尽快"→medium，否则 low。
 - wish（心愿/期待）：**没有具体时间**的将来愿望、打算、想做的事（如"找个时间去丽江旅游"、"有空想学钢琴"、"以后想买房"、"总有一天去看极光"）。和 memo 的区别：memo 是近期要落实的待办，wish 是没排期的长期心愿。category 固定为 "心愿"。
 - activity（活动/行程）：日常记录，既包括**已经做过的事**，也包括**有明确时间安排的计划**（如"15:00-16:00去唱歌"）。category 从这些里选最贴切的一个：${ACTIVITY_CATS.join("、")}。有时间段就填 timeRange（start/end 用 "HH:MM" 24 小时制）。
 
+date：把今天/明天/后天/下周一/某月某日换算为 YYYY-MM-DD；没有日期时省略。
 description：简洁描述（去掉"记得/提醒/花了/在"等口头词、去掉金额）。activity 和 expense 的 description 去掉时间表达；memo 的 description 可保留时间，方便提醒。
 category 必须从上面对应的列表里选，不要自创新分类。每条只输出与该 type 相关的字段。`;
 }

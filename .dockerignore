@@ -1,0 +1,10 @@
+.git
+.DS_Store
+node_modules
+**/node_modules
+dist
+**/dist
+build
+**/build
+.dart_tool
+**/.dart_tool

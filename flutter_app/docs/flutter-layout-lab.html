@@ -1,0 +1,1769 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Flutter Layout Lab</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;max-width:736px;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Flutter Layout Lab" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Flutter Layout Lab&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(--background) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: light-dark(rgb(255 255 255), rgb(24 24 24));
+  --foreground: light-dark(rgb(26 28 31), rgb(255 255 255));
+  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --card-foreground: var(--foreground);
+  --popover: light-dark(rgb(255 255 255), rgb(45 45 45));
+  --popover-foreground: var(--foreground);
+  --primary: light-dark(rgb(51 156 255), rgb(131 195 255));
+  --primary-foreground: light-dark(rgb(255 255 255), rgb(13 13 13));
+  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: light-dark(
+    rgb(26 28 31 / 49.4%),
+    rgb(255 255 255 / 49.8%)
+  );
+  --accent: light-dark(rgb(229 242 255), rgb(13 39 63));
+  --accent-foreground: var(--primary);
+  --destructive: light-dark(rgb(226 85 7), rgb(255 133 73));
+  --border: light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%));
+  --input: light-dark(
+    rgb(26 28 31 / 11.8%),
+    color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+  );
+  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
+  --font-size-base: 14px;
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: 12.5px;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+  --color-background-primary: var(--background);
+  --color-text-primary: var(--foreground);
+  --color-border-secondary: var(--border);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--viz-font-weight-medium);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+    [aria-pressed=&quot;true&quot;],
+    [aria-selected=&quot;true&quot;],
+    .is-selected
+  ) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;style&gt;
+  #flutter-layout-lab {
+    color: var(--foreground);
+  }
+
+  #flutter-layout-lab .lab-toolbar {
+    margin-bottom: 16px;
+  }
+
+  #flutter-layout-lab .lab-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px;
+    align-items: stretch;
+  }
+
+  #flutter-layout-lab .lab-panel {
+    min-width: 0;
+  }
+
+  #flutter-layout-lab .panel-label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--muted-foreground);
+  }
+
+  #flutter-layout-lab .code-card,
+  #flutter-layout-lab .preview-card {
+    height: 100%;
+    box-sizing: border-box;
+  }
+
+  #flutter-layout-lab pre {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    color: var(--card-foreground);
+  }
+
+  #flutter-layout-lab .preview-stage {
+    min-height: 390px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    box-sizing: border-box;
+  }
+
+  #flutter-layout-lab .phone {
+    width: min(100%, 300px);
+    min-height: 350px;
+    border: 2px solid var(--border);
+    border-radius: 28px;
+    padding: 14px;
+    box-sizing: border-box;
+    background: var(--background);
+    color: var(--foreground);
+    position: relative;
+    overflow: hidden;
+  }
+
+  #flutter-layout-lab .phone::before {
+    content: &quot;&quot;;
+    display: block;
+    width: 76px;
+    height: 7px;
+    margin: -5px auto 12px;
+    border-radius: 999px;
+    background: var(--muted-foreground);
+    opacity: 0.55;
+  }
+
+  #flutter-layout-lab .demo-box {
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--viz-series-1) 14%, var(--background));
+    color: var(--foreground);
+    padding: 10px;
+    box-sizing: border-box;
+    text-align: center;
+  }
+
+  #flutter-layout-lab .demo-box.secondary {
+    background: var(--muted);
+    color: var(--muted-foreground);
+  }
+
+  #flutter-layout-lab .demo-box.accent {
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+
+  #flutter-layout-lab .mini-app {
+    min-height: 320px;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    position: relative;
+  }
+
+  #flutter-layout-lab .app-bar,
+  #flutter-layout-lab .bottom-bar {
+    padding: 11px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    text-align: center;
+  }
+
+  #flutter-layout-lab .app-body {
+    padding: 12px;
+    background: var(--background);
+  }
+
+  #flutter-layout-lab .fab {
+    position: absolute;
+    right: 14px;
+    bottom: 52px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+
+  #flutter-layout-lab .safe-demo {
+    height: 320px;
+    border: 1px dashed var(--border);
+    position: relative;
+    padding: 42px 14px 28px;
+    box-sizing: border-box;
+  }
+
+  #flutter-layout-lab .unsafe-top,
+  #flutter-layout-lab .unsafe-bottom {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: color-mix(in srgb, var(--destructive) 16%, transparent);
+    color: var(--foreground);
+    text-align: center;
+    padding: 7px;
+  }
+
+  #flutter-layout-lab .unsafe-top {
+    top: 0;
+  }
+
+  #flutter-layout-lab .unsafe-bottom {
+    bottom: 0;
+  }
+
+  #flutter-layout-lab .padding-outer {
+    border: 1px dashed var(--border);
+    padding: 36px;
+    background: color-mix(in srgb, var(--viz-series-2) 10%, transparent);
+  }
+
+  #flutter-layout-lab .alignment-stage {
+    height: 300px;
+    border: 1px dashed var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #flutter-layout-lab .row-demo,
+  #flutter-layout-lab .wrap-demo {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+  }
+
+  #flutter-layout-lab .row-demo {
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  #flutter-layout-lab .column-demo {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+  }
+
+  #flutter-layout-lab .expanded-demo {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  #flutter-layout-lab .expanded-demo .fixed {
+    flex: 0 0 62px;
+  }
+
+  #flutter-layout-lab .expanded-demo .expanded {
+    flex: 1 1 auto;
+  }
+
+  #flutter-layout-lab .wrap-demo {
+    flex-wrap: wrap;
+    align-content: flex-start;
+  }
+
+  #flutter-layout-lab .chip {
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+
+  #flutter-layout-lab .stack-demo {
+    width: 230px;
+    height: 260px;
+    position: relative;
+    background: var(--muted);
+    color: var(--muted-foreground);
+  }
+
+  #flutter-layout-lab .stack-image {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+  }
+
+  #flutter-layout-lab .stack-label {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    right: 12px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    padding: 10px;
+  }
+
+  #flutter-layout-lab .list-demo {
+    width: 100%;
+    max-height: 290px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #flutter-layout-lab .grid-demo {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  #flutter-layout-lab .responsive-demo {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr);
+    gap: 12px;
+    align-items: start;
+  }
+
+  #flutter-layout-lab .viewport {
+    border: 1px dashed var(--border);
+    padding: 10px;
+  }
+
+  #flutter-layout-lab .viewport.narrow .responsive-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #flutter-layout-lab .viewport.wide .responsive-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  #flutter-layout-lab .viewport-label {
+    margin-bottom: 8px;
+    color: var(--muted-foreground);
+  }
+
+  #flutter-layout-lab .note-line {
+    margin: 12px 0 0;
+    color: var(--muted-foreground);
+  }
+
+  @media (max-width: 680px) {
+    #flutter-layout-lab .lab-grid {
+      grid-template-columns: 1fr;
+    }
+
+    #flutter-layout-lab .preview-stage {
+      min-height: 330px;
+    }
+
+    #flutter-layout-lab .responsive-demo {
+      grid-template-columns: 1fr;
+    }
+  }
+&lt;/style&gt;
+
+&lt;div id=&quot;flutter-layout-lab&quot;&gt;
+  &lt;div class=&quot;viz-controls lab-toolbar&quot;&gt;
+    &lt;label class=&quot;form-label&quot; for=&quot;layout-lesson&quot;&gt;
+      知识点
+      &lt;select class=&quot;form-select&quot; id=&quot;layout-lesson&quot;&gt;
+        &lt;option value=&quot;scaffold&quot;&gt;Scaffold · 页面骨架&lt;/option&gt;
+        &lt;option value=&quot;safe-area&quot;&gt;SafeArea · 安全区域&lt;/option&gt;
+        &lt;option value=&quot;padding&quot;&gt;Padding · 内边距&lt;/option&gt;
+        &lt;option value=&quot;center-align&quot;&gt;Center / Align · 对齐&lt;/option&gt;
+        &lt;option value=&quot;row&quot;&gt;Row · 横向排列&lt;/option&gt;
+        &lt;option value=&quot;column&quot;&gt;Column · 纵向排列&lt;/option&gt;
+        &lt;option value=&quot;expanded&quot;&gt;Expanded / Spacer · 剩余空间&lt;/option&gt;
+        &lt;option value=&quot;wrap&quot;&gt;Wrap · 自动换行&lt;/option&gt;
+        &lt;option value=&quot;stack&quot;&gt;Stack / Positioned · 层叠定位&lt;/option&gt;
+        &lt;option value=&quot;list-view&quot;&gt;ListView · 滚动列表&lt;/option&gt;
+        &lt;option value=&quot;grid-view&quot;&gt;GridView · 网格布局&lt;/option&gt;
+        &lt;option value=&quot;responsive&quot;&gt;LayoutBuilder · 响应式布局&lt;/option&gt;
+      &lt;/select&gt;
+    &lt;/label&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;lab-grid&quot;&gt;
+    &lt;section class=&quot;lab-panel&quot; aria-labelledby=&quot;code-label&quot;&gt;
+      &lt;span class=&quot;panel-label&quot; id=&quot;code-label&quot;&gt;Flutter 代码&lt;/span&gt;
+      &lt;div class=&quot;card code-card&quot;&gt;
+        &lt;pre&gt;&lt;code id=&quot;layout-code&quot;&gt;&lt;/code&gt;&lt;/pre&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;lab-panel&quot; aria-labelledby=&quot;preview-label&quot;&gt;
+      &lt;span class=&quot;panel-label&quot; id=&quot;preview-label&quot;&gt;对应布局&lt;/span&gt;
+      &lt;div class=&quot;card preview-card&quot;&gt;
+        &lt;div class=&quot;preview-stage&quot; id=&quot;layout-preview&quot; role=&quot;img&quot; aria-live=&quot;polite&quot;&gt;&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+  &lt;/div&gt;
+
+  &lt;p class=&quot;note-line&quot; id=&quot;layout-note&quot; aria-live=&quot;polite&quot;&gt;&lt;/p&gt;
+
+  &lt;template id=&quot;preview-scaffold&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;mini-app&quot;&gt;
+        &lt;div class=&quot;app-bar&quot;&gt;AppBar · Daynote&lt;/div&gt;
+        &lt;div class=&quot;app-body&quot;&gt;
+          &lt;div class=&quot;demo-box&quot;&gt;body&lt;/div&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;bottom-bar&quot;&gt;bottomNavigationBar&lt;/div&gt;
+        &lt;div class=&quot;fab&quot;&gt;＋&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-safe-area&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;safe-demo&quot;&gt;
+        &lt;div class=&quot;unsafe-top&quot;&gt;刘海 / 状态栏&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;SafeArea 内的内容&lt;/div&gt;
+        &lt;div class=&quot;unsafe-bottom&quot;&gt;Home Indicator&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-padding&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;padding-outer&quot;&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;内容&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-center-align&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;alignment-stage&quot;&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;居中&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-row&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;row-demo&quot;&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;头像&lt;/div&gt;
+        &lt;div class=&quot;demo-box expanded&quot;&gt;用户名&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;按钮&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-column&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;column-demo&quot;&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;标题&lt;/div&gt;
+        &lt;div class=&quot;demo-box secondary&quot;&gt;说明文字&lt;/div&gt;
+        &lt;div class=&quot;demo-box accent&quot;&gt;操作按钮&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-expanded&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;expanded-demo&quot;&gt;
+        &lt;div class=&quot;demo-box fixed&quot;&gt;固定&lt;/div&gt;
+        &lt;div class=&quot;demo-box expanded&quot;&gt;Expanded 占满剩余空间&lt;/div&gt;
+        &lt;div class=&quot;demo-box fixed&quot;&gt;固定&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-wrap&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;wrap-demo&quot;&gt;
+        &lt;span class=&quot;chip&quot;&gt;工作&lt;/span&gt;
+        &lt;span class=&quot;chip&quot;&gt;生活记录&lt;/span&gt;
+        &lt;span class=&quot;chip&quot;&gt;待办&lt;/span&gt;
+        &lt;span class=&quot;chip&quot;&gt;灵感&lt;/span&gt;
+        &lt;span class=&quot;chip&quot;&gt;消费记录&lt;/span&gt;
+        &lt;span class=&quot;chip&quot;&gt;知识&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-stack&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;stack-demo&quot;&gt;
+        &lt;div class=&quot;stack-image&quot;&gt;背景图片&lt;/div&gt;
+        &lt;div class=&quot;stack-label&quot;&gt;Positioned 底部标题&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-list-view&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;list-demo&quot;&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;记录 1&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;记录 2&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;记录 3&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;记录 4&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;记录 5&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;记录 6&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-grid-view&quot;&gt;
+    &lt;div class=&quot;phone&quot;&gt;
+      &lt;div class=&quot;grid-demo&quot;&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;1&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;2&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;3&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;4&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;5&lt;/div&gt;
+        &lt;div class=&quot;demo-box&quot;&gt;6&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+
+  &lt;template id=&quot;preview-responsive&quot;&gt;
+    &lt;div class=&quot;responsive-demo&quot;&gt;
+      &lt;div class=&quot;viewport narrow&quot;&gt;
+        &lt;div class=&quot;viewport-label&quot;&gt;窄屏：Column&lt;/div&gt;
+        &lt;div class=&quot;responsive-content&quot;&gt;
+          &lt;div class=&quot;demo-box&quot;&gt;区域 A&lt;/div&gt;
+          &lt;div class=&quot;demo-box&quot;&gt;区域 B&lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;viewport wide&quot;&gt;
+        &lt;div class=&quot;viewport-label&quot;&gt;宽屏：Row&lt;/div&gt;
+        &lt;div class=&quot;responsive-content&quot;&gt;
+          &lt;div class=&quot;demo-box&quot;&gt;区域 A&lt;/div&gt;
+          &lt;div class=&quot;demo-box&quot;&gt;区域 B&lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/template&gt;
+&lt;/div&gt;
+
+&lt;script&gt;
+  (() =&gt; {
+    const root = document.getElementById(&#x27;flutter-layout-lab&#x27;);
+    const lessonSelect = root.querySelector(&#x27;#layout-lesson&#x27;);
+    const code = root.querySelector(&#x27;#layout-code&#x27;);
+    const preview = root.querySelector(&#x27;#layout-preview&#x27;);
+    const note = root.querySelector(&#x27;#layout-note&#x27;);
+
+    const lessons = {
+      scaffold: {
+        label: &#x27;Scaffold 页面骨架&#x27;,
+        note: &#x27;Scaffold 划分页面级区域；具体内容通常放在 body 中。&#x27;,
+        code: `Scaffold(
+  appBar: AppBar(
+    title: const Text(&#x27;Daynote&#x27;),
+  ),
+  body: const Center(
+    child: Text(&#x27;页面内容&#x27;),
+  ),
+  floatingActionButton: FloatingActionButton(
+    onPressed: () {},
+    child: const Icon(Icons.add),
+  ),
+  bottomNavigationBar: NavigationBar(
+    destinations: const [
+      NavigationDestination(
+        icon: Icon(Icons.home),
+        label: &#x27;首页&#x27;,
+      ),
+    ],
+  ),
+)`,
+      },
+      &#x27;safe-area&#x27;: {
+        label: &#x27;SafeArea 安全区域&#x27;,
+        note: &#x27;SafeArea 根据系统边距避开刘海、状态栏和底部手势区域。&#x27;,
+        code: `Scaffold(
+  body: SafeArea(
+    child: Text(&#x27;不会被刘海遮挡&#x27;),
+  ),
+)`,
+      },
+      padding: {
+        label: &#x27;Padding 内边距&#x27;,
+        note: &#x27;Padding 让子组件与自己的边界保持指定距离。&#x27;,
+        code: `Padding(
+  padding: const EdgeInsets.all(24),
+  child: Container(
+    color: Colors.orange,
+    child: const Text(&#x27;内容&#x27;),
+  ),
+)`,
+      },
+      &#x27;center-align&#x27;: {
+        label: &#x27;Center 与 Align 对齐&#x27;,
+        note: &#x27;父组件获得可用空间后，决定子组件在其中的位置。&#x27;,
+        code: `Center(
+  child: Container(
+    width: 100,
+    height: 60,
+    alignment: Alignment.center,
+    child: const Text(&#x27;居中&#x27;),
+  ),
+)`,
+      },
+      row: {
+        label: &#x27;Row 横向排列&#x27;,
+        note: &#x27;Row 沿主轴横向排列；mainAxisAlignment 控制横向空间分配。&#x27;,
+        code: `Row(
+  mainAxisAlignment:
+      MainAxisAlignment.spaceBetween,
+  crossAxisAlignment:
+      CrossAxisAlignment.center,
+  children: const [
+    CircleAvatar(),
+    Text(&#x27;用户名&#x27;),
+    Icon(Icons.more_horiz),
+  ],
+)`,
+      },
+      column: {
+        label: &#x27;Column 纵向排列&#x27;,
+        note: &#x27;Column 沿主轴纵向排列；crossAxisAlignment 控制横向对齐。&#x27;,
+        code: `Column(
+  crossAxisAlignment:
+      CrossAxisAlignment.stretch,
+  children: [
+    const Text(&#x27;标题&#x27;),
+    const SizedBox(height: 12),
+    const Text(&#x27;说明文字&#x27;),
+    const SizedBox(height: 20),
+    FilledButton(
+      onPressed: () {},
+      child: const Text(&#x27;继续&#x27;),
+    ),
+  ],
+)`,
+      },
+      expanded: {
+        label: &#x27;Expanded 与 Spacer&#x27;,
+        note: &#x27;Expanded 吃掉 Row/Column 的剩余空间；Spacer 是没有内容的弹性空白。&#x27;,
+        code: `Row(
+  children: const [
+    SizedBox(
+      width: 60,
+      child: Text(&#x27;固定&#x27;),
+    ),
+    Expanded(
+      child: Text(&#x27;占满剩余空间&#x27;),
+    ),
+    SizedBox(
+      width: 60,
+      child: Text(&#x27;固定&#x27;),
+    ),
+  ],
+)`,
+      },
+      wrap: {
+        label: &#x27;Wrap 自动换行&#x27;,
+        note: &#x27;空间不足时，Wrap 会把后续子组件移动到下一行。&#x27;,
+        code: `Wrap(
+  spacing: 8,
+  runSpacing: 8,
+  children: const [
+    Chip(label: Text(&#x27;工作&#x27;)),
+    Chip(label: Text(&#x27;生活记录&#x27;)),
+    Chip(label: Text(&#x27;待办&#x27;)),
+    Chip(label: Text(&#x27;灵感&#x27;)),
+    Chip(label: Text(&#x27;消费记录&#x27;)),
+  ],
+)`,
+      },
+      stack: {
+        label: &#x27;Stack 与 Positioned&#x27;,
+        note: &#x27;Stack 允许组件重叠；Positioned 根据 Stack 边界定位。&#x27;,
+        code: `Stack(
+  children: [
+    Positioned.fill(
+      child: Image.asset(
+        &#x27;cover.png&#x27;,
+        fit: BoxFit.cover,
+      ),
+    ),
+    const Positioned(
+      left: 12,
+      right: 12,
+      bottom: 12,
+      child: Text(&#x27;底部标题&#x27;),
+    ),
+  ],
+)`,
+      },
+      &#x27;list-view&#x27;: {
+        label: &#x27;ListView 滚动列表&#x27;,
+        note: &#x27;ListView.builder 只按需构建可见项，适合长度不固定的列表。&#x27;,
+        code: `ListView.builder(
+  itemCount: entries.length,
+  itemBuilder: (context, index) {
+    final entry = entries[index];
+    return ListTile(
+      title: Text(entry.title),
+      subtitle: Text(entry.description),
+    );
+  },
+)`,
+      },
+      &#x27;grid-view&#x27;: {
+        label: &#x27;GridView 网格布局&#x27;,
+        note: &#x27;GridView 同时提供网格排列和滚动能力。&#x27;,
+        code: `GridView.builder(
+  gridDelegate:
+      const SliverGridDelegateWithFixedCrossAxisCount(
+    crossAxisCount: 2,
+    crossAxisSpacing: 12,
+    mainAxisSpacing: 12,
+  ),
+  itemCount: items.length,
+  itemBuilder: (context, index) {
+    return Card(
+      child: Center(
+        child: Text(&#x27;$index&#x27;),
+      ),
+    );
+  },
+)`,
+      },
+      responsive: {
+        label: &#x27;LayoutBuilder 响应式布局&#x27;,
+        note: &#x27;LayoutBuilder 根据父组件传下来的 maxWidth 选择不同布局。&#x27;,
+        code: `LayoutBuilder(
+  builder: (context, constraints) {
+    final wide = constraints.maxWidth &gt;= 600;
+
+    if (wide) {
+      return Row(
+        children: const [
+          Expanded(child: PanelA()),
+          Expanded(child: PanelB()),
+        ],
+      );
+    }
+
+    return const Column(
+      children: [
+        PanelA(),
+        PanelB(),
+      ],
+    );
+  },
+)`,
+      },
+    };
+
+    function renderLesson(key) {
+      const lesson = lessons[key];
+      const template = root.querySelector(`#preview-${key}`);
+      if (!lesson || !template) return;
+
+      code.textContent = lesson.code;
+      note.textContent = lesson.note;
+      preview.setAttribute(&#x27;aria-label&#x27;, lesson.label);
+      preview.replaceChildren(template.content.cloneNode(true));
+    }
+
+    lessonSelect.addEventListener(&#x27;change&#x27;, (event) =&gt; {
+      renderLesson(event.target.value);
+    });
+
+    renderLesson(lessonSelect.value);
+  })();
+&lt;/script&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>

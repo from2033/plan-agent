@@ -1,0 +1,11 @@
+assistant.5656ai.com {
+  encode zstd gzip
+  reverse_proxy personal-assistant-router:8787
+  header {
+    X-Content-Type-Options nosniff
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    Referrer-Policy strict-origin-when-cross-origin
+    Permissions-Policy "camera=(), microphone=(self), geolocation=()"
+    -Server
+  }
+}

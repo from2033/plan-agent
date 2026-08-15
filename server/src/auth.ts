@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
+import { resolveEmailSession } from "./email-auth.js";
+import { resolveGuestSession } from "./guest-auth.js";
 
 // 多用户：每个用户一个 token（既是身份也是密码），数据按 userId 隔离。
 // 配置来源（server/.env）：
@@ -38,7 +40,7 @@ export function resolveUserId(token: string): string | null {
   for (const [t, userId] of USERS) {
     if (safeEqual(token, t)) return userId;
   }
-  return null;
+  return resolveEmailSession(token) || resolveGuestSession(token);
 }
 
 declare global {
@@ -51,10 +53,6 @@ declare global {
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  if (USERS.size === 0) {
-    res.status(500).json({ error: "服务器未配置任何用户 token（ACCESS_TOKEN / USERS）" });
-    return;
-  }
   const header = req.header("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   const userId = token ? resolveUserId(token) : null;

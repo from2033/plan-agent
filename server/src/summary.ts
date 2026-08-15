@@ -5,7 +5,7 @@ import { z } from "zod";
 // AI 报告：根据用户某一天/某一个月的流水账记录，生成口语化的亮点 / 待改进 / 建议。
 // 只产出文字点评；具体数字（花费、条数等）由前端本地即时算，无需 AI。
 
-export type ReportScope = "day" | "month";
+export type ReportScope = "day" | "week" | "month";
 
 export interface ReportEntry {
   type: string;
@@ -44,8 +44,12 @@ function serialize(entries: ReportEntry[]): string {
 }
 
 function buildSystemPrompt(scope: ReportScope, dateLabel: string): string {
-  const span = scope === "day" ? `这一天（${dateLabel}）` : `这个月（${dateLabel}）`;
-  const next = scope === "day" ? "明天" : "下个月";
+  const span = scope === "day"
+    ? `这一天（${dateLabel}）`
+    : scope === "week"
+      ? `这一周（${dateLabel}）`
+      : `这个月（${dateLabel}）`;
+  const next = scope === "day" ? "明天" : scope === "week" ? "下周" : "下个月";
   return `你是一个贴心的中文生活记录助手。下面是用户${span}的流水账记录（每行一条：类型 | 分类 | 描述，可能带金额、时间段、完成状态）。
 
 请据此写一份简短、口语化、带点鼓励的小结，分三部分，各 2~4 条，每条一句话：

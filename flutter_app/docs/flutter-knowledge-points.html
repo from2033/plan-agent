@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Daynote Flutter App 知识点地图</title>
+  <style>
+    :root {
+      --paper: #f5f1e8;
+      --surface: rgba(255, 255, 255, .78);
+      --ink: #24211d;
+      --muted: #706a61;
+      --line: #ded6c8;
+      --accent: #d97706;
+      --accent-soft: #fff0d8;
+      --code: #2e2924;
+      --shadow: 0 14px 36px rgba(65, 48, 27, .08);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 8% 0%, #fff7e8 0, transparent 28rem),
+        radial-gradient(circle at 95% 18%, #eadfcd 0, transparent 25rem),
+        var(--paper);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.7;
+    }
+
+    a { color: inherit; }
+    code {
+      padding: .12rem .38rem;
+      border-radius: .35rem;
+      color: var(--code);
+      background: #eee8de;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: .9em;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 900px);
+      gap: 42px;
+      width: min(1210px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 80px;
+    }
+
+    aside {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+      max-height: calc(100vh - 48px);
+      overflow: auto;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(250, 247, 240, .84);
+      backdrop-filter: blur(12px);
+    }
+
+    aside strong { display: block; margin-bottom: 12px; font-size: 14px; }
+    aside a {
+      display: block;
+      padding: 5px 8px;
+      border-radius: 8px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+    }
+    aside a:hover { color: var(--accent); background: var(--accent-soft); }
+
+    main { min-width: 0; }
+    .hero {
+      padding: 48px;
+      border: 1px solid rgba(217, 119, 6, .18);
+      border-radius: 28px;
+      color: white;
+      background: linear-gradient(135deg, #28231e, #4b3523 70%, #754318);
+      box-shadow: var(--shadow);
+    }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: #ffd69a;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(32px, 6vw, 58px); line-height: 1.08; }
+    .hero p { max-width: 680px; margin: 18px 0 0; color: #eee5d9; }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+    .tag {
+      padding: 6px 10px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      font-size: 12px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin: 18px 0 34px;
+    }
+    .summary div {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+    .summary b { display: block; color: var(--accent); font-size: 24px; }
+    .summary span { color: var(--muted); font-size: 13px; }
+
+    section { scroll-margin-top: 24px; margin-top: 18px; }
+    .card {
+      padding: 27px 30px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--surface);
+      box-shadow: 0 8px 26px rgba(67, 50, 30, .045);
+    }
+    .section-head { display: flex; align-items: center; gap: 13px; margin-bottom: 12px; }
+    .number {
+      display: grid;
+      flex: 0 0 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 11px;
+      color: #8b4a00;
+      background: var(--accent-soft);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    h2 { margin: 0; font-size: 21px; }
+    ul { margin: 10px 0 0; padding-left: 1.25rem; }
+    li { margin: 5px 0; }
+    .file { margin-top: 15px; color: var(--muted); font-size: 13px; }
+    .file code { word-break: break-all; }
+
+    .priority {
+      padding: 32px;
+      border-radius: 22px;
+      background: #fff8ec;
+      border: 1px solid #eccd9f;
+    }
+    .priority ol { margin-bottom: 0; padding-left: 1.35rem; }
+    footer { margin-top: 28px; color: var(--muted); text-align: center; font-size: 12px; }
+
+    @media (max-width: 850px) {
+      .layout { display: block; width: min(100% - 24px, 760px); padding-top: 12px; }
+      aside { position: static; margin-bottom: 12px; max-height: none; }
+      aside strong { margin-bottom: 7px; }
+      aside nav { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 5px; }
+      aside a { flex: 0 0 auto; background: rgba(255,255,255,.65); }
+      .hero { padding: 32px 24px; border-radius: 22px; }
+      .summary { grid-template-columns: 1fr; }
+      .card { padding: 22px 20px; }
+    }
+
+    @media print {
+      body { background: white; }
+      .layout { display: block; width: 100%; padding: 0; }
+      aside { display: none; }
+      .hero { color: black; background: white; box-shadow: none; }
+      .hero p, .eyebrow { color: #555; }
+      .tag { border-color: #aaa; }
+      .card { break-inside: avoid; box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside aria-label="页面目录">
+      <strong>知识点目录</strong>
+      <nav>
+        <a href="#dart">01 Dart 语言</a>
+        <a href="#lifecycle">02 生命周期</a>
+        <a href="#state">03 状态管理</a>
+        <a href="#ui">04 UI 与布局</a>
+        <a href="#auth">05 登录与安全</a>
+        <a href="#api">06 网络与 API</a>
+        <a href="#local">07 本地数据</a>
+        <a href="#model">08 数据建模</a>
+        <a href="#datetime">09 日期与国际化</a>
+        <a href="#voice">10 录音与语音</a>
+        <a href="#ai">11 AI 异步任务</a>
+        <a href="#cache">12 报告与缓存</a>
+        <a href="#channel">13 原生通道</a>
+        <a href="#ios">14 iOS 能力</a>
+        <a href="#privacy">15 隐私合规</a>
+        <a href="#test">16 测试与质量</a>
+        <a href="#priority">学习顺序</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header class="hero">
+        <p class="eyebrow">Project Knowledge Map</p>
+        <h1>Daynote Flutter App<br>知识点地图</h1>
+        <p>该项目不是基础示例，而是一个 iOS 优先的个人助理客户端，覆盖账户、语音、AI 任务、本地数据、原生提醒和 App Store 合规等完整移动应用链路。</p>
+        <div class="tags">
+          <span class="tag">Flutter / Dart</span>
+          <span class="tag">Material 3</span>
+          <span class="tag">REST API</span>
+          <span class="tag">语音识别</span>
+          <span class="tag">Swift / MethodChannel</span>
+          <span class="tag">AlarmKit</span>
+        </div>
+      </header>
+
+      <div class="summary" aria-label="项目概览">
+        <div><b>16</b><span>个核心知识领域</span></div>
+        <div><b>3</b><span>种会话状态：未登录、访客、正式账户</span></div>
+        <div><b>4</b><span>类生活记录：行程、账单、备忘、心愿</span></div>
+      </div>
+
+      <section id="dart" class="card">
+        <div class="section-head"><span class="number">01</span><h2>Dart 语言基础</h2></div>
+        <ul>
+          <li>类、命名参数、空安全、枚举、Getter 和 Factory 构造函数。</li>
+          <li>JSON 序列化与反序列化、可选字段和 <code>copyWith</code>。</li>
+          <li><code>map</code>、<code>where</code>、<code>fold</code> 等集合操作。</li>
+          <li>Dart 3 Record、Switch expression 和模式化数据组织。</li>
+          <li><code>Future</code>、<code>async/await</code>、<code>Completer</code>、异常和超时。</li>
+        </ul>
+        <p class="file">对应文件：<code>lib/models.dart</code></p>
+      </section>
+
+      <section id="lifecycle" class="card">
+        <div class="section-head"><span class="number">02</span><h2>Flutter 应用与组件生命周期</h2></div>
+        <ul>
+          <li><code>main</code>、<code>runApp</code>、Flutter Binding 初始化和竖屏锁定。</li>
+          <li><code>StatefulWidget</code>、<code>StatelessWidget</code>、<code>initState</code>、<code>build</code>、<code>dispose</code>。</li>
+          <li>异步操作后的 <code>mounted</code> 检查和资源释放。</li>
+          <li>应用启动时恢复本地会话，再决定显示登录页或主页。</li>
+        </ul>
+        <p class="file">对应文件：<code>lib/main.dart</code></p>
+      </section>
+
+      <section id="state" class="card">
+        <div class="section-head"><span class="number">03</span><h2>状态管理与交互状态</h2></div>
+        <ul>
+          <li>当前采用 Flutter 原生 <code>setState</code>，没有引入 Provider、Riverpod 或 Bloc。</li>
+          <li>登录、加载、错误、录音、识别、后台处理等多状态组合。</li>
+          <li>父子组件回调、状态提升和 revision 驱动子页面刷新。</li>
+          <li>乐观更新：先更新 UI，请求失败后恢复旧数据。</li>
+          <li>利用 <code>_disposing</code> 避免销毁后的异步状态更新。</li>
+        </ul>
+      </section>
+
+      <section id="ui" class="card">
+        <div class="section-head"><span class="number">04</span><h2>Material 3 UI 与移动端布局</h2></div>
+        <ul>
+          <li>主题、ColorScheme、Scaffold、Dialog、SnackBar、Bottom Sheet。</li>
+          <li>SegmentedButton、DatePicker、RefreshIndicator 和进度状态。</li>
+          <li>SafeArea、LayoutBuilder、Expanded、ListView 和滚动布局。</li>
+          <li>卡片、空状态、错误提示、窄屏溢出处理与中文字体回退。</li>
+          <li>按住录音、松开提交的 Pointer 交互。</li>
+        </ul>
+      </section>
+
+      <section id="auth" class="card">
+        <div class="section-head"><span class="number">05</span><h2>登录、会话与安全存储</h2></div>
+        <ul>
+          <li>邮箱验证码登录和客户端输入校验。</li>
+          <li><code>signedOut</code>、<code>guest</code>、<code>signedIn</code> 三种会话状态。</li>
+          <li>Bearer Token、会话恢复、失效处理和退出登录。</li>
+          <li>通过 <code>flutter_secure_storage</code> 使用 iOS Keychain 保存凭据。</li>
+          <li>账户删除二次确认以及删除后的本地凭据清理。</li>
+        </ul>
+        <p class="file">对应文件：<code>lib/api_client.dart</code>、<code>lib/main.dart</code></p>
+      </section>
+
+      <section id="api" class="card">
+        <div class="section-head"><span class="number">06</span><h2>HTTP、REST API 与错误处理</h2></div>
+        <ul>
+          <li>使用 <code>http</code> 包完成 GET、POST、PATCH、DELETE。</li>
+          <li>JSON 编解码、HTTP 状态码、自定义 <code>ApiException</code>。</li>
+          <li>网络异常转换成适合最终用户阅读的中文提示。</li>
+          <li>通过 <code>--dart-define=API_BASE=...</code> 注入环境地址。</li>
+          <li>以 <code>application/octet-stream</code> 上传音频二进制数据。</li>
+        </ul>
+        <p class="file">对应文件：<code>lib/api_client.dart</code></p>
+      </section>
+
+      <section id="local" class="card">
+        <div class="section-head"><span class="number">07</span><h2>访客模式与本地持久化</h2></div>
+        <ul>
+          <li>使用 SharedPreferences 保存访客记录和知识库 JSON。</li>
+          <li>本地 Upsert、删除、完成状态更新和损坏数据容错。</li>
+          <li>访客登录正式账户后，将本机数据自动迁移到云端。</li>
+          <li><code>migrationId</code> 支持服务端实现幂等迁移。</li>
+          <li>利用 Future 链和 Completer 串行执行写操作，减少竞争条件。</li>
+        </ul>
+        <p class="file">对应文件：<code>lib/guest_store.dart</code></p>
+      </section>
+
+      <section id="model" class="card">
+        <div class="section-head"><span class="number">08</span><h2>业务数据建模</h2></div>
+        <ul>
+          <li>行程、账单、备忘、心愿和个人知识库。</li>
+          <li>金额、分类、时间范围、优先级、完成状态和提醒时间。</li>
+          <li>日报、周报、月报以及亮点、改进、建议三类报告内容。</li>
+          <li>UTC 与本地时间互转、ISO 8601 格式和后端字段兼容。</li>
+        </ul>
+      </section>
+
+      <section id="datetime" class="card">
+        <div class="section-head"><span class="number">09</span><h2>日期、时间与国际化</h2></div>
+        <ul>
+          <li><code>intl</code>、<code>DateFormat</code> 和中文日期符号初始化。</li>
+          <li><code>zh_CN</code> Locale 与 Flutter Material 本地化代理。</li>
+          <li>日期选择、前后日期切换、同日判断以及日周月范围计算。</li>
+          <li>服务端 UTC 时间和设备本地时区之间的转换。</li>
+        </ul>
+      </section>
+
+      <section id="voice" class="card">
+        <div class="section-head"><span class="number">10</span><h2>语音录制与文件处理</h2></div>
+        <ul>
+          <li>麦克风权限和设备编码器能力检查。</li>
+          <li>WAV、16 kHz、单声道、回声消除与降噪配置。</li>
+          <li>临时音频文件创建、读取、长度检查和最终清理。</li>
+          <li>按住开始、松开结束、短按拦截、取消录音和资源释放。</li>
+          <li>上传音频并获取语音转写文本。</li>
+        </ul>
+        <p class="file">对应文件：<code>lib/voice_service.dart</code></p>
+      </section>
+
+      <section id="ai" class="card">
+        <div class="section-head"><span class="number">11</span><h2>AI 意图识别与异步任务</h2></div>
+        <ul>
+          <li>将自然语言自动分类为记录、知识保存或知识问答。</li>
+          <li>处理 HTTP 202、Job ID 和 COMPLETE / FAILED 任务状态。</li>
+          <li>定时轮询、任务超时和后台继续处理。</li>
+          <li>录音转写与 AI 分类拆分成连续异步阶段。</li>
+          <li>Pending Task 列表让用户看到每条语音当前所处阶段。</li>
+        </ul>
+      </section>
+
+      <section id="cache" class="card">
+        <div class="section-head"><span class="number">12</span><h2>统计报告与缓存策略</h2></div>
+        <ul>
+          <li>日报、周报、月报的时间范围筛选和客户端统计。</li>
+          <li>支出合计、记录数量、待办完成率。</li>
+          <li>缓存报告、<code>stale</code> 标记和 <code>refreshJobId</code>。</li>
+          <li>先展示旧缓存，再后台刷新，属于 Stale-While-Revalidate 思路。</li>
+        </ul>
+      </section>
+
+      <section id="channel" class="card">
+        <div class="section-head"><span class="number">13</span><h2>Flutter 与 Swift 原生通道</h2></div>
+        <ul>
+          <li>使用 <code>MethodChannel</code> 从 Dart 调用 iOS 提醒能力。</li>
+          <li>Dart Map 与 Swift Dictionary 之间的数据传递。</li>
+          <li>Plugin Registrar、Flutter implicit engine 和 <code>FlutterError</code>。</li>
+          <li>通道名称：<code>com.from2033.assistant/reminders</code>。</li>
+        </ul>
+        <p class="file">对应文件：<code>lib/reminder_service.dart</code>、<code>ios/Runner/AppDelegate.swift</code></p>
+      </section>
+
+      <section id="ios" class="card">
+        <div class="section-head"><span class="number">14</span><h2>iOS 通知、AlarmKit 与工程配置</h2></div>
+        <ul>
+          <li>UserNotifications 权限、调度、同步删除和前台展示。</li>
+          <li>iOS 26 AlarmKit、固定时间闹钟及普通通知降级方案。</li>
+          <li>Swift Concurrency、Task、DispatchGroup、NSLock 和主线程回调。</li>
+          <li><code>@available</code> 与 <code>#if canImport</code> 的系统兼容处理。</li>
+          <li>Info.plist、SceneDelegate、Bundle ID、签名、版本号、xcconfig 和 AppFrameworkInfo。</li>
+        </ul>
+        <p class="file">对应文件：<code>ios/Runner/AppDelegate.swift</code>、<code>ios/Runner/Info.plist</code>、<code>ios/Flutter/AppFrameworkInfo.plist</code></p>
+      </section>
+
+      <section id="privacy" class="card">
+        <div class="section-head"><span class="number">15</span><h2>隐私与 App Store 合规</h2></div>
+        <ul>
+          <li>麦克风和 AlarmKit 权限用途说明。</li>
+          <li>Privacy Manifest 声明邮箱、用户 ID、音频和用户内容。</li>
+          <li>声明数据仅用于 App 功能且不用于跟踪。</li>
+          <li>非豁免加密声明、隐私政策链接和 App 内账户删除。</li>
+        </ul>
+        <p class="file">对应文件：<code>ios/Runner/PrivacyInfo.xcprivacy</code>、<code>ios/Runner/Info.plist</code></p>
+      </section>
+
+      <section id="test" class="card">
+        <div class="section-head"><span class="number">16</span><h2>测试与代码质量</h2></div>
+        <ul>
+          <li>Flutter Test 单元测试和 Dart 静态分析。</li>
+          <li>模型 JSON 解析、时间范围、提醒和报告数据测试。</li>
+          <li>访客记录与知识的 JSON round-trip 测试。</li>
+          <li><code>flutter_lints</code> 推荐规则。</li>
+        </ul>
+        <p class="file">对应文件：<code>test/models_test.dart</code>、<code>analysis_options.yaml</code></p>
+      </section>
+
+      <section id="priority" class="priority">
+        <h2>建议学习顺序</h2>
+        <ol>
+          <li>Flutter Widget、布局、组件生命周期与 <code>setState</code></li>
+          <li>Dart 空安全、集合、JSON 和异步编程</li>
+          <li>REST API、错误处理与登录会话</li>
+          <li>安全存储、本地持久化与访客数据迁移</li>
+          <li>录音、临时文件和语音识别</li>
+          <li>AI 队列、轮询、超时和缓存刷新</li>
+          <li>MethodChannel 与 Swift 原生能力</li>
+          <li>iOS 通知、AlarmKit、签名和 App Store 隐私合规</li>
+        </ol>
+      </section>
+
+      <footer>基于当前 flutter_app 源码整理 · Daynote Personal Assistant</footer>
+    </main>
+  </div>
+</body>
+</html>
