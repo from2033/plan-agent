@@ -260,46 +260,6 @@ function shanghaiDate(timestamp: string): string {
   }).format(new Date(timestamp));
 }
 
-function weekStart(date: string): string {
-  const value = new Date(`${date}T00:00:00Z`);
-  const day = value.getUTCDay() || 7;
-  value.setUTCDate(value.getUTCDate() - day + 1);
-  return value.toISOString().slice(0, 10);
-}
-
-function reportEntry(entry: Entry): ReportEntry {
-  return {
-    type: entry.type,
-    category: entry.category,
-    description: entry.description,
-    amount: entry.amount,
-    timeRange: entry.timeRange,
-    done: entry.done,
-  };
-}
-
-const reportRefreshTimers = new Map<string, NodeJS.Timeout>();
-function scheduleReportRefresh(userId: string): void {
-  const existing = reportRefreshTimers.get(userId);
-  if (existing) clearTimeout(existing);
-  const timer = setTimeout(() => {
-    reportRefreshTimers.delete(userId);
-    if (!codexWorkerOnline()) return;
-    const today = assistantClock().currentDate;
-    const monday = weekStart(today);
-    const all = listEntries(userId);
-    const dayEntries = all.filter((entry) => shanghaiDate(entry.timestamp) === today).map(reportEntry);
-    const weekEntries = all.filter((entry) => {
-      const date = shanghaiDate(entry.timestamp);
-      return date >= monday && date <= today;
-    }).map(reportEntry);
-    if (dayEntries.length) ensureSummaryJob(userId, "day", today, today, dayEntries);
-    if (weekEntries.length) ensureSummaryJob(userId, "week", monday, `${monday} 至 ${today}`, weekEntries);
-  }, 3 * 60 * 1000);
-  timer.unref();
-  reportRefreshTimers.set(userId, timer);
-}
-
 function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
   if (job.kind === "summary") {
     const input = job.input as {
@@ -390,7 +350,6 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
         if (!getEntry(entry.id, job.userId)) throw error;
       }
     }
-    scheduleReportRefresh(job.userId);
   }
   return { kind: "record", entries, via: "codex-desktop" };
 }
@@ -496,14 +455,8 @@ app.delete(`${API}/account`, (req, res) => {
     res.status(403).json({ error: "访客模式没有云端账户" });
     return;
   }
-  const userId = req.userId!;
-  const refreshTimer = reportRefreshTimers.get(userId);
-  if (refreshTimer) {
-    clearTimeout(refreshTimer);
-    reportRefreshTimers.delete(userId);
-  }
   try {
-    deleteAccountData(userId);
+    deleteAccountData(req.userId!);
     res.status(204).end();
   } catch (error) {
     console.error("[account deletion] 删除失败:", error);
@@ -700,7 +653,6 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     });
     if (!isGuestUser(req.userId)) {
       for (const entry of entries) insertEntry(entry, req.userId!);
-      scheduleReportRefresh(req.userId!);
     }
     res.status(201).json({ kind: "record", entries, via: result.via });
   } catch (err) {
@@ -723,7 +675,7 @@ app.delete(`${API}/knowledge/:id`, (req, res) => {
   res.status(204).end();
 });
 
-// AI 报告（日报/周报/月报）：内容未变化直接命中缓存；变化时返回旧缓存并低优先级刷新。
+// AI 报告（日报/周报/月报）：只在报告页请求时按需生成；内容未变化则直接命中缓存。
 app.post(`${API}/summary`, requireGuestQuota("summary", 30), async (req, res) => {
   const scope: ReportScope = req.body?.scope === "month"
     ? "month"
@@ -805,7 +757,6 @@ app.post(`${API}/entries/:id/correct`, async (req, res) => {
       res.status(404).json({ error: "记录不存在" });
       return;
     }
-    scheduleReportRefresh(req.userId!);
     res.json(updated);
   } catch (err) {
     console.error("[correct] 失败:", err);
@@ -823,7 +774,6 @@ app.patch(`${API}/entries/:id`, (req, res) => {
     res.status(404).json({ error: "记录不存在" });
     return;
   }
-  scheduleReportRefresh(req.userId!);
   res.json(updated);
 });
 
@@ -833,7 +783,6 @@ app.delete(`${API}/entries/:id`, (req, res) => {
     res.status(404).json({ error: "记录不存在" });
     return;
   }
-  scheduleReportRefresh(req.userId!);
   res.status(204).end();
 });
 
