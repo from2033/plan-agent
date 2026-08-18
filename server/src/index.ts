@@ -207,7 +207,7 @@ interface WorkerIngestResult {
 
 function fallbackKnowledge(raw: string): { title: string; content: string } {
   const content = raw
-    .replace(/^(?:请)?(?:帮我)?(?:记|存|保存)(?:到|进|入)(?:我的)?(?:个人)?知识库[：:\s]*/u, "")
+    .replace(/^(?:请)?(?:帮我)?(?:记|记录|存|保存)(?:到|进|入)(?:我的)?(?:个人)?(?:知识库|芝士库)[：:\s]*/u, "")
     .trim() || raw.trim();
   const title = (content.split(/[，。；;：:\n]/u)[0] || content).slice(0, 24);
   return { title, content };

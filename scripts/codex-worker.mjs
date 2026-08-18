@@ -198,7 +198,27 @@ function validOllamaResult(kind, value) {
   return false;
 }
 
-function normalizeOllamaResult(kind, value) {
+function fallbackKnowledge(raw) {
+  const content = String(raw || "")
+    .replace(/^(?:请)?(?:帮我)?(?:记|记录|存|保存)(?:到|进|入)(?:我的)?(?:个人)?(?:知识库|芝士库)[：:\s]*/u, "")
+    .trim() || String(raw || "").trim();
+  const title = (content.split(/[，。；;：:\n]/u)[0] || content).slice(0, 24);
+  return { title, content };
+}
+
+function normalizeOllamaResult(kind, value, input) {
+  if (kind === "ingest" && input?.intentHint === "save") {
+    const fallback = fallbackKnowledge(input.raw);
+    return {
+      kind: "save",
+      title: value?.kind === "save" && typeof value.title === "string" && value.title.trim()
+        ? value.title.trim().slice(0, 100)
+        : fallback.title,
+      content: value?.kind === "save" && typeof value.content === "string" && value.content.trim()
+        ? value.content.trim().slice(0, 10_000)
+        : fallback.content,
+    };
+  }
   if (kind !== "ingest" || value?.kind !== "record" || !Array.isArray(value.fields)) return value;
   for (const field of value.fields) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(field.date || "")) delete field.date;
@@ -314,6 +334,7 @@ export async function runOllama(job, options = {}) {
       options: {
         temperature: 0,
         num_ctx: 8192,
+        num_predict: job.kind === "summary" ? 320 : 160,
       },
     }),
   });
@@ -329,9 +350,12 @@ export async function runOllama(job, options = {}) {
   try {
     parsed = JSON.parse(content);
   } catch {
+    if (job.kind === "ingest" && job.input?.intentHint === "save") {
+      return { kind: "save", ...fallbackKnowledge(job.input.raw) };
+    }
     throw new Error("ollama_invalid_json");
   }
-  const result = normalizeOllamaResult(job.kind, parsed);
+  const result = normalizeOllamaResult(job.kind, parsed, job.input);
   if (!validOllamaResult(job.kind, result)) throw new Error("ollama_invalid_result");
   return result;
 }

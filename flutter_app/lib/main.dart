@@ -709,7 +709,8 @@ class _HomeScreenState extends State<HomeScreen> {
               }
             },
           )
-          .timeout(const Duration(seconds: 40));
+          // ApiClient 自己会持续轮询任务；这里留足本地模型失败后回退云端的时间。
+          .timeout(const Duration(seconds: 95));
       await refresh();
       if (mounted && !_disposing) {
         setState(() => pendingTasks.removeWhere((item) => item.id == task.id));
