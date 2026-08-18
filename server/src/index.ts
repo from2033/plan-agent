@@ -37,6 +37,7 @@ import {
   inferReminderTimeFromText,
   inferTimeRangeFromText,
   isFutureObligation,
+  reminderTimeAt,
   reminderTimestamp,
   type AssistantClock,
 } from "./entry-date.js";
@@ -324,12 +325,18 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
       fields.type === "activity" || fields.type === "memo"
         ? inferTimeRangeFromText(input.raw)
         : undefined;
-    const timeRange = inferredRange || fields.timeRange;
+    const modelRange = fields.timeRange?.start !== fields.timeRange?.end ? fields.timeRange : undefined;
+    const timeRange = inferredRange || modelRange;
     if (timeRange) entryFields.timeRange = timeRange;
+    else delete entryFields.timeRange;
+    if (entryFields.type !== "expense") {
+      delete entryFields.amount;
+      delete entryFields.currency;
+    }
     const reminderAt = entryFields.type === "memo"
       ? reminderTimestamp(input.raw, date, reminderTime, clock)
       : undefined;
-    const reminderClock = reminderAt ? reminderTime || inferReminderTimeFromText(input.raw) : undefined;
+    const reminderClock = reminderAt ? reminderTimeAt(reminderAt) : undefined;
     const timing = reminderAt
       ? { time: reminderClock || "", timestamp: reminderAt }
       : entryTiming(input.raw, date, timeRange, clock, i, now);
@@ -635,12 +642,18 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       }
       const inferredRange =
         f.type === "activity" || f.type === "memo" ? inferTimeRangeFromText(raw) : undefined;
-      const timeRange = inferredRange || f.timeRange;
+      const modelRange = f.timeRange?.start !== f.timeRange?.end ? f.timeRange : undefined;
+      const timeRange = inferredRange || modelRange;
       if (timeRange) entryFields.timeRange = timeRange;
+      else delete entryFields.timeRange;
+      if (entryFields.type !== "expense") {
+        delete entryFields.amount;
+        delete entryFields.currency;
+      }
       const reminderAt = entryFields.type === "memo"
         ? reminderTimestamp(raw, date, reminderTime, clock)
         : undefined;
-      const reminderClock = reminderAt ? reminderTime || inferReminderTimeFromText(raw) : undefined;
+      const reminderClock = reminderAt ? reminderTimeAt(reminderAt) : undefined;
       return {
         id: crypto.randomUUID(),
         raw,

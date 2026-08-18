@@ -204,8 +204,13 @@ function normalizeOllamaResult(kind, value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(field.date || "")) delete field.date;
     if (field.type !== "memo" || !/^\d{2}:\d{2}$/.test(field.reminderTime || "")) delete field.reminderTime;
     if (!field.timeRange || !/^\d{2}:\d{2}$/.test(field.timeRange.start || "")
-      || !/^\d{2}:\d{2}$/.test(field.timeRange.end || "")) delete field.timeRange;
+      || !/^\d{2}:\d{2}$/.test(field.timeRange.end || "")
+      || field.timeRange.start === field.timeRange.end) delete field.timeRange;
     if (field.currency === "") delete field.currency;
+    if (field.type !== "expense") {
+      delete field.amount;
+      delete field.currency;
+    }
   }
   return value;
 }

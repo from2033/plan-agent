@@ -40,6 +40,29 @@ function validDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 }
 
+function relativeReminderMilliseconds(raw: string): number | undefined {
+  if (/(?:半个?|半)小时(?:之?后|以后)/.test(raw)) return 30 * 60_000;
+  if (/(?:一刻钟|一刻)(?:之?后|以后)/.test(raw)) return 15 * 60_000;
+  const match = raw.match(
+    /(\d{1,4}|[零〇一二两三四五六七八九十]{1,4})\s*(分钟|分|小时|个小时|天)(?:之?后|以后)/,
+  );
+  if (!match) return undefined;
+  const amount = chineseNumber(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  if (match[2] === "分钟" || match[2] === "分") return amount * 60_000;
+  if (match[2] === "小时" || match[2] === "个小时") return amount * 60 * 60_000;
+  return amount * 24 * 60 * 60_000;
+}
+
+function clockTimestamp(clock: AssistantClock): number {
+  return new Date(`${clock.currentDate}T${clock.currentTime}:00+08:00`).getTime();
+}
+
+export function reminderTimeAt(timestamp: string): string {
+  const parts = partsAtShanghai(new Date(timestamp));
+  return `${parts.hour}:${parts.minute}`;
+}
+
 export function inferDateFromText(raw: string, currentDate: string): string | undefined {
   if (/大后天/.test(raw)) return addDays(currentDate, 3);
   if (/后天/.test(raw)) return addDays(currentDate, 2);
@@ -129,6 +152,10 @@ export function reminderTimestamp(
   explicitTime: string | undefined,
   clock: AssistantClock,
 ): string | undefined {
+  const relativeMilliseconds = relativeReminderMilliseconds(raw);
+  if (relativeMilliseconds) {
+    return new Date(clockTimestamp(clock) + relativeMilliseconds).toISOString();
+  }
   const time = explicitTime || inferReminderTimeFromText(raw);
   if (!time || !/^\d{2}:\d{2}$/.test(time)) return undefined;
   let date = validDate(explicitDate || "")
@@ -153,7 +180,7 @@ export function isFutureObligation(
   if (!/(?:需要|必须|务必|得要|得去|一定要|别忘)/.test(raw)) return false;
   const timestamp = reminderTimestamp(raw, explicitDate, explicitTime, clock);
   if (!timestamp) return false;
-  const current = new Date(`${clock.currentDate}T${clock.currentTime}:00+08:00`).getTime();
+  const current = clockTimestamp(clock);
   return new Date(timestamp).getTime() > current;
 }
 
