@@ -18,6 +18,7 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
   UIDocumentPickerDelegate, PHPickerViewControllerDelegate,
   UIImagePickerControllerDelegate, UINavigationControllerDelegate {
   private var documentPickerResult: FlutterResult?
+  private var capturedCameraImages: [UIImage] = []
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -77,6 +78,7 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
     })
     if UIImagePickerController.isSourceTypeAvailable(.camera) {
       sheet.addAction(UIAlertAction(title: "拍照", style: .default) { [weak self] _ in
+        self?.capturedCameraImages = []
         self?.presentCamera(from: root)
       })
     }
@@ -96,7 +98,7 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
   private func presentPhotoPicker(from root: UIViewController) {
     var configuration = PHPickerConfiguration(photoLibrary: .shared())
     configuration.filter = .images
-    configuration.selectionLimit = 1
+    configuration.selectionLimit = 20
     configuration.preferredAssetRepresentationMode = .current
     let picker = PHPickerViewController(configuration: configuration)
     picker.delegate = self
@@ -124,10 +126,11 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
     root.present(picker, animated: true)
   }
 
-  private func imageFileName() -> String {
+  private func archiveFileName(extension fileExtension: String, multiple: Bool) -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyyMMdd-HHmmss"
-    return "照片-\(formatter.string(from: Date())).jpg"
+    let prefix = multiple ? "多页资料" : "照片"
+    return "\(prefix)-\(formatter.string(from: Date())).\(fileExtension)"
   }
 
   private func finishPicker(_ value: Any?) {
@@ -135,44 +138,151 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
     documentPickerResult = nil
   }
 
-  private func finishImage(_ image: UIImage) {
-    guard let data = image.jpegData(compressionQuality: 0.9) else {
+  private func scaledImage(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+    let pixelSize = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+    let longest = max(pixelSize.width, pixelSize.height)
+    guard longest > maxDimension else { return image }
+    let ratio = maxDimension / longest
+    let targetSize = CGSize(width: pixelSize.width * ratio, height: pixelSize.height * ratio)
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    return UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+      image.draw(in: CGRect(origin: .zero, size: targetSize))
+    }
+  }
+
+  private func preparedImages(_ images: [UIImage], maxDimension: CGFloat, quality: CGFloat) -> [UIImage] {
+    images.compactMap { image in
+      scaledImage(image, maxDimension: maxDimension)
+        .jpegData(compressionQuality: quality)
+        .flatMap(UIImage.init(data:))
+    }
+  }
+
+  private func pdfData(from images: [UIImage]) -> Data {
+    let portraitPage = CGRect(x: 0, y: 0, width: 595, height: 842)
+    let landscapePage = CGRect(x: 0, y: 0, width: 842, height: 595)
+    return UIGraphicsPDFRenderer(bounds: portraitPage).pdfData { context in
+      for image in images {
+        let page = image.size.width > image.size.height ? landscapePage : portraitPage
+        context.beginPage(withBounds: page, pageInfo: [:])
+        let content = page.insetBy(dx: 18, dy: 18)
+        let ratio = min(content.width / image.size.width, content.height / image.size.height)
+        let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        let rect = CGRect(
+          x: content.midX - size.width / 2,
+          y: content.midY - size.height / 2,
+          width: size.width,
+          height: size.height
+        )
+        image.draw(in: rect)
+      }
+    }
+  }
+
+  private func finishImages(_ images: [UIImage]) {
+    guard !images.isEmpty else {
+      finishPicker(nil)
+      return
+    }
+    if images.count == 1 {
+      guard let data = preparedImages(images, maxDimension: 2400, quality: 0.88).first?
+        .jpegData(compressionQuality: 0.88) else {
+        finishPicker(FlutterError(code: "image_encode_failed", message: "图片处理失败", details: nil))
+        return
+      }
+      finishPicker([
+        "fileName": archiveFileName(extension: "jpg", multiple: false),
+        "mimeType": "image/jpeg",
+        "bytes": FlutterStandardTypedData(bytes: data),
+      ])
+      return
+    }
+    var data = pdfData(from: preparedImages(images, maxDimension: 2000, quality: 0.8))
+    if data.count > 30 * 1024 * 1024 {
+      data = pdfData(from: preparedImages(images, maxDimension: 1400, quality: 0.62))
+    }
+    if data.count > 30 * 1024 * 1024 {
+      finishPicker(FlutterError(code: "document_too_large", message: "合并后的资料超过 30MB，请减少图片数量", details: nil))
+      return
+    }
+    guard !data.isEmpty else {
       finishPicker(FlutterError(code: "image_encode_failed", message: "图片处理失败", details: nil))
       return
     }
-    if data.count > 30 * 1024 * 1024 {
-      finishPicker(FlutterError(code: "document_too_large", message: "第一版单个文件不能超过 30MB", details: nil))
-      return
-    }
     finishPicker([
-      "fileName": imageFileName(),
-      "mimeType": "image/jpeg",
+      "fileName": archiveFileName(extension: "pdf", multiple: true),
+      "mimeType": "application/pdf",
       "bytes": FlutterStandardTypedData(bytes: data),
     ])
   }
 
+  private func finishCapturedCameraImages() {
+    let images = capturedCameraImages
+    capturedCameraImages = []
+    finishImages(images)
+  }
+
+  private func presentCameraContinuation() {
+    guard capturedCameraImages.count < 20, let root = activeRootViewController() else {
+      finishCapturedCameraImages()
+      return
+    }
+    let sheet = UIAlertController(
+      title: "已拍 \(capturedCameraImages.count) 张",
+      message: "这些照片会合并成同一份资料",
+      preferredStyle: .actionSheet
+    )
+    sheet.addAction(UIAlertAction(title: "继续拍", style: .default) { [weak self] _ in
+      self?.presentCamera(from: root)
+    })
+    sheet.addAction(UIAlertAction(title: "完成并上传", style: .default) { [weak self] _ in
+      self?.finishCapturedCameraImages()
+    })
+    sheet.addAction(UIAlertAction(title: "放弃本次拍摄", style: .destructive) { [weak self] _ in
+      self?.capturedCameraImages = []
+      self?.finishPicker(nil)
+    })
+    if let popover = sheet.popoverPresentationController {
+      popover.sourceView = root.view
+      popover.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY, width: 1, height: 1)
+    }
+    root.present(sheet, animated: true)
+  }
+
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
     picker.dismiss(animated: true)
-    guard let provider = results.first?.itemProvider else {
+    guard !results.isEmpty else {
       finishPicker(nil)
       return
     }
-    guard provider.canLoadObject(ofClass: UIImage.self) else {
-      finishPicker(FlutterError(code: "image_read_failed", message: "无法读取这张图片", details: nil))
-      return
-    }
-    provider.loadObject(ofClass: UIImage.self) { [weak self] object, error in
-      DispatchQueue.main.async {
-        guard let self else { return }
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var images = Array<UIImage?>(repeating: nil, count: results.count)
+    for (index, result) in results.enumerated() {
+      let provider = result.itemProvider
+      guard provider.canLoadObject(ofClass: UIImage.self) else { continue }
+      group.enter()
+      provider.loadObject(ofClass: UIImage.self) { object, _ in
         if let image = object as? UIImage {
-          self.finishImage(image)
-        } else {
+          lock.lock()
+          images[index] = image
+          lock.unlock()
+        }
+        group.leave()
+      }
+    }
+    group.notify(queue: .main) { [weak self] in
+      guard let self else { return }
+      let loaded = images.compactMap { $0 }
+      if loaded.count == results.count {
+        self.finishImages(loaded)
+      } else {
           self.finishPicker(FlutterError(
             code: "image_read_failed",
-            message: error?.localizedDescription ?? "无法读取这张图片",
+            message: "有图片无法读取，请重新选择",
             details: nil
           ))
-        }
       }
     }
   }
@@ -181,17 +291,26 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
     _ picker: UIImagePickerController,
     didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
   ) {
-    picker.dismiss(animated: true)
     guard let image = info[.originalImage] as? UIImage else {
+      picker.dismiss(animated: true)
       finishPicker(FlutterError(code: "image_read_failed", message: "无法读取拍摄的图片", details: nil))
       return
     }
-    finishImage(image)
+    capturedCameraImages.append(image)
+    picker.dismiss(animated: true) { [weak self] in
+      self?.presentCameraContinuation()
+    }
   }
 
   func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-    picker.dismiss(animated: true)
-    finishPicker(nil)
+    picker.dismiss(animated: true) { [weak self] in
+      guard let self else { return }
+      if self.capturedCameraImages.isEmpty {
+        self.finishPicker(nil)
+      } else {
+        self.finishCapturedCameraImages()
+      }
+    }
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
