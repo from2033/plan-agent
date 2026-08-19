@@ -46,6 +46,7 @@ import { knowledgeIntentHint, type IntentHint } from "./intent.js";
 import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import { privacyPageHtml } from "./privacy-page.js";
+import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
 import {
   CODEX_QUEUE_POLICY_VERSION,
   CODEX_QUEUE_PROTOCOL_VERSION,
@@ -192,6 +193,7 @@ app.post(`${WORKER_API}/claim`, requireWorker, (req, res) => {
     job: {
       id: claimed.job.id,
       kind: claimed.job.kind,
+      spaceId: knowledgeSpaceIdForUser(claimed.job.userId),
       input: claimed.job.input,
       createdAt: claimed.job.createdAt,
     },
@@ -309,6 +311,18 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const note = String(input.note || "").trim();
     if (!documentId || !note || !appendDocumentNote(documentId, job.userId, note)) {
       throw new Error("document_note_target_missing");
+    }
+    return value;
+  }
+  if (job.kind === "document_question") {
+    const result = value as {
+      sources?: Array<{ documentId?: unknown }>;
+    };
+    for (const source of result.sources || []) {
+      const documentId = String(source.documentId || "");
+      if (!documentId || !getDocument(documentId, job.userId)) {
+        throw new Error("document_question_source_ownership_mismatch");
+      }
     }
     return value;
   }

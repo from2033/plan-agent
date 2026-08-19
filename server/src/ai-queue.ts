@@ -7,8 +7,8 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 4;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-08-19.3";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 5;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-08-20.1";
 
 export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";

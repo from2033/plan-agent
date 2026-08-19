@@ -28,6 +28,7 @@ const visionOcrScript = path.join(scriptDir, "vision-ocr.swift");
 const documentSearchScript = path.join(scriptDir, "document-search.py");
 const pythonBin = process.env.ASSISTANT_PYTHON_BIN || "/usr/bin/python3";
 const once = process.argv.includes("--once");
+const queueProtocolVersion = 5;
 
 let stopping = false;
 process.on("SIGTERM", () => { stopping = true; });
@@ -73,7 +74,12 @@ async function claim() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ workerId }),
   });
-  return response.status === 204 ? null : response.json();
+  if (response.status === 204) return null;
+  const payload = await response.json();
+  if (payload.protocolVersion !== queueProtocolVersion) {
+    throw new Error(`queue_protocol_mismatch:${payload.protocolVersion || "missing"}`);
+  }
+  return payload;
 }
 
 const entryFields = {
@@ -487,6 +493,12 @@ function safeName(value, fallback = "资料") {
   return (cleaned || fallback).slice(0, 100);
 }
 
+export function resolveKnowledgeSpaceRoot(job, destinationRoot = vaultRoot) {
+  const spaceId = String(job?.spaceId || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(spaceId)) throw new Error("knowledge_space_missing_or_invalid");
+  return path.join(destinationRoot, "知识库", spaceId);
+}
+
 function runTextTool(binary, args) {
   return execFileSync(binary, args, {
     encoding: "utf8",
@@ -544,6 +556,7 @@ export function writeVaultDocument(
   warnings,
   destinationRoot = vaultRoot,
   userNote = "",
+  vaultLinkPrefix = "",
 ) {
   const documentId = String(job.input.documentId);
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
@@ -560,6 +573,9 @@ export function writeVaultDocument(
   const notePath = path.join(noteDir, noteName);
   fs.writeFileSync(attachmentPath, content, { mode: 0o600 });
   const attachmentRelative = path.relative(destinationRoot, attachmentPath);
+  const attachmentLink = vaultLinkPrefix
+    ? path.posix.join(vaultLinkPrefix, attachmentRelative.split(path.sep).join("/"))
+    : attachmentRelative.split(path.sep).join("/");
   const noteRelative = path.relative(destinationRoot, notePath);
   const yaml = value => JSON.stringify(value ?? "");
   const body = `---
@@ -569,7 +585,7 @@ category: ${yaml(category)}
 document_date: ${yaml(metadata.documentDate || "")}
 people: ${yaml(metadata.people || [])}
 keywords: ${yaml(metadata.keywords || [])}
-source_file: ${yaml(attachmentRelative)}
+source_file: ${yaml(attachmentLink)}
 archived_at: ${yaml(new Date().toISOString())}
 reviewed: false
 ---
@@ -584,7 +600,7 @@ ${userNote ? `## 我的说明\n\n${userNote}\n` : ""}
 
 ## 原始文件
 
-[[${attachmentRelative}]]
+[[${attachmentLink}]]
 
 ## 提取文字
 
@@ -664,6 +680,7 @@ async function processDocumentJob(job, leaseToken) {
   const temporaryFile = path.join(temporaryDir, safeName(fileName, "document.bin"));
   fs.writeFileSync(temporaryFile, content, { mode: 0o600 });
   try {
+    const knowledgeRoot = resolveKnowledgeSpaceRoot(job);
     const userNote = String(job.input?.userNote || "").trim().slice(0, 2_000);
     const extraction = extractDocumentText(temporaryFile, fileName, mimeType, temporaryDir);
     const fallbackTitle = path.basename(fileName, path.extname(fileName));
@@ -698,8 +715,9 @@ async function processDocumentJob(job, leaseToken) {
       extraction.text,
       metadata,
       extraction.warnings,
-      vaultRoot,
+      knowledgeRoot,
       userNote,
+      path.posix.join("知识库", String(job.spaceId)),
     );
     return {
       result: {
@@ -726,7 +744,7 @@ async function processDocumentNoteJob(job) {
   const documentId = String(job.input?.documentId || "");
   const note = String(job.input?.note || "").trim().slice(0, 2_000);
   if (!documentId || !note) throw new Error("document_note_invalid");
-  const result = appendVaultDocumentNote(documentId, note);
+  const result = appendVaultDocumentNote(documentId, note, resolveKnowledgeSpaceRoot(job));
   return {
     result: {
       documentId,
@@ -756,7 +774,7 @@ export function searchLocalDocuments(question, destinationRoot = vaultRoot, limi
 async function processIngestJob(job) {
   const raw = String(job.input?.raw || "").trim();
   if (!raw) return runInference(job);
-  const candidates = searchLocalDocuments(raw, vaultRoot, 3);
+  const candidates = searchLocalDocuments(raw, resolveKnowledgeSpaceRoot(job), 3);
   const classified = await runInference(candidates.length ? {
     ...job,
     input: { ...job.input, documentCandidateCount: candidates.length },
@@ -789,7 +807,7 @@ async function processIngestJob(job) {
 async function processDocumentQuestionJob(job) {
   const question = String(job.input?.question || "").trim().slice(0, 1_000);
   if (!question) throw new Error("document_question_missing");
-  const candidates = searchLocalDocuments(question);
+  const candidates = searchLocalDocuments(question, resolveKnowledgeSpaceRoot(job));
   if (!candidates.length) {
     return {
       result: {

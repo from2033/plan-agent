@@ -8,11 +8,15 @@ import test from "node:test";
 import {
   appendVaultDocumentNote,
   extractDocumentText,
+  resolveKnowledgeSpaceRoot,
   runInference,
   runOllama,
   searchLocalDocuments,
   writeVaultDocument,
 } from "./codex-worker.mjs";
+
+const spaceOne = "1".repeat(64);
+const spaceTwo = "2".repeat(64);
 
 const ingestJob = {
   kind: "ingest",
@@ -192,6 +196,35 @@ test("local document search indexes Obsidian notes and returns excerpts", () => 
   }
 });
 
+test("knowledge spaces resolve to separate account roots", () => {
+  const vault = path.join(os.tmpdir(), "assistant-vault");
+  assert.equal(resolveKnowledgeSpaceRoot({ spaceId: spaceOne }, vault), path.join(vault, "知识库", spaceOne));
+  assert.equal(resolveKnowledgeSpaceRoot({ spaceId: spaceTwo }, vault), path.join(vault, "知识库", spaceTwo));
+  assert.notEqual(
+    resolveKnowledgeSpaceRoot({ spaceId: spaceOne }, vault),
+    resolveKnowledgeSpaceRoot({ spaceId: spaceTwo }, vault),
+  );
+  assert.throws(() => resolveKnowledgeSpaceRoot({}, vault), /knowledge_space_missing_or_invalid/);
+  assert.throws(() => resolveKnowledgeSpaceRoot({ spaceId: "../资料" }, vault), /knowledge_space_missing_or_invalid/);
+});
+
+test("local document search never crosses account roots", () => {
+  const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "assistant-space-test-"));
+  try {
+    const firstRoot = resolveKnowledgeSpaceRoot({ spaceId: spaceOne }, temporaryDir);
+    const secondRoot = resolveKnowledgeSpaceRoot({ spaceId: spaceTwo }, temporaryDir);
+    const firstNoteDir = path.join(firstRoot, "资料", "医疗健康");
+    fs.mkdirSync(firstNoteDir, { recursive: true });
+    fs.mkdirSync(path.join(secondRoot, "资料"), { recursive: true });
+    fs.writeFileSync(path.join(firstNoteDir, "私有处方.md"), `---\ndocument_id: "2b472924-15cc-4676-8d3d-f5f947e574fa"\ntitle: "账号一的私有处方"\ncategory: "医疗健康"\n---\n舒筋健络油只能在一封大药房买到。\n`, "utf8");
+
+    assert.equal(searchLocalDocuments("舒筋健络油", firstRoot).length, 1);
+    assert.deepEqual(searchLocalDocuments("舒筋健络油", secondRoot), []);
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
+  }
+});
+
 test("plain text documents are extracted and archived as Obsidian notes", () => {
   const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "assistant-document-test-"));
   try {
@@ -215,10 +248,12 @@ test("plain text documents are extracted and archived as Obsidian notes", () => 
       [],
       temporaryDir,
       "这个药对跌打损伤很好用，目前只能在一封大药房买到。",
+      `知识库/${spaceOne}`,
     );
     const note = fs.readFileSync(path.join(temporaryDir, archived.noteRelative), "utf8");
     assert.match(note, /category: "医疗健康"/);
-    assert.match(note, /\[\[附件\//);
+    assert.match(note, new RegExp(`\\[\\[知识库/${spaceOne}/附件/`));
+    assert.match(note, new RegExp(`source_file: "知识库/${spaceOne}/附件/`));
     assert.match(note, /按医嘱服药/);
     assert.match(note, /## 我的说明/);
     assert.match(note, /一封大药房/);
