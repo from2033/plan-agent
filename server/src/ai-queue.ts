@@ -198,7 +198,9 @@ export function enqueueAiJob(
       id,
       userId,
       kind,
-      kind === "document_question" ? encField(JSON.stringify(input)) : JSON.stringify(input),
+      kind === "document" || kind === "document_question"
+        ? encField(JSON.stringify(input))
+        : JSON.stringify(input),
       priority,
       now,
       now,

@@ -188,6 +188,7 @@ class ApiClient {
     required String fileName,
     required String mimeType,
     required Uint8List bytes,
+    String note = '',
   }) async {
     if (_isGuest) throw const ApiException('请先登录后再上传家庭资料');
     final uri = Uri.parse(
@@ -198,6 +199,8 @@ class ApiClient {
         uri,
         headers: {
           'content-type': mimeType,
+          if (note.trim().isNotEmpty)
+            'x-document-note-b64': base64Encode(utf8.encode(note.trim())),
           if (_token != null) 'authorization': 'Bearer $_token',
         },
         body: bytes,

@@ -570,6 +570,10 @@ app.post(
       return;
     }
     const fileName = String(req.query.fileName || "").trim().slice(0, 240);
+    const encodedNote = String(req.header("x-document-note-b64") || "").trim();
+    const userNote = encodedNote
+      ? Buffer.from(encodedNote, "base64").toString("utf8").trim().slice(0, 2_000)
+      : "";
     const mimeType = String(req.header("content-type") || "application/octet-stream")
       .split(";")[0].trim().toLowerCase();
     const content = req.body as Buffer;
@@ -585,7 +589,10 @@ app.post(
     try {
       const document = storeDocumentUpload(req.userId!, fileName, mimeType, content);
       storedDocumentId = document.id;
-      const job = enqueueAiJob(req.userId!, "document", { documentId: document.id }, 90);
+      const job = enqueueAiJob(req.userId!, "document", {
+        documentId: document.id,
+        ...(userNote ? { userNote } : {}),
+      }, 90);
       bindDocumentJob(document.id, req.userId!, job.id);
       res.status(202).json({ documentId: document.id, jobId: job.id, status: "QUEUED" });
     } catch (error) {

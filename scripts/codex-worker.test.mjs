@@ -213,11 +213,14 @@ test("plain text documents are extracted and archived as Obsidian notes", () => 
       },
       [],
       temporaryDir,
+      "这个药对跌打损伤很好用，目前只能在一封大药房买到。",
     );
     const note = fs.readFileSync(path.join(temporaryDir, archived.noteRelative), "utf8");
     assert.match(note, /category: "医疗健康"/);
     assert.match(note, /\[\[附件\//);
     assert.match(note, /按医嘱服药/);
+    assert.match(note, /## 我的说明/);
+    assert.match(note, /一封大药房/);
     assert.ok(fs.existsSync(path.join(temporaryDir, archived.attachmentRelative)));
   } finally {
     fs.rmSync(temporaryDir, { recursive: true, force: true });

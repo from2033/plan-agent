@@ -2049,6 +2049,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       final mimeType =
           picked['mimeType'] as String? ?? 'application/octet-stream';
       if (bytes == null || bytes.isEmpty) throw const ApiException('文件内容为空');
+      final note = await requestUploadNote(fileName);
+      if (note == null || !mounted) return;
       setState(() {
         uploading = true;
         error = null;
@@ -2057,6 +2059,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         fileName: fileName,
         mimeType: mimeType,
         bytes: bytes,
+        note: note,
       );
       await load();
       if (mounted) {
@@ -2069,6 +2072,58 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     } finally {
       if (mounted) setState(() => uploading = false);
     }
+  }
+
+  Future<String?> requestUploadNote(String fileName) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('补充资料说明'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                fileName,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: Color(0xff8a8680)),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                minLines: 3,
+                maxLines: 6,
+                maxLength: 1000,
+                decoration: const InputDecoration(
+                  hintText: '可选，例如：这个药对跌打损伤很好用，目前只能在一封大药房买到。',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                '说明会和原资料一起保存，并用于以后查询。',
+                style: TextStyle(fontSize: 12, color: Color(0xff8a8680)),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('确认上传'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
   }
 
   String documentTitle(Map<String, dynamic> document) {

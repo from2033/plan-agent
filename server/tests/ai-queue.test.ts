@@ -48,6 +48,23 @@ test("资料问题和回答在任务数据库中加密，读取时可正常解�
   inspection.close();
 });
 
+test("用户对上传资料的补充说明在任务数据库中加密", () => {
+  const job = enqueueAiJob("user-1", "document", {
+    documentId: "2b472924-15cc-4676-8d3d-f5f947e574fa",
+    userNote: "目前只能在一封大药房买到。",
+  });
+  const inspection = new DatabaseSync(process.env.DB_PATH!);
+  const queued = inspection.prepare("SELECT input_json FROM ai_jobs WHERE id=?")
+    .get(job.id) as unknown as { input_json: string };
+  assert.match(queued.input_json, /^enc1:/);
+  assert.doesNotMatch(queued.input_json, /一封大药房/);
+  assert.equal(
+    (getAiJob(job.id, "user-1")?.input as { userNote: string }).userNote,
+    "目前只能在一封大药房买到。",
+  );
+  inspection.close();
+});
+
 test.after(() => {
   fs.rmSync(temporaryDir, { recursive: true, force: true });
 });
