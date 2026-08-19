@@ -837,9 +837,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             _HelpItem(
               icon: Icons.question_answer_outlined,
-              title: '直接提问，自动检索知识库',
+              title: '直接提问，自动检索全部资料',
               description:
-                  '对着语音提出问题，App 会自动识别为提问，并从你的个人知识库中检索答案。例如：“番茄炒蛋怎么做来着？”或“我之前记的机场停车位置在哪里？”答案只依据你保存过的内容，不会把问题误存成普通记录。',
+                  '通过底部语音按钮直接提问，App 会自动判断并检索个人知识笔记和 Mac 上的家庭资料。例如：“番茄炒蛋怎么做来着？”“这次门诊开了哪些药？”或“租赁合同什么时候到期？”',
             ),
             _HelpItem(
               icon: Icons.calendar_month_outlined,
@@ -2001,14 +2001,8 @@ class KnowledgePane extends StatefulWidget {
 class _KnowledgePaneState extends State<KnowledgePane> {
   List<KnowledgeItem> items = [];
   List<Map<String, dynamic>> documents = [];
-  late final VoiceService questionVoice = VoiceService(widget.api);
-  final questionController = TextEditingController();
   bool loading = true;
   bool uploading = false;
-  bool asking = false;
-  bool recordingQuestion = false;
-  bool recognizingQuestion = false;
-  Map<String, dynamic>? questionAnswer;
   String? error;
   static const documentChannel = MethodChannel(
     'com.from2033.assistant/documents',
@@ -2018,13 +2012,6 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   void initState() {
     super.initState();
     load();
-  }
-
-  @override
-  void dispose() {
-    questionController.dispose();
-    unawaited(questionVoice.dispose());
-    super.dispose();
   }
 
   Future<void> load() async {
@@ -2081,66 +2068,6 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       if (mounted) setState(() => error = exception.toString());
     } finally {
       if (mounted) setState(() => uploading = false);
-    }
-  }
-
-  Future<void> askDocuments([String? value]) async {
-    final question = (value ?? questionController.text).trim();
-    if (question.isEmpty || asking) return;
-    FocusScope.of(context).unfocus();
-    setState(() {
-      asking = true;
-      error = null;
-      questionAnswer = null;
-    });
-    try {
-      final answer = await widget.api.askDocuments(question);
-      if (mounted) setState(() => questionAnswer = answer);
-    } catch (exception) {
-      if (mounted) setState(() => error = exception.toString());
-    } finally {
-      if (mounted) setState(() => asking = false);
-    }
-  }
-
-  Future<void> toggleQuestionVoice() async {
-    if (recognizingQuestion || asking) return;
-    if (!recordingQuestion) {
-      try {
-        await questionVoice.start();
-        if (mounted) {
-          setState(() {
-            recordingQuestion = true;
-            error = null;
-          });
-        }
-      } catch (exception) {
-        if (mounted) setState(() => error = exception.toString());
-      }
-      return;
-    }
-    setState(() {
-      recordingQuestion = false;
-      recognizingQuestion = true;
-    });
-    try {
-      final text = await questionVoice.transcribe(
-        await questionVoice.stopRecording(),
-      );
-      if (text.isEmpty) throw const ApiException('没有听清，请再说一次');
-      questionController.text = text;
-      questionController.selection = TextSelection.collapsed(
-        offset: text.length,
-      );
-      if (mounted) setState(() => recognizingQuestion = false);
-      await askDocuments(text);
-    } catch (exception) {
-      if (mounted) {
-        setState(() {
-          recognizingQuestion = false;
-          error = exception.toString();
-        });
-      }
     }
   }
 
@@ -2239,38 +2166,6 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     ),
   );
 
-  void showSource(Map<String, dynamic> source) {
-    final id = source['documentId'];
-    for (final document in documents) {
-      if (document['id'] == id) {
-        showDocument(document);
-        return;
-      }
-    }
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(22, 0, 22, 30),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              source['title'] as String? ?? '引用资料',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              source['excerpt'] as String? ?? '',
-              style: const TextStyle(height: 1.5),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> remove(KnowledgeItem item) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -2324,178 +2219,6 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                       : const Icon(Icons.upload_file_rounded),
                   label: Text(uploading ? '正在归档…' : '上传家庭资料'),
                 ),
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.black.withValues(alpha: .06),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '问家庭资料',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        recordingQuestion
-                            ? '正在录音，再点一次麦克风结束'
-                            : recognizingQuestion
-                            ? '正在识别语音…'
-                            : '例如：这次门诊个人支付了多少钱？',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: recordingQuestion
-                              ? const Color(0xffdc2626)
-                              : const Color(0xff8a8680),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: questionController,
-                        minLines: 1,
-                        maxLines: 3,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => askDocuments(),
-                        decoration: InputDecoration(
-                          hintText: '输入关于合同、药单或其他资料的问题',
-                          filled: true,
-                          fillColor: const Color(0xfffaf8f5),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(13),
-                            borderSide: BorderSide.none,
-                          ),
-                          suffixIcon: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                onPressed: toggleQuestionVoice,
-                                tooltip: recordingQuestion ? '结束录音' : '语音提问',
-                                icon: Icon(
-                                  recordingQuestion
-                                      ? Icons.stop_circle_rounded
-                                      : Icons.mic_none_rounded,
-                                  color: recordingQuestion
-                                      ? const Color(0xffdc2626)
-                                      : const Color(0xff8b5e34),
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: asking ? null : askDocuments,
-                                tooltip: '提问',
-                                icon: asking
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(
-                                        Icons.arrow_upward_rounded,
-                                        color: Color(0xff8b5e34),
-                                      ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (questionAnswer != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(
-                      color: const Color(0xfffffbeb),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(
-                              Icons.auto_awesome_rounded,
-                              size: 18,
-                              color: Color(0xffd97706),
-                            ),
-                            SizedBox(width: 7),
-                            Text(
-                              '根据家庭资料回答',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          questionAnswer!['answer'] as String? ?? '没有找到答案',
-                          style: const TextStyle(height: 1.55),
-                        ),
-                        if ((questionAnswer!['sources'] as List<dynamic>? ??
-                                const [])
-                            .isNotEmpty) ...[
-                          const SizedBox(height: 13),
-                          const Text(
-                            '引用资料',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Color(0xff8a8680),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          for (final source
-                              in (questionAnswer!['sources'] as List<dynamic>)
-                                  .cast<Map<String, dynamic>>())
-                            InkWell(
-                              onTap: () => showSource(source),
-                              borderRadius: BorderRadius.circular(10),
-                              child: Container(
-                                width: double.infinity,
-                                margin: const EdgeInsets.only(bottom: 7),
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: .75),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      source['title'] as String? ?? '资料',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      source['excerpt'] as String? ?? '',
-                                      maxLines: 3,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Color(0xff716b63),
-                                        height: 1.35,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 14),
                 if (error != null)
                   Container(

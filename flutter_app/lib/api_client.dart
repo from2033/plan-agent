@@ -184,18 +184,6 @@ class ApiClient {
     return value.cast<Map<String, dynamic>>();
   }
 
-  Future<Map<String, dynamic>> askDocuments(String question) async {
-    if (_isGuest) throw const ApiException('请先登录后再提问家庭资料');
-    final response = await _send(
-      'POST',
-      '/documents/questions',
-      body: {'question': question.trim()},
-    );
-    final json = _decode(response) as Map<String, dynamic>;
-    if (response.statusCode != 202) return json;
-    return _waitForJob(json['jobId'] as String, timeoutSeconds: 180);
-  }
-
   Future<Map<String, dynamic>> uploadDocument({
     required String fileName,
     required String mimeType,
