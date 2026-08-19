@@ -7,10 +7,10 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 3;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-08-19.2";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 4;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-08-19.3";
 
-export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question";
+export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
 
 export interface AiJob {
@@ -117,11 +117,19 @@ const DocumentQuestionResultSchema = z.object({
   })).max(8),
 });
 
+const DocumentNoteResultSchema = z.object({
+  documentId: z.string().uuid(),
+  note: z.string().min(1).max(2_000),
+  appended: z.boolean(),
+  vaultPath: z.string().min(1).max(1_000),
+});
+
 export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "ingest") return IngestResultSchema.parse(value);
   if (kind === "correct") return CorrectResultSchema.parse(value);
   if (kind === "document") return DocumentResultSchema.parse(value);
   if (kind === "document_question") return DocumentQuestionResultSchema.parse(value);
+  if (kind === "document_note") return DocumentNoteResultSchema.parse(value);
   return SummaryResultSchema.parse(value);
 }
 
@@ -198,7 +206,7 @@ export function enqueueAiJob(
       id,
       userId,
       kind,
-      kind === "document" || kind === "document_question"
+      kind === "document" || kind === "document_question" || kind === "document_note"
         ? encField(JSON.stringify(input))
         : JSON.stringify(input),
       priority,
@@ -296,7 +304,7 @@ export function completeAiJob(
   const currentJob = rowToJob(row);
   const result = finalize ? finalize(currentJob, validated) : validated;
   const now = new Date().toISOString();
-  const storedResult = row.kind === "document" || row.kind === "document_question"
+  const storedResult = row.kind === "document" || row.kind === "document_question" || row.kind === "document_note"
     ? encField(JSON.stringify(result))
     : JSON.stringify(result);
   db.prepare(`UPDATE ai_jobs SET status='COMPLETE',result_json=?,lease_hash=NULL,lease_until=NULL,

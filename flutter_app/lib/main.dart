@@ -2066,7 +2066,9 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              uploadResult['duplicate'] == true
+              uploadResult['noteAppended'] == true
+                  ? '资料已存在，补充说明已追加'
+                  : uploadResult['duplicate'] == true
                   ? '这份资料已经存在，没有重复归档'
                   : '资料已保存到家庭档案',
             ),
@@ -2095,6 +2097,35 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         '资料';
   }
 
+  Future<void> addNote(Map<String, dynamic> document) async {
+    final note = await showDialog<String>(
+      context: context,
+      builder: (context) => _UploadNoteDialog(
+        api: widget.api,
+        fileName: documentTitle(document),
+        confirmLabel: '保存说明',
+      ),
+    );
+    if (note == null || note.trim().isEmpty || !mounted) return;
+    setState(() {
+      uploading = true;
+      error = null;
+    });
+    try {
+      await widget.api.addDocumentNote(document['id'] as String, note);
+      await load();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('补充说明已保存')));
+      }
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    } finally {
+      if (mounted) setState(() => uploading = false);
+    }
+  }
+
   void showDocument(Map<String, dynamic> document) {
     final result = document['result'] as Map<String, dynamic>? ?? const {};
     final people = (result['people'] as List<dynamic>? ?? const [])
@@ -2102,6 +2133,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     final keywords = (result['keywords'] as List<dynamic>? ?? const [])
         .cast<String>();
     final warnings = (result['warnings'] as List<dynamic>? ?? const [])
+        .cast<String>();
+    final notes = (document['notes'] as List<dynamic>? ?? const [])
         .cast<String>();
     showModalBottomSheet<void>(
       context: context,
@@ -2134,8 +2167,23 @@ class _KnowledgePaneState extends State<KnowledgePane> {
               ],
               if (people.isNotEmpty) _detailLine('相关人员', people.join('、')),
               if (keywords.isNotEmpty) _detailLine('关键词', keywords.join('、')),
+              if (notes.isNotEmpty) _detailLine('我的说明', notes.join('\n\n')),
               _detailLine('原文件', document['fileName'] as String? ?? '资料'),
               if (warnings.isNotEmpty) _detailLine('识别提示', warnings.join('\n')),
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: document['status'] == 'COMPLETE'
+                      ? () {
+                          Navigator.pop(context);
+                          addNote(document);
+                        }
+                      : null,
+                  icon: const Icon(Icons.add_comment_outlined),
+                  label: const Text('补充说明（支持语音）'),
+                ),
+              ),
               const SizedBox(height: 18),
               Container(
                 padding: const EdgeInsets.all(13),
@@ -2414,10 +2462,15 @@ class _KnowledgePaneState extends State<KnowledgePane> {
 }
 
 class _UploadNoteDialog extends StatefulWidget {
-  const _UploadNoteDialog({required this.api, required this.fileName});
+  const _UploadNoteDialog({
+    required this.api,
+    required this.fileName,
+    this.confirmLabel = '确认上传',
+  });
 
   final ApiClient api;
   final String fileName;
+  final String confirmLabel;
 
   @override
   State<_UploadNoteDialog> createState() => _UploadNoteDialogState();
@@ -2553,7 +2606,7 @@ class _UploadNoteDialogState extends State<_UploadNoteDialog> {
           onPressed: busy
               ? null
               : () => Navigator.pop(context, controller.text.trim()),
-          child: const Text('确认上传'),
+          child: Text(widget.confirmLabel),
         ),
       ],
     );

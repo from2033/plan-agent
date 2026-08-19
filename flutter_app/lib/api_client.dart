@@ -207,11 +207,34 @@ class ApiClient {
       );
       final json = _decode(response) as Map<String, dynamic>;
       if (response.statusCode != 202) return json;
-      return await _waitForJob(json['jobId'] as String, timeoutSeconds: 300);
+      final result = await _waitForJob(
+        json['jobId'] as String,
+        timeoutSeconds: 300,
+      );
+      return {
+        ...result,
+        if (json['duplicate'] == true) 'duplicate': true,
+        if (json['noteQueued'] == true) 'noteAppended': true,
+      };
     } catch (error) {
       if (error is ApiException) rethrow;
       throw const ApiException('资料上传失败，请检查网络后重试');
     }
+  }
+
+  Future<Map<String, dynamic>> addDocumentNote(
+    String documentId,
+    String note,
+  ) async {
+    if (_isGuest) throw const ApiException('请先登录后再补充资料说明');
+    final response = await _send(
+      'POST',
+      '/documents/${Uri.encodeComponent(documentId)}/notes',
+      body: {'note': note.trim()},
+    );
+    final json = _decode(response) as Map<String, dynamic>;
+    if (response.statusCode != 202) return json;
+    return _waitForJob(json['jobId'] as String, timeoutSeconds: 120);
   }
 
   Future<void> deleteKnowledge(String id) async {

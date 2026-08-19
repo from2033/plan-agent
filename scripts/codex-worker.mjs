@@ -595,6 +595,62 @@ ${warnings.length ? `## 处理提示\n\n${warnings.map(item => `- ${item}`).join
   return { title, category, noteRelative, attachmentRelative };
 }
 
+function findVaultDocumentNote(documentId, destinationRoot = vaultRoot) {
+  const root = path.join(destinationRoot, "资料");
+  if (!fs.existsSync(root)) return null;
+  const pending = [root];
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) pending.push(entryPath);
+      else if (entry.isFile() && entry.name.endsWith(".md")) {
+        const text = fs.readFileSync(entryPath, "utf8");
+        if (new RegExp(`^document_id:\\s*[\"']?${documentId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\"']?\\s*$`, "m").test(text)) {
+          return { path: entryPath, text };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+export function appendVaultDocumentNote(documentId, note, destinationRoot = vaultRoot) {
+  const clean = String(note || "").trim().slice(0, 2_000);
+  if (!clean) throw new Error("document_note_missing");
+  const found = findVaultDocumentNote(documentId, destinationRoot);
+  if (!found) throw new Error("document_note_target_missing");
+  if (found.text.includes(clean)) {
+    return { appended: false, vaultPath: path.relative(destinationRoot, found.path) };
+  }
+  const timestamp = new Date().toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const entry = `- ${timestamp}：${clean.replace(/\n/g, "\n  ")}`;
+  let updated = found.text;
+  const heading = "## 我的说明";
+  const headingIndex = updated.indexOf(heading);
+  if (headingIndex >= 0) {
+    const nextHeading = updated.indexOf("\n## ", headingIndex + heading.length);
+    const insertAt = nextHeading >= 0 ? nextHeading : updated.length;
+    updated = `${updated.slice(0, insertAt).trimEnd()}\n\n${entry}\n\n${updated.slice(insertAt).trimStart()}`;
+  } else {
+    const originalHeading = updated.indexOf("## 原始文件");
+    const section = `${heading}\n\n${entry}\n\n`;
+    updated = originalHeading >= 0
+      ? `${updated.slice(0, originalHeading)}${section}${updated.slice(originalHeading)}`
+      : `${updated.trimEnd()}\n\n${section}`;
+  }
+  fs.writeFileSync(found.path, updated, { encoding: "utf8", mode: 0o600 });
+  return { appended: true, vaultPath: path.relative(destinationRoot, found.path) };
+}
+
 async function processDocumentJob(job, leaseToken) {
   const response = await request(`/internal/codex-worker/jobs/${job.id}/document`, {
     method: "GET",
@@ -664,6 +720,22 @@ async function processDocumentJob(job, leaseToken) {
   } finally {
     fs.rmSync(temporaryDir, { recursive: true, force: true });
   }
+}
+
+async function processDocumentNoteJob(job) {
+  const documentId = String(job.input?.documentId || "");
+  const note = String(job.input?.note || "").trim().slice(0, 2_000);
+  if (!documentId || !note) throw new Error("document_note_invalid");
+  const result = appendVaultDocumentNote(documentId, note);
+  return {
+    result: {
+      documentId,
+      note,
+      appended: result.appended,
+      vaultPath: result.vaultPath,
+    },
+    provider: "local-vault",
+  };
 }
 
 export function searchLocalDocuments(question, destinationRoot = vaultRoot, limit = 6) {
@@ -771,6 +843,8 @@ async function processJob(payload) {
     }, 30_000);
     const inference = job.kind === "document"
       ? await processDocumentJob(job, leaseToken)
+      : job.kind === "document_note"
+        ? await processDocumentNoteJob(job)
       : job.kind === "document_question"
         ? await processDocumentQuestionJob(job)
         : job.kind === "ingest"

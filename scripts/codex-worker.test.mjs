@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  appendVaultDocumentNote,
   extractDocumentText,
   runInference,
   runOllama,
@@ -221,6 +222,19 @@ test("plain text documents are extracted and archived as Obsidian notes", () => 
     assert.match(note, /按医嘱服药/);
     assert.match(note, /## 我的说明/);
     assert.match(note, /一封大药房/);
+    const appended = appendVaultDocumentNote(
+      "2b472924-15cc-4676-8d3d-f5f947e574fa",
+      "后来发现也可以在医院药房购买。",
+      temporaryDir,
+    );
+    assert.equal(appended.appended, true);
+    const updatedNote = fs.readFileSync(path.join(temporaryDir, archived.noteRelative), "utf8");
+    assert.match(updatedNote, /后来发现也可以在医院药房购买/);
+    assert.equal(appendVaultDocumentNote(
+      "2b472924-15cc-4676-8d3d-f5f947e574fa",
+      "后来发现也可以在医院药房购买。",
+      temporaryDir,
+    ).appended, false);
     assert.ok(fs.existsSync(path.join(temporaryDir, archived.attachmentRelative)));
   } finally {
     fs.rmSync(temporaryDir, { recursive: true, force: true });

@@ -21,6 +21,7 @@ db.exec(`
     status        TEXT NOT NULL,
     job_id        TEXT,
     result_json   TEXT,
+    notes_json    TEXT,
     error         TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
@@ -30,6 +31,9 @@ db.exec(`
 const hasContentHash = (db.prepare("PRAGMA table_info(documents)").all() as unknown as { name: string }[])
   .some((column) => column.name === "content_hash");
 if (!hasContentHash) db.exec("ALTER TABLE documents ADD COLUMN content_hash TEXT");
+const hasNotesJson = (db.prepare("PRAGMA table_info(documents)").all() as unknown as { name: string }[])
+  .some((column) => column.name === "notes_json");
+if (!hasNotesJson) db.exec("ALTER TABLE documents ADD COLUMN notes_json TEXT");
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(user_id,content_hash) WHERE content_hash IS NOT NULL");
 
 export interface StoredDocument {
@@ -40,6 +44,7 @@ export interface StoredDocument {
   status: string;
   jobId: string | null;
   result: unknown | null;
+  notes: string[];
   error: string | null;
   createdAt: string;
   updatedAt: string;
@@ -53,6 +58,7 @@ interface DocumentRow {
   status: string;
   job_id: string | null;
   result_json: string | null;
+  notes_json: string | null;
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -81,6 +87,7 @@ function rowToDocument(row: DocumentRow): StoredDocument {
     status: row.status,
     jobId: row.job_id,
     result: row.result_json ? JSON.parse(decField(row.result_json)) : null,
+    notes: row.notes_json ? JSON.parse(decField(row.notes_json)) : [],
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -92,6 +99,7 @@ export function storeDocumentUpload(
   fileName: string,
   mimeType: string,
   content: Buffer,
+  userNote = "",
 ): StoredDocument {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o700 });
   const id = crypto.randomUUID();
@@ -102,9 +110,19 @@ export function storeDocumentUpload(
   fs.renameSync(temporaryPath, finalPath);
   const now = new Date().toISOString();
   db.prepare(`INSERT INTO documents
-    (id,user_id,file_name,mime_type,byte_size,content_hash,status,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,'QUEUED',?,?)`)
-    .run(id, userId, encField(fileName), mimeType, content.length, contentHash, now, now);
+    (id,user_id,file_name,mime_type,byte_size,content_hash,status,notes_json,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,'QUEUED',?,?,?)`)
+    .run(
+      id,
+      userId,
+      encField(fileName),
+      mimeType,
+      content.length,
+      contentHash,
+      encField(JSON.stringify(userNote ? [userNote] : [])),
+      now,
+      now,
+    );
   return getDocument(id, userId)!;
 }
 
@@ -140,6 +158,17 @@ export function completeDocument(id: string, userId: string, result: unknown): v
 export function failDocument(id: string, userId: string, error: string): void {
   db.prepare("UPDATE documents SET status='FAILED',error=?,updated_at=? WHERE id=? AND user_id=?")
     .run(error.slice(0, 500), new Date().toISOString(), id, userId);
+}
+
+export function appendDocumentNote(id: string, userId: string, note: string): StoredDocument | null {
+  const document = getDocument(id, userId);
+  if (!document) return null;
+  const clean = note.trim().slice(0, 2_000);
+  if (!clean) return document;
+  const notes = document.notes.includes(clean) ? document.notes : [...document.notes, clean];
+  db.prepare("UPDATE documents SET notes_json=?,updated_at=? WHERE id=? AND user_id=?")
+    .run(encField(JSON.stringify(notes)), new Date().toISOString(), id, userId);
+  return getDocument(id, userId);
 }
 
 export function discardDocument(id: string, userId: string): void {

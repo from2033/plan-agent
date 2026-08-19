@@ -64,11 +64,13 @@ import {
 } from "./ai-queue.js";
 import {
   bindDocumentJob,
+  appendDocumentNote,
   completeDocument,
   deleteUserDocuments,
   discardDocument,
   failDocument,
   findDuplicateDocument,
+  getDocument,
   listDocuments,
   readDocumentUpload,
   storeDocumentUpload,
@@ -299,6 +301,15 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const documentId = String((job.input as { documentId?: unknown })?.documentId || "");
     if (!documentId) throw new Error("document_id_missing");
     completeDocument(documentId, job.userId, value);
+    return value;
+  }
+  if (job.kind === "document_note") {
+    const input = job.input as { documentId?: unknown; note?: unknown };
+    const documentId = String(input.documentId || "");
+    const note = String(input.note || "").trim();
+    if (!documentId || !note || !appendDocumentNote(documentId, job.userId, note)) {
+      throw new Error("document_note_target_missing");
+    }
     return value;
   }
   if (job.kind === "summary") {
@@ -562,6 +573,32 @@ app.post(`${API}/documents/questions`, (req, res) => {
   res.status(202).json({ jobId: job.id, status: job.status });
 });
 
+const DocumentNoteSchema = z.object({
+  note: z.string().trim().min(1).max(2_000),
+});
+
+app.post(`${API}/documents/:id/notes`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再补充资料说明" });
+    return;
+  }
+  const parsed = DocumentNoteSchema.safeParse(req.body);
+  const document = getDocument(req.params.id, req.userId!);
+  if (!parsed.success) {
+    res.status(400).json({ error: "补充说明不能为空" });
+    return;
+  }
+  if (!document || document.status !== "COMPLETE") {
+    res.status(404).json({ error: "资料不存在或仍在处理中" });
+    return;
+  }
+  const job = enqueueAiJob(req.userId!, "document_note", {
+    documentId: document.id,
+    note: parsed.data.note,
+  }, 95);
+  res.status(202).json({ jobId: job.id, status: job.status });
+});
+
 app.post(
   `${API}/documents`,
   express.raw({ type: () => true, limit: "30mb" }),
@@ -590,6 +627,20 @@ app.post(
     try {
       const duplicate = findDuplicateDocument(req.userId!, content);
       if (duplicate && duplicate.status !== "FAILED") {
+        if (userNote && duplicate.status === "COMPLETE") {
+          const job = enqueueAiJob(req.userId!, "document_note", {
+            documentId: duplicate.id,
+            note: userNote,
+          }, 95);
+          res.status(202).json({
+            duplicate: true,
+            noteQueued: true,
+            documentId: duplicate.id,
+            jobId: job.id,
+            status: job.status,
+          });
+          return;
+        }
         res.status(200).json({
           duplicate: true,
           documentId: duplicate.id,
@@ -598,7 +649,7 @@ app.post(
         return;
       }
       if (duplicate) discardDocument(duplicate.id, req.userId!);
-      const document = storeDocumentUpload(req.userId!, fileName, mimeType, content);
+      const document = storeDocumentUpload(req.userId!, fileName, mimeType, content, userNote);
       storedDocumentId = document.id;
       const job = enqueueAiJob(req.userId!, "document", {
         documentId: document.id,
