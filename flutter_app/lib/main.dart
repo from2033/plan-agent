@@ -2075,55 +2075,11 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   }
 
   Future<String?> requestUploadNote(String fileName) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
+    return showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('补充资料说明'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                fileName,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: Color(0xff8a8680)),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                minLines: 3,
-                maxLines: 6,
-                maxLength: 1000,
-                decoration: const InputDecoration(
-                  hintText: '可选，例如：这个药对跌打损伤很好用，目前只能在一封大药房买到。',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 4),
-              const Text(
-                '说明会和原资料一起保存，并用于以后查询。',
-                style: TextStyle(fontSize: 12, color: Color(0xff8a8680)),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('确认上传'),
-          ),
-        ],
-      ),
+      builder: (context) =>
+          _UploadNoteDialog(api: widget.api, fileName: fileName),
     );
-    controller.dispose();
-    return result;
   }
 
   String documentTitle(Map<String, dynamic> document) {
@@ -2448,6 +2404,153 @@ class _KnowledgePaneState extends State<KnowledgePane> {
               ],
             ),
           );
+  }
+}
+
+class _UploadNoteDialog extends StatefulWidget {
+  const _UploadNoteDialog({required this.api, required this.fileName});
+
+  final ApiClient api;
+  final String fileName;
+
+  @override
+  State<_UploadNoteDialog> createState() => _UploadNoteDialogState();
+}
+
+class _UploadNoteDialogState extends State<_UploadNoteDialog> {
+  late final VoiceService voice = VoiceService(widget.api);
+  final controller = TextEditingController();
+  bool recording = false;
+  bool transcribing = false;
+  String? error;
+
+  @override
+  void dispose() {
+    controller.dispose();
+    unawaited(voice.dispose());
+    super.dispose();
+  }
+
+  Future<void> toggleVoice() async {
+    if (transcribing) return;
+    if (!recording) {
+      try {
+        await voice.start();
+        if (mounted) {
+          setState(() {
+            recording = true;
+            error = null;
+          });
+        }
+      } catch (exception) {
+        if (mounted) setState(() => error = exception.toString());
+      }
+      return;
+    }
+    setState(() {
+      recording = false;
+      transcribing = true;
+      error = null;
+    });
+    try {
+      final text = (await voice.transcribe(await voice.stopRecording())).trim();
+      if (text.isEmpty) throw const ApiException('没有听清，请再说一次');
+      final previous = controller.text.trim();
+      final combined = '${previous.isEmpty ? '' : '$previous\n'}$text';
+      controller.text = combined.length > 1000
+          ? combined.substring(0, 1000)
+          : combined;
+      controller.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    } finally {
+      if (mounted) setState(() => transcribing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final busy = recording || transcribing;
+    return AlertDialog(
+      title: const Text('补充资料说明'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.fileName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, color: Color(0xff8a8680)),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              minLines: 3,
+              maxLines: 6,
+              maxLength: 1000,
+              decoration: const InputDecoration(
+                hintText: '可补充资料用途、来源、注意事项或个人经验，也可以留空。',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 2),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: transcribing ? null : toggleVoice,
+                icon: transcribing
+                    ? const SizedBox(
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        recording
+                            ? Icons.stop_circle_rounded
+                            : Icons.mic_none_rounded,
+                        color: recording ? const Color(0xffdc2626) : null,
+                      ),
+                label: Text(
+                  transcribing
+                      ? '正在识别…'
+                      : recording
+                      ? '正在录音，点此结束'
+                      : '用语音补充说明',
+                ),
+              ),
+            ),
+            if (error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                error!,
+                style: const TextStyle(fontSize: 12, color: Color(0xffb42318)),
+              ),
+            ],
+            const SizedBox(height: 6),
+            const Text(
+              '说明会和原资料一起保存，并用于以后查询。',
+              style: TextStyle(fontSize: 12, color: Color(0xff8a8680)),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: busy ? null : () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: busy
+              ? null
+              : () => Navigator.pop(context, controller.text.trim()),
+          child: const Text('确认上传'),
+        ),
+      ],
+    );
   }
 }
 
