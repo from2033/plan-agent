@@ -1,4 +1,5 @@
 import Flutter
+import PhotosUI
 import UIKit
 import UserNotifications
 import UniformTypeIdentifiers
@@ -13,7 +14,9 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
 #endif
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate,
+  UIDocumentPickerDelegate, PHPickerViewControllerDelegate,
+  UIImagePickerControllerDelegate, UINavigationControllerDelegate {
   private var documentPickerResult: FlutterResult?
   override func application(
     _ application: UIApplication,
@@ -48,16 +51,67 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
         result(FlutterMethodNotImplemented)
         return
       }
-      self?.presentDocumentPicker(result: result)
+      self?.presentUploadSourcePicker(result: result)
     }
   }
 
-  private func presentDocumentPicker(result: @escaping FlutterResult) {
+  private func activeRootViewController() -> UIViewController? {
+    (UIApplication.shared.connectedScenes.first as? UIWindowScene)?
+      .windows.first(where: { $0.isKeyWindow })?.rootViewController
+  }
+
+  private func presentUploadSourcePicker(result: @escaping FlutterResult) {
     guard documentPickerResult == nil else {
       result(FlutterError(code: "document_picker_busy", message: "已有文件选择器正在打开", details: nil))
       return
     }
     documentPickerResult = result
+    guard let root = activeRootViewController() else {
+      documentPickerResult = nil
+      result(FlutterError(code: "document_picker_unavailable", message: "无法打开上传选择器", details: nil))
+      return
+    }
+    let sheet = UIAlertController(title: "上传家庭资料", message: nil, preferredStyle: .actionSheet)
+    sheet.addAction(UIAlertAction(title: "从相册选择", style: .default) { [weak self] _ in
+      self?.presentPhotoPicker(from: root)
+    })
+    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+      sheet.addAction(UIAlertAction(title: "拍照", style: .default) { [weak self] _ in
+        self?.presentCamera(from: root)
+      })
+    }
+    sheet.addAction(UIAlertAction(title: "从文件选择", style: .default) { [weak self] _ in
+      self?.presentDocumentPicker(from: root)
+    })
+    sheet.addAction(UIAlertAction(title: "取消", style: .cancel) { [weak self] _ in
+      self?.finishPicker(nil)
+    })
+    if let popover = sheet.popoverPresentationController {
+      popover.sourceView = root.view
+      popover.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY, width: 1, height: 1)
+    }
+    root.present(sheet, animated: true)
+  }
+
+  private func presentPhotoPicker(from root: UIViewController) {
+    var configuration = PHPickerConfiguration(photoLibrary: .shared())
+    configuration.filter = .images
+    configuration.selectionLimit = 1
+    configuration.preferredAssetRepresentationMode = .current
+    let picker = PHPickerViewController(configuration: configuration)
+    picker.delegate = self
+    root.present(picker, animated: true)
+  }
+
+  private func presentCamera(from root: UIViewController) {
+    let picker = UIImagePickerController()
+    picker.sourceType = .camera
+    picker.cameraCaptureMode = .photo
+    picker.delegate = self
+    root.present(picker, animated: true)
+  }
+
+  private func presentDocumentPicker(from root: UIViewController) {
     var contentTypes: [UTType] = [.pdf, .plainText, .jpeg, .png, .heic]
     for fileExtension in ["docx", "md", "heif"] {
       if let type = UTType(filenameExtension: fileExtension) {
@@ -67,14 +121,77 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
     let picker = UIDocumentPickerViewController(forOpeningContentTypes: contentTypes, asCopy: true)
     picker.delegate = self
     picker.allowsMultipleSelection = false
-    let root = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?
-      .windows.first(where: { $0.isKeyWindow })?.rootViewController
-    guard let root else {
-      documentPickerResult = nil
-      result(FlutterError(code: "document_picker_unavailable", message: "无法打开文件选择器", details: nil))
+    root.present(picker, animated: true)
+  }
+
+  private func imageFileName() -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyyMMdd-HHmmss"
+    return "照片-\(formatter.string(from: Date())).jpg"
+  }
+
+  private func finishPicker(_ value: Any?) {
+    documentPickerResult?(value)
+    documentPickerResult = nil
+  }
+
+  private func finishImage(_ image: UIImage) {
+    guard let data = image.jpegData(compressionQuality: 0.9) else {
+      finishPicker(FlutterError(code: "image_encode_failed", message: "图片处理失败", details: nil))
       return
     }
-    root.present(picker, animated: true)
+    if data.count > 30 * 1024 * 1024 {
+      finishPicker(FlutterError(code: "document_too_large", message: "第一版单个文件不能超过 30MB", details: nil))
+      return
+    }
+    finishPicker([
+      "fileName": imageFileName(),
+      "mimeType": "image/jpeg",
+      "bytes": FlutterStandardTypedData(bytes: data),
+    ])
+  }
+
+  func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    picker.dismiss(animated: true)
+    guard let provider = results.first?.itemProvider else {
+      finishPicker(nil)
+      return
+    }
+    guard provider.canLoadObject(ofClass: UIImage.self) else {
+      finishPicker(FlutterError(code: "image_read_failed", message: "无法读取这张图片", details: nil))
+      return
+    }
+    provider.loadObject(ofClass: UIImage.self) { [weak self] object, error in
+      DispatchQueue.main.async {
+        guard let self else { return }
+        if let image = object as? UIImage {
+          self.finishImage(image)
+        } else {
+          self.finishPicker(FlutterError(
+            code: "image_read_failed",
+            message: error?.localizedDescription ?? "无法读取这张图片",
+            details: nil
+          ))
+        }
+      }
+    }
+  }
+
+  func imagePickerController(
+    _ picker: UIImagePickerController,
+    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+  ) {
+    picker.dismiss(animated: true)
+    guard let image = info[.originalImage] as? UIImage else {
+      finishPicker(FlutterError(code: "image_read_failed", message: "无法读取拍摄的图片", details: nil))
+      return
+    }
+    finishImage(image)
+  }
+
+  func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+    picker.dismiss(animated: true)
+    finishPicker(nil)
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
@@ -116,8 +233,7 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
   }
 
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-    documentPickerResult?(nil)
-    documentPickerResult = nil
+    finishPicker(nil)
   }
 
   private func syncReminders(_ reminders: [[String: Any]], result: @escaping FlutterResult) {
