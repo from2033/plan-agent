@@ -2055,7 +2055,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         uploading = true;
         error = null;
       });
-      await widget.api.uploadDocument(
+      final uploadResult = await widget.api.uploadDocument(
         fileName: fileName,
         mimeType: mimeType,
         bytes: bytes,
@@ -2063,9 +2063,15 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       );
       await load();
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('资料已保存到家庭档案')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              uploadResult['duplicate'] == true
+                  ? '这份资料已经存在，没有重复归档'
+                  : '资料已保存到家庭档案',
+            ),
+          ),
+        );
       }
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());

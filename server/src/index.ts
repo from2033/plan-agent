@@ -68,6 +68,7 @@ import {
   deleteUserDocuments,
   discardDocument,
   failDocument,
+  findDuplicateDocument,
   listDocuments,
   readDocumentUpload,
   storeDocumentUpload,
@@ -587,6 +588,16 @@ app.post(
     }
     let storedDocumentId = "";
     try {
+      const duplicate = findDuplicateDocument(req.userId!, content);
+      if (duplicate && duplicate.status !== "FAILED") {
+        res.status(200).json({
+          duplicate: true,
+          documentId: duplicate.id,
+          status: duplicate.status,
+        });
+        return;
+      }
+      if (duplicate) discardDocument(duplicate.id, req.userId!);
       const document = storeDocumentUpload(req.userId!, fileName, mimeType, content);
       storedDocumentId = document.id;
       const job = enqueueAiJob(req.userId!, "document", {

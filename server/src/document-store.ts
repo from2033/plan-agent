@@ -17,6 +17,7 @@ db.exec(`
     file_name     TEXT NOT NULL,
     mime_type     TEXT NOT NULL,
     byte_size     INTEGER NOT NULL,
+    content_hash  TEXT,
     status        TEXT NOT NULL,
     job_id        TEXT,
     result_json   TEXT,
@@ -26,6 +27,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_documents_user ON documents(user_id, created_at DESC);
 `);
+const hasContentHash = (db.prepare("PRAGMA table_info(documents)").all() as unknown as { name: string }[])
+  .some((column) => column.name === "content_hash");
+if (!hasContentHash) db.exec("ALTER TABLE documents ADD COLUMN content_hash TEXT");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(user_id,content_hash) WHERE content_hash IS NOT NULL");
 
 export interface StoredDocument {
   id: string;
@@ -57,6 +62,16 @@ function uploadPath(id: string): string {
   return path.join(UPLOAD_DIR, `${id}.paf`);
 }
 
+export function documentContentHash(content: Buffer): string {
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+export function findDuplicateDocument(userId: string, content: Buffer): StoredDocument | null {
+  const row = db.prepare("SELECT * FROM documents WHERE user_id=? AND content_hash=? LIMIT 1")
+    .get(userId, documentContentHash(content)) as unknown as DocumentRow | undefined;
+  return row ? rowToDocument(row) : null;
+}
+
 function rowToDocument(row: DocumentRow): StoredDocument {
   return {
     id: row.id,
@@ -80,15 +95,16 @@ export function storeDocumentUpload(
 ): StoredDocument {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o700 });
   const id = crypto.randomUUID();
+  const contentHash = documentContentHash(content);
   const finalPath = uploadPath(id);
   const temporaryPath = `${finalPath}.tmp-${process.pid}`;
   fs.writeFileSync(temporaryPath, encryptBuffer(content), { mode: 0o600 });
   fs.renameSync(temporaryPath, finalPath);
   const now = new Date().toISOString();
   db.prepare(`INSERT INTO documents
-    (id,user_id,file_name,mime_type,byte_size,status,created_at,updated_at)
-    VALUES (?,?,?,?,?,'QUEUED',?,?)`)
-    .run(id, userId, encField(fileName), mimeType, content.length, now, now);
+    (id,user_id,file_name,mime_type,byte_size,content_hash,status,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,'QUEUED',?,?)`)
+    .run(id, userId, encField(fileName), mimeType, content.length, contentHash, now, now);
   return getDocument(id, userId)!;
 }
 
