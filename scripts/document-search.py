@@ -114,6 +114,12 @@ def trigrams(question: str):
     return values[:40]
 
 
+def meaningful_characters(question: str):
+    compact = re.sub(r"[^0-9A-Za-z\u3400-\u9fff]+", "", question)
+    noise = set("的了呢吗嘛啊呀吧是有在和与跟把被给从到里中上下一些那些这个那个一个怎么什么干嘛请问想要知道帮我查开的过")
+    return {character for character in compact if character not in noise}
+
+
 def excerpt(body: str, grams) -> str:
     compact = compact_text(body)
     positions = [compact.find(gram) for gram in grams if gram in compact]
@@ -127,27 +133,40 @@ def excerpt(body: str, grams) -> str:
 
 def search(connection: sqlite3.Connection, question: str, limit: int):
     grams = trigrams(question)
-    if not grams:
-        return []
-    match_query = " OR ".join('"' + gram.replace('"', '""') + '"' for gram in grams)
-    rows = connection.execute(
-        """
-        SELECT path,document_id,title,category,body,
-               bm25(documents_fts,0.0,0.0,8.0,3.0,1.0) AS rank
-        FROM documents_fts
-        WHERE documents_fts MATCH ?
-        ORDER BY rank
-        LIMIT 30
-        """,
-        (match_query,),
-    ).fetchall()
+    rows = []
+    if grams:
+        match_query = " OR ".join('"' + gram.replace('"', '""') + '"' for gram in grams)
+        rows = connection.execute(
+            """
+            SELECT path,document_id,title,category,body,
+                   bm25(documents_fts,0.0,0.0,8.0,3.0,1.0) AS rank
+            FROM documents_fts
+            WHERE documents_fts MATCH ?
+            ORDER BY rank
+            LIMIT 30
+            """,
+            (match_query,),
+        ).fetchall()
+    by_path = {row[0]: row for row in rows}
+    # Speech recognition often changes one character in a person's name, and
+    # natural questions use words such as “药品” while a note says “药物”. Add a
+    # bounded character-overlap fallback; the answering model remains the final
+    # evidence check, so weak matches cannot become unsupported facts.
+    for row in connection.execute(
+        "SELECT path,document_id,title,category,body,0.0 FROM documents ORDER BY mtime_ns DESC LIMIT 500"
+    ).fetchall():
+        by_path.setdefault(row[0], row)
+    meaningful = meaningful_characters(question)
     scored = []
-    for path, document_id, title, category, body, rank in rows:
+    for path, document_id, title, category, body, rank in by_path.values():
         haystack = f"{title} {category} {body}"
         matches = sum(1 for gram in grams if gram in haystack)
         title_matches = sum(1 for gram in grams if gram in title)
         category_matches = sum(1 for gram in grams if gram in category)
-        score = matches * 10 + title_matches * 25 + category_matches * 12 - float(rank)
+        character_matches = sum(1 for character in meaningful if character in haystack)
+        if matches == 0 and character_matches < min(2, max(1, len(meaningful))):
+            continue
+        score = matches * 10 + title_matches * 25 + category_matches * 12 + character_matches * 8 - float(rank)
         scored.append(
             {
                 "documentId": document_id,

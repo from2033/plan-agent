@@ -184,6 +184,8 @@ test("local document search indexes Obsidian notes and returns excerpts", () => 
     assert.equal(result[0].documentId, "2b472924-15cc-4676-8d3d-f5f947e574fa");
     assert.equal(result[0].title, "张三门诊票据");
     assert.match(result[0].excerpt, /45\.89/);
+    const fuzzyResult = searchLocalDocuments("张四门诊开的药是干嘛的", temporaryDir);
+    assert.equal(fuzzyResult[0].title, "张三门诊票据");
   } finally {
     fs.rmSync(temporaryDir, { recursive: true, force: true });
   }
