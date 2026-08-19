@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import UserNotifications
+import UniformTypeIdentifiers
 #if canImport(AlarmKit)
 import AlarmKit
 import SwiftUI
@@ -12,7 +13,8 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
 #endif
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentPickerDelegate {
+  private var documentPickerResult: FlutterResult?
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -37,6 +39,85 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
       }
       self?.syncReminders(reminders, result: result)
     }
+    let documentChannel = FlutterMethodChannel(
+      name: "com.from2033.assistant/documents",
+      binaryMessenger: registrar.messenger()
+    )
+    documentChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "pick" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      self?.presentDocumentPicker(result: result)
+    }
+  }
+
+  private func presentDocumentPicker(result: @escaping FlutterResult) {
+    guard documentPickerResult == nil else {
+      result(FlutterError(code: "document_picker_busy", message: "已有文件选择器正在打开", details: nil))
+      return
+    }
+    documentPickerResult = result
+    var contentTypes: [UTType] = [.pdf, .plainText, .jpeg, .png, .heic]
+    for fileExtension in ["docx", "md", "heif"] {
+      if let type = UTType(filenameExtension: fileExtension) {
+        contentTypes.append(type)
+      }
+    }
+    let picker = UIDocumentPickerViewController(forOpeningContentTypes: contentTypes, asCopy: true)
+    picker.delegate = self
+    picker.allowsMultipleSelection = false
+    let root = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?
+      .windows.first(where: { $0.isKeyWindow })?.rootViewController
+    guard let root else {
+      documentPickerResult = nil
+      result(FlutterError(code: "document_picker_unavailable", message: "无法打开文件选择器", details: nil))
+      return
+    }
+    root.present(picker, animated: true)
+  }
+
+  func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    guard let result = documentPickerResult else { return }
+    documentPickerResult = nil
+    guard let url = urls.first else {
+      result(nil)
+      return
+    }
+    let accessing = url.startAccessingSecurityScopedResource()
+    defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+    do {
+      let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+      if data.count > 30 * 1024 * 1024 {
+        result(FlutterError(code: "document_too_large", message: "第一版单个文件不能超过 30MB", details: nil))
+        return
+      }
+      let fileExtension = url.pathExtension.lowercased()
+      let knownMimeTypes = [
+        "pdf": "application/pdf",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "txt": "text/plain",
+        "md": "text/markdown",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "heic": "image/heic",
+        "heif": "image/heif",
+      ]
+      let type = UTType(filenameExtension: fileExtension)
+      result([
+        "fileName": url.lastPathComponent,
+        "mimeType": knownMimeTypes[fileExtension] ?? type?.preferredMIMEType ?? "application/octet-stream",
+        "bytes": FlutterStandardTypedData(bytes: data),
+      ])
+    } catch {
+      result(FlutterError(code: "document_read_failed", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+    documentPickerResult?(nil)
+    documentPickerResult = nil
   }
 
   private func syncReminders(_ reminders: [[String: Any]], result: @escaping FlutterResult) {

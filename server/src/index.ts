@@ -58,9 +58,20 @@ import {
   findActiveSummaryJob,
   getAiJob,
   heartbeatAiJob,
+  getLeasedAiJob,
   validWorkerToken,
   type AiJob,
 } from "./ai-queue.js";
+import {
+  bindDocumentJob,
+  completeDocument,
+  deleteUserDocuments,
+  discardDocument,
+  failDocument,
+  listDocuments,
+  readDocumentUpload,
+  storeDocumentUpload,
+} from "./document-store.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
@@ -193,6 +204,27 @@ app.post(`${WORKER_API}/jobs/:id/heartbeat`, requireWorker, (req, res) => {
   res.json({ ok: true, leaseSeconds });
 });
 
+app.get(`${WORKER_API}/jobs/:id/document`, requireWorker, (req, res) => {
+  const leaseToken = req.header("x-job-lease") || "";
+  const job = getLeasedAiJob(req.params.id, leaseToken);
+  const documentId = job?.kind === "document"
+    ? String((job.input as { documentId?: unknown })?.documentId || "")
+    : "";
+  if (!job || !documentId) {
+    res.status(409).json({ error: "invalid_or_expired_lease" });
+    return;
+  }
+  const uploaded = readDocumentUpload(documentId, job.userId);
+  if (!uploaded) {
+    res.status(404).json({ error: "document_not_found" });
+    return;
+  }
+  res.setHeader("content-type", uploaded.document.mimeType || "application/octet-stream");
+  res.setHeader("x-document-id", uploaded.document.id);
+  res.setHeader("x-file-name-b64", Buffer.from(uploaded.document.fileName, "utf8").toString("base64"));
+  res.send(uploaded.content);
+});
+
 interface WorkerIngestResult {
   kind: "record" | "save" | "ask";
   fields?: Array<Omit<Entry, "id" | "raw" | "time" | "timestamp" | "reminderAt"> & {
@@ -262,6 +294,12 @@ function shanghaiDate(timestamp: string): string {
 }
 
 function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
+  if (job.kind === "document") {
+    const documentId = String((job.input as { documentId?: unknown })?.documentId || "");
+    if (!documentId) throw new Error("document_id_missing");
+    completeDocument(documentId, job.userId, value);
+    return value;
+  }
   if (job.kind === "summary") {
     const input = job.input as {
       reportCache?: { scope: ReportScope; periodKey: string; inputHash: string };
@@ -381,15 +419,27 @@ app.post(`${WORKER_API}/jobs/:id/result`, requireWorker, (req, res) => {
 });
 
 app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
+  const leaseToken = req.header("x-job-lease") || "";
+  const leased = getLeasedAiJob(req.params.id, leaseToken);
   const ok = failAiJob(
     req.params.id,
-    req.header("x-job-lease") || "",
+    leaseToken,
     String(req.body?.reason || "worker_failed"),
     req.body?.retryable !== false,
   );
   if (!ok) {
     res.status(409).json({ error: "invalid_or_expired_lease" });
     return;
+  }
+  if (leased?.kind === "document") {
+    const current = getAiJob(leased.id, leased.userId);
+    if (current?.status === "FAILED") {
+      failDocument(
+        String((leased.input as { documentId?: unknown })?.documentId || ""),
+        leased.userId,
+        current.error || "document_processing_failed",
+      );
+    }
   }
   res.json({ ok: true });
 });
@@ -463,6 +513,7 @@ app.delete(`${API}/account`, (req, res) => {
     return;
   }
   try {
+    deleteUserDocuments(req.userId!);
     deleteAccountData(req.userId!);
     res.status(204).end();
   } catch (error) {
@@ -470,6 +521,60 @@ app.delete(`${API}/account`, (req, res) => {
     res.status(500).json({ error: "账户删除失败，请稍后重试" });
   }
 });
+
+const DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/markdown",
+  "image/jpeg",
+  "image/png",
+  "image/heic",
+  "image/heif",
+]);
+
+app.get(`${API}/documents`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.json([]);
+    return;
+  }
+  res.json(listDocuments(req.userId!));
+});
+
+app.post(
+  `${API}/documents`,
+  express.raw({ type: () => true, limit: "30mb" }),
+  (req, res) => {
+    if (isGuestUser(req.userId)) {
+      res.status(403).json({ error: "请先登录后再上传家庭资料" });
+      return;
+    }
+    const fileName = String(req.query.fileName || "").trim().slice(0, 240);
+    const mimeType = String(req.header("content-type") || "application/octet-stream")
+      .split(";")[0].trim().toLowerCase();
+    const content = req.body as Buffer;
+    if (!fileName || !content?.length) {
+      res.status(400).json({ error: "文件名和文件内容不能为空" });
+      return;
+    }
+    if (!DOCUMENT_MIME_TYPES.has(mimeType)) {
+      res.status(415).json({ error: "第一版支持 PDF、Word、图片和文本文件" });
+      return;
+    }
+    let storedDocumentId = "";
+    try {
+      const document = storeDocumentUpload(req.userId!, fileName, mimeType, content);
+      storedDocumentId = document.id;
+      const job = enqueueAiJob(req.userId!, "document", { documentId: document.id }, 90);
+      bindDocumentJob(document.id, req.userId!, job.id);
+      res.status(202).json({ documentId: document.id, jobId: job.id, status: "QUEUED" });
+    } catch (error) {
+      if (storedDocumentId) discardDocument(storedDocumentId, req.userId!);
+      console.error("[document upload] 保存失败:", error);
+      res.status(500).json({ error: "资料上传失败" });
+    }
+  },
+);
 
 const ClientImportSchema = z.object({
   migrationId: z.string().min(1).max(100),

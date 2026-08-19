@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 // 没配 DB_ENCRYPTION_KEY 时退化为明文（启动时会告警）；读取按前缀自动识别明文/密文，可平滑迁移。
 
 const PREFIX = "enc1:";
+const FILE_PREFIX = Buffer.from("paf1");
 
 let cachedKey: Buffer | null = null;
 let resolved = false;
@@ -60,4 +61,27 @@ export function encOpt(s: string | null | undefined): string | null {
 }
 export function decOpt(s: string | null | undefined): string | null {
   return s == null ? null : decField(String(s));
+}
+
+export function encryptBuffer(plain: Buffer): Buffer {
+  const k = getKey();
+  if (k === null) throw new Error("文件上传要求配置 DB_ENCRYPTION_KEY");
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", k, iv);
+  const ciphertext = Buffer.concat([cipher.update(plain), cipher.final()]);
+  return Buffer.concat([FILE_PREFIX, iv, cipher.getAuthTag(), ciphertext]);
+}
+
+export function decryptBuffer(stored: Buffer): Buffer {
+  const k = getKey();
+  if (k === null) throw new Error("文件为密文，但未配置 DB_ENCRYPTION_KEY");
+  if (stored.length < 32 || !stored.subarray(0, 4).equals(FILE_PREFIX)) {
+    throw new Error("文件密文格式无效");
+  }
+  const iv = stored.subarray(4, 16);
+  const tag = stored.subarray(16, 32);
+  const ciphertext = stored.subarray(32);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", k, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }

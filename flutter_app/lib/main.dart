@@ -567,7 +567,7 @@ class _HomeScreenState extends State<HomeScreen> {
     (EntryType.expense, '账单', Icons.credit_card_rounded),
     (EntryType.memo, '备忘', Icons.book_outlined),
     (EntryType.wish, '心愿', Icons.star_outline_rounded),
-    (null, '知识', Icons.lightbulb_outline_rounded),
+    (null, '资料', Icons.folder_copy_outlined),
   ];
 
   @override
@@ -2000,8 +2000,13 @@ class KnowledgePane extends StatefulWidget {
 
 class _KnowledgePaneState extends State<KnowledgePane> {
   List<KnowledgeItem> items = [];
+  List<Map<String, dynamic>> documents = [];
   bool loading = true;
+  bool uploading = false;
   String? error;
+  static const documentChannel = MethodChannel(
+    'com.from2033.assistant/documents',
+  );
 
   @override
   void initState() {
@@ -2011,10 +2016,14 @@ class _KnowledgePaneState extends State<KnowledgePane> {
 
   Future<void> load() async {
     try {
-      final value = await widget.api.knowledge();
+      final values = await Future.wait([
+        widget.api.knowledge(),
+        widget.api.documents(),
+      ]);
       if (mounted) {
         setState(() {
-          items = value;
+          items = values[0] as List<KnowledgeItem>;
+          documents = values[1] as List<Map<String, dynamic>>;
           error = null;
         });
       }
@@ -2022,6 +2031,42 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       if (mounted) setState(() => error = e.toString());
     } finally {
       if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> upload() async {
+    if (widget.api.isGuest) {
+      setState(() => error = '请先登录后再上传家庭资料');
+      return;
+    }
+    try {
+      final picked = await documentChannel.invokeMapMethod<String, dynamic>(
+        'pick',
+      );
+      if (picked == null || !mounted) return;
+      final bytes = picked['bytes'] as Uint8List?;
+      final fileName = picked['fileName'] as String? ?? '资料';
+      final mimeType = picked['mimeType'] as String? ?? 'application/octet-stream';
+      if (bytes == null || bytes.isEmpty) throw const ApiException('文件内容为空');
+      setState(() {
+        uploading = true;
+        error = null;
+      });
+      await widget.api.uploadDocument(
+        fileName: fileName,
+        mimeType: mimeType,
+        bytes: bytes,
+      );
+      await load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('资料已保存到家庭档案')),
+        );
+      }
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    } finally {
+      if (mounted) setState(() => uploading = false);
     }
   }
 
@@ -2067,6 +2112,18 @@ class _KnowledgePaneState extends State<KnowledgePane> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                FilledButton.icon(
+                  onPressed: uploading ? null : upload,
+                  icon: uploading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.upload_file_rounded),
+                  label: Text(uploading ? '正在归档…' : '上传家庭资料'),
+                ),
+                const SizedBox(height: 14),
                 if (error != null)
                   Container(
                     margin: const EdgeInsets.only(bottom: 12),
@@ -2080,7 +2137,59 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                       style: const TextStyle(color: Color(0xffb42318)),
                     ),
                   ),
-                if (items.isEmpty)
+                if (documents.isNotEmpty) ...[
+                  const Text(
+                    '家庭档案',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 9),
+                  for (final document in documents)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 9),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.black.withValues(alpha: .06)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.description_outlined, color: Color(0xff8b5e34)),
+                          const SizedBox(width: 11),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  ((document['result'] as Map<String, dynamic>?)?['title'] as String?)
+                                      ?? (document['fileName'] as String? ?? '资料'),
+                                  style: const TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  document['status'] == 'COMPLETE'
+                                      ? (((document['result'] as Map<String, dynamic>?)?['category'] as String?) ?? '已归档')
+                                      : document['status'] == 'FAILED'
+                                      ? '处理失败'
+                                      : '正在处理',
+                                  style: const TextStyle(color: Color(0xff8a8680), fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                ],
+                if (items.isNotEmpty) ...[
+                  const Text(
+                    '知识笔记',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 9),
+                ],
+                if (items.isEmpty && documents.isEmpty)
                   const Padding(
                     padding: EdgeInsets.only(top: 150),
                     child: Column(
@@ -2092,7 +2201,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                         ),
                         SizedBox(height: 14),
                         Text(
-                          '还没有知识',
+                          '还没有资料',
                           style: TextStyle(
                             fontSize: 17,
                             fontWeight: FontWeight.w600,
@@ -2100,7 +2209,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                         ),
                         SizedBox(height: 8),
                         Text(
-                          '按住麦克风说“记到知识库：……”\n以后可以直接用语音询问',
+                          '上传 PDF、Word、图片或文本\n也可以继续用语音保存知识',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: Color(0xff8a8680)),
                         ),

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
-import { runInference, runOllama } from "./codex-worker.mjs";
+import { extractDocumentText, runInference, runOllama, writeVaultDocument } from "./codex-worker.mjs";
 
 const ingestJob = {
   kind: "ingest",
@@ -87,4 +90,75 @@ test("runInference can disable the cloud fallback", async () => {
     }),
     /ollama_offline/,
   );
+});
+
+test("runOllama accepts document metadata with a bounded output", async (t) => {
+  let requestBody;
+  const server = http.createServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", chunk => { body += chunk; });
+    request.on("end", () => {
+      requestBody = JSON.parse(body);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        message: {
+          content: JSON.stringify({
+            title: "租赁合同",
+            category: "合同",
+            summary: "一份租赁合同。",
+            people: ["张三"],
+            keywords: ["租赁", "合同"],
+            documentDate: "2026-08-19",
+          }),
+        },
+      }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const address = server.address();
+  const result = await runOllama({
+    kind: "document",
+    input: { fileName: "合同.pdf", extractedText: "张三签订租赁合同" },
+  }, {
+    url: `http://127.0.0.1:${address.port}`,
+    timeoutMs: 2_000,
+  });
+  assert.equal(result.category, "合同");
+  assert.equal(requestBody.options.num_predict, 320);
+  assert.deepEqual(requestBody.format.required, ["title", "category", "summary", "people", "keywords", "documentDate"]);
+});
+
+test("plain text documents are extracted and archived as Obsidian notes", () => {
+  const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "assistant-document-test-"));
+  try {
+    const sourcePath = path.join(temporaryDir, "hospital.txt");
+    fs.writeFileSync(sourcePath, "张三 2026-08-19 医院处方：按医嘱服药。", "utf8");
+    const extracted = extractDocumentText(sourcePath, "医院处方.txt", "text/plain", temporaryDir);
+    assert.match(extracted.text, /医院处方/);
+    const archived = writeVaultDocument(
+      { input: { documentId: "2b472924-15cc-4676-8d3d-f5f947e574fa" } },
+      "医院处方.txt",
+      fs.readFileSync(sourcePath),
+      extracted.text,
+      {
+        title: "张三医院处方",
+        category: "医疗健康",
+        summary: "张三的医院处方资料。",
+        people: ["张三"],
+        keywords: ["医院", "处方"],
+        documentDate: "2026-08-19",
+      },
+      [],
+      temporaryDir,
+    );
+    const note = fs.readFileSync(path.join(temporaryDir, archived.noteRelative), "utf8");
+    assert.match(note, /category: "医疗健康"/);
+    assert.match(note, /\[\[附件\//);
+    assert.match(note, /按医嘱服药/);
+    assert.ok(fs.existsSync(path.join(temporaryDir, archived.attachmentRelative)));
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
+  }
 });

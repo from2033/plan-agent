@@ -1,15 +1,16 @@
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import { decField, encField } from "./crypto-field.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 1;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-07-19.3";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 2;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-08-19.1";
 
-export type AiJobKind = "ingest" | "correct" | "summary";
+export type AiJobKind = "ingest" | "correct" | "summary" | "document";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
 
 export interface AiJob {
@@ -90,9 +91,24 @@ const SummaryResultSchema = z.object({
   suggestions: z.array(z.string().min(1).max(300)).max(8),
 });
 
+const DocumentResultSchema = z.object({
+  documentId: z.string().uuid(),
+  title: z.string().min(1).max(200),
+  category: z.string().min(1).max(60),
+  summary: z.string().max(5_000),
+  people: z.array(z.string().min(1).max(80)).max(20),
+  keywords: z.array(z.string().min(1).max(80)).max(30),
+  documentDate: z.string().max(20),
+  vaultPath: z.string().min(1).max(1_000),
+  attachmentPath: z.string().min(1).max(1_000),
+  textLength: z.number().int().nonnegative(),
+  warnings: z.array(z.string().min(1).max(300)).max(20),
+});
+
 export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "ingest") return IngestResultSchema.parse(value);
   if (kind === "correct") return CorrectResultSchema.parse(value);
+  if (kind === "document") return DocumentResultSchema.parse(value);
   return SummaryResultSchema.parse(value);
 }
 
@@ -147,7 +163,7 @@ function rowToJob(row: JobRow): AiJob {
     kind: row.kind,
     status: row.status,
     input: JSON.parse(row.input_json),
-    result: row.result_json ? JSON.parse(row.result_json) : null,
+    result: row.result_json ? JSON.parse(decField(row.result_json)) : null,
     error: row.error,
     attempts: row.attempts,
     createdAt: row.created_at,
@@ -240,6 +256,11 @@ export function heartbeatAiJob(id: string, leaseToken: string): number | null {
   return leaseSeconds;
 }
 
+export function getLeasedAiJob(id: string, leaseToken: string): AiJob | null {
+  const row = leasedRow(id, leaseToken);
+  return row ? rowToJob(row) : null;
+}
+
 export function completeAiJob(
   id: string,
   leaseToken: string,
@@ -252,8 +273,9 @@ export function completeAiJob(
   const currentJob = rowToJob(row);
   const result = finalize ? finalize(currentJob, validated) : validated;
   const now = new Date().toISOString();
+  const storedResult = row.kind === "document" ? encField(JSON.stringify(result)) : JSON.stringify(result);
   db.prepare(`UPDATE ai_jobs SET status='COMPLETE',result_json=?,lease_hash=NULL,lease_until=NULL,
-    heartbeat_at=NULL,error=NULL,updated_at=? WHERE id=?`).run(JSON.stringify(result), now, id);
+    heartbeat_at=NULL,error=NULL,updated_at=? WHERE id=?`).run(storedResult, now, id);
   return rowToJob(db.prepare("SELECT * FROM ai_jobs WHERE id=?").get(id) as unknown as JobRow);
 }
 

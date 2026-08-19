@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -177,6 +178,39 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<Map<String, dynamic>>> documents() async {
+    if (_isGuest) return const [];
+    final value = await _request('GET', '/documents') as List<dynamic>;
+    return value.cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> uploadDocument({
+    required String fileName,
+    required String mimeType,
+    required Uint8List bytes,
+  }) async {
+    if (_isGuest) throw const ApiException('请先登录后再上传家庭资料');
+    final uri = Uri.parse('$apiBase/documents').replace(
+      queryParameters: {'fileName': fileName},
+    );
+    try {
+      final response = await _http.post(
+        uri,
+        headers: {
+          'content-type': mimeType,
+          if (_token != null) 'authorization': 'Bearer $_token',
+        },
+        body: bytes,
+      );
+      final json = _decode(response) as Map<String, dynamic>;
+      if (response.statusCode != 202) return json;
+      return await _waitForJob(json['jobId'] as String, timeoutSeconds: 300);
+    } catch (error) {
+      if (error is ApiException) rethrow;
+      throw const ApiException('资料上传失败，请检查网络后重试');
+    }
+  }
+
   Future<void> deleteKnowledge(String id) async {
     if (_isGuest) {
       await _guestStore.deleteKnowledge(id);
@@ -227,8 +261,11 @@ class ApiClient {
     return result;
   }
 
-  Future<Map<String, dynamic>> _waitForJob(String id) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 90));
+  Future<Map<String, dynamic>> _waitForJob(
+    String id, {
+    int timeoutSeconds = 90,
+  }) async {
+    final deadline = DateTime.now().add(Duration(seconds: timeoutSeconds));
     while (DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 900));
       final json =

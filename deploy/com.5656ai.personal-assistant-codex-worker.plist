@@ -29,6 +29,12 @@
     <string>10m</string>
     <key>ASSISTANT_CODEX_FALLBACK</key>
     <string>true</string>
+    <key>ASSISTANT_OBSIDIAN_VAULT</key>
+    <string>/Users/dcw/Documents/家庭资料</string>
+    <key>ASSISTANT_PDFTOTEXT_BIN</key>
+    <string>/Users/dcw/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/poppler/poppler/bin/pdftotext</string>
+    <key>ASSISTANT_PDFTOPPM_BIN</key>
+    <string>/Users/dcw/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override/pdftoppm</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

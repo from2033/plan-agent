@@ -6,7 +6,7 @@ upstream personal_assistant_backend {
 server {
   listen 8787;
   server_name _;
-  client_max_body_size 20m;
+  client_max_body_size 32m;
 
   location / {
     proxy_pass http://personal_assistant_backend;
