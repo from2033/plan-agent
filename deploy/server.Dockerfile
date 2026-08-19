@@ -2,7 +2,7 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY server/package.json server/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN npm ci
 COPY server/tsconfig.json ./
 COPY server/src ./src
 RUN npm run build && npm prune --omit=dev
