@@ -2001,8 +2001,14 @@ class KnowledgePane extends StatefulWidget {
 class _KnowledgePaneState extends State<KnowledgePane> {
   List<KnowledgeItem> items = [];
   List<Map<String, dynamic>> documents = [];
+  late final VoiceService questionVoice = VoiceService(widget.api);
+  final questionController = TextEditingController();
   bool loading = true;
   bool uploading = false;
+  bool asking = false;
+  bool recordingQuestion = false;
+  bool recognizingQuestion = false;
+  Map<String, dynamic>? questionAnswer;
   String? error;
   static const documentChannel = MethodChannel(
     'com.from2033.assistant/documents',
@@ -2012,6 +2018,13 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+  void dispose() {
+    questionController.dispose();
+    unawaited(questionVoice.dispose());
+    super.dispose();
   }
 
   Future<void> load() async {
@@ -2046,7 +2059,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       if (picked == null || !mounted) return;
       final bytes = picked['bytes'] as Uint8List?;
       final fileName = picked['fileName'] as String? ?? '资料';
-      final mimeType = picked['mimeType'] as String? ?? 'application/octet-stream';
+      final mimeType =
+          picked['mimeType'] as String? ?? 'application/octet-stream';
       if (bytes == null || bytes.isEmpty) throw const ApiException('文件内容为空');
       setState(() {
         uploading = true;
@@ -2059,15 +2073,202 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       );
       await load();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('资料已保存到家庭档案')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('资料已保存到家庭档案')));
       }
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
     } finally {
       if (mounted) setState(() => uploading = false);
     }
+  }
+
+  Future<void> askDocuments([String? value]) async {
+    final question = (value ?? questionController.text).trim();
+    if (question.isEmpty || asking) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      asking = true;
+      error = null;
+      questionAnswer = null;
+    });
+    try {
+      final answer = await widget.api.askDocuments(question);
+      if (mounted) setState(() => questionAnswer = answer);
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    } finally {
+      if (mounted) setState(() => asking = false);
+    }
+  }
+
+  Future<void> toggleQuestionVoice() async {
+    if (recognizingQuestion || asking) return;
+    if (!recordingQuestion) {
+      try {
+        await questionVoice.start();
+        if (mounted) {
+          setState(() {
+            recordingQuestion = true;
+            error = null;
+          });
+        }
+      } catch (exception) {
+        if (mounted) setState(() => error = exception.toString());
+      }
+      return;
+    }
+    setState(() {
+      recordingQuestion = false;
+      recognizingQuestion = true;
+    });
+    try {
+      final text = await questionVoice.transcribe(
+        await questionVoice.stopRecording(),
+      );
+      if (text.isEmpty) throw const ApiException('没有听清，请再说一次');
+      questionController.text = text;
+      questionController.selection = TextSelection.collapsed(
+        offset: text.length,
+      );
+      if (mounted) setState(() => recognizingQuestion = false);
+      await askDocuments(text);
+    } catch (exception) {
+      if (mounted) {
+        setState(() {
+          recognizingQuestion = false;
+          error = exception.toString();
+        });
+      }
+    }
+  }
+
+  String documentTitle(Map<String, dynamic> document) {
+    final result = document['result'] as Map<String, dynamic>?;
+    return result?['title'] as String? ??
+        document['fileName'] as String? ??
+        '资料';
+  }
+
+  void showDocument(Map<String, dynamic> document) {
+    final result = document['result'] as Map<String, dynamic>? ?? const {};
+    final people = (result['people'] as List<dynamic>? ?? const [])
+        .cast<String>();
+    final keywords = (result['keywords'] as List<dynamic>? ?? const [])
+        .cast<String>();
+    final warnings = (result['warnings'] as List<dynamic>? ?? const [])
+        .cast<String>();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(22, 0, 22, 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                documentTitle(document),
+                style: const TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                '${result['category'] ?? '其他'}${(result['documentDate'] as String? ?? '').isEmpty ? '' : ' · ${result['documentDate']}'}',
+                style: const TextStyle(color: Color(0xff8a8680)),
+              ),
+              if ((result['summary'] as String? ?? '').isNotEmpty) ...[
+                const SizedBox(height: 18),
+                Text(
+                  result['summary'] as String,
+                  style: const TextStyle(height: 1.55),
+                ),
+              ],
+              if (people.isNotEmpty) _detailLine('相关人员', people.join('、')),
+              if (keywords.isNotEmpty) _detailLine('关键词', keywords.join('、')),
+              _detailLine('原文件', document['fileName'] as String? ?? '资料'),
+              if (warnings.isNotEmpty) _detailLine('识别提示', warnings.join('\n')),
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.all(13),
+                decoration: BoxDecoration(
+                  color: const Color(0xfffff7ed),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.lock_outline_rounded,
+                      size: 18,
+                      color: Color(0xffb45309),
+                    ),
+                    SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        '原始文件保存在这台 Mac 的 Obsidian「家庭资料」库中，手机这里只展示归档信息。',
+                        style: TextStyle(color: Color(0xff92400e), height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailLine(String label, String value) => Padding(
+    padding: const EdgeInsets.only(top: 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, color: Color(0xff9a948b)),
+        ),
+        const SizedBox(height: 4),
+        Text(value, style: const TextStyle(height: 1.45)),
+      ],
+    ),
+  );
+
+  void showSource(Map<String, dynamic> source) {
+    final id = source['documentId'];
+    for (final document in documents) {
+      if (document['id'] == id) {
+        showDocument(document);
+        return;
+      }
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.fromLTRB(22, 0, 22, 30),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              source['title'] as String? ?? '引用资料',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              source['excerpt'] as String? ?? '',
+              style: const TextStyle(height: 1.5),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> remove(KnowledgeItem item) async {
@@ -2124,6 +2325,178 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                   label: Text(uploading ? '正在归档…' : '上传家庭资料'),
                 ),
                 const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: .06),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '问家庭资料',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        recordingQuestion
+                            ? '正在录音，再点一次麦克风结束'
+                            : recognizingQuestion
+                            ? '正在识别语音…'
+                            : '例如：这次门诊个人支付了多少钱？',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: recordingQuestion
+                              ? const Color(0xffdc2626)
+                              : const Color(0xff8a8680),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: questionController,
+                        minLines: 1,
+                        maxLines: 3,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => askDocuments(),
+                        decoration: InputDecoration(
+                          hintText: '输入关于合同、药单或其他资料的问题',
+                          filled: true,
+                          fillColor: const Color(0xfffaf8f5),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(13),
+                            borderSide: BorderSide.none,
+                          ),
+                          suffixIcon: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                onPressed: toggleQuestionVoice,
+                                tooltip: recordingQuestion ? '结束录音' : '语音提问',
+                                icon: Icon(
+                                  recordingQuestion
+                                      ? Icons.stop_circle_rounded
+                                      : Icons.mic_none_rounded,
+                                  color: recordingQuestion
+                                      ? const Color(0xffdc2626)
+                                      : const Color(0xff8b5e34),
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: asking ? null : askDocuments,
+                                tooltip: '提问',
+                                icon: asking
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.arrow_upward_rounded,
+                                        color: Color(0xff8b5e34),
+                                      ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (questionAnswer != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(15),
+                    decoration: BoxDecoration(
+                      color: const Color(0xfffffbeb),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(
+                              Icons.auto_awesome_rounded,
+                              size: 18,
+                              color: Color(0xffd97706),
+                            ),
+                            SizedBox(width: 7),
+                            Text(
+                              '根据家庭资料回答',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          questionAnswer!['answer'] as String? ?? '没有找到答案',
+                          style: const TextStyle(height: 1.55),
+                        ),
+                        if ((questionAnswer!['sources'] as List<dynamic>? ??
+                                const [])
+                            .isNotEmpty) ...[
+                          const SizedBox(height: 13),
+                          const Text(
+                            '引用资料',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xff8a8680),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          for (final source
+                              in (questionAnswer!['sources'] as List<dynamic>)
+                                  .cast<Map<String, dynamic>>())
+                            InkWell(
+                              onTap: () => showSource(source),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                width: double.infinity,
+                                margin: const EdgeInsets.only(bottom: 7),
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: .75),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      source['title'] as String? ?? '资料',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      source['excerpt'] as String? ?? '',
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xff716b63),
+                                        height: 1.35,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
                 if (error != null)
                   Container(
                     margin: const EdgeInsets.only(bottom: 12),
@@ -2144,40 +2517,63 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                   ),
                   const SizedBox(height: 9),
                   for (final document in documents)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 9),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.black.withValues(alpha: .06)),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.description_outlined, color: Color(0xff8b5e34)),
-                          const SizedBox(width: 11),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  ((document['result'] as Map<String, dynamic>?)?['title'] as String?)
-                                      ?? (document['fileName'] as String? ?? '资料'),
-                                  style: const TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  document['status'] == 'COMPLETE'
-                                      ? (((document['result'] as Map<String, dynamic>?)?['category'] as String?) ?? '已归档')
-                                      : document['status'] == 'FAILED'
-                                      ? '处理失败'
-                                      : '正在处理',
-                                  style: const TextStyle(color: Color(0xff8a8680), fontSize: 12),
-                                ),
-                              ],
-                            ),
+                    InkWell(
+                      onTap: () => showDocument(document),
+                      borderRadius: BorderRadius.circular(15),
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 9),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(
+                            color: Colors.black.withValues(alpha: .06),
                           ),
-                        ],
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.description_outlined,
+                              color: Color(0xff8b5e34),
+                            ),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    documentTitle(document),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    document['status'] == 'COMPLETE'
+                                        ? (((document['result']
+                                                      as Map<
+                                                        String,
+                                                        dynamic
+                                                      >?)?['category']
+                                                  as String?) ??
+                                              '已归档')
+                                        : document['status'] == 'FAILED'
+                                        ? '处理失败'
+                                        : '正在处理',
+                                    style: const TextStyle(
+                                      color: Color(0xff8a8680),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              color: Color(0xffb7b0a7),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   const SizedBox(height: 12),

@@ -5,7 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { extractDocumentText, runInference, runOllama, writeVaultDocument } from "./codex-worker.mjs";
+import {
+  extractDocumentText,
+  runInference,
+  runOllama,
+  searchLocalDocuments,
+  writeVaultDocument,
+} from "./codex-worker.mjs";
 
 const ingestJob = {
   kind: "ingest",
@@ -128,6 +134,59 @@ test("runOllama accepts document metadata with a bounded output", async (t) => {
   assert.equal(result.category, "合同");
   assert.equal(requestBody.options.num_predict, 320);
   assert.deepEqual(requestBody.format.required, ["title", "category", "summary", "people", "keywords", "documentDate"]);
+});
+
+test("runOllama answers document questions with explicit source indexes", async (t) => {
+  let requestBody;
+  const server = http.createServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", chunk => { body += chunk; });
+    request.on("end", () => {
+      requestBody = JSON.parse(body);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        message: {
+          content: JSON.stringify({
+            answer: "票据显示个人支付 45.89 元。",
+            sourceIndexes: [0],
+            insufficientEvidence: false,
+          }),
+        },
+      }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const address = server.address();
+  const result = await runOllama({
+    kind: "document_question",
+    input: {
+      question: "这张票据个人支付多少？",
+      sources: [{ index: 0, title: "门诊票据", category: "医疗健康", excerpt: "个人支付 45.89 元" }],
+    },
+  }, {
+    url: `http://127.0.0.1:${address.port}`,
+    timeoutMs: 2_000,
+  });
+  assert.equal(result.sourceIndexes[0], 0);
+  assert.equal(requestBody.options.num_predict, 480);
+  assert.deepEqual(requestBody.format.required, ["answer", "sourceIndexes", "insufficientEvidence"]);
+});
+
+test("local document search indexes Obsidian notes and returns excerpts", () => {
+  const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "assistant-search-test-"));
+  try {
+    const noteDir = path.join(temporaryDir, "资料", "医疗健康");
+    fs.mkdirSync(noteDir, { recursive: true });
+    fs.writeFileSync(path.join(noteDir, "门诊票据.md"), `---\ndocument_id: "2b472924-15cc-4676-8d3d-f5f947e574fa"\ntitle: "张三门诊票据"\ncategory: "医疗健康"\n---\n张三门诊个人支付 45.89 元，医保支付 14.74 元。\n`, "utf8");
+    const result = searchLocalDocuments("张三门诊个人支付多少钱", temporaryDir);
+    assert.equal(result[0].documentId, "2b472924-15cc-4676-8d3d-f5f947e574fa");
+    assert.equal(result[0].title, "张三门诊票据");
+    assert.match(result[0].excerpt, /45\.89/);
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
+  }
 });
 
 test("plain text documents are extracted and archived as Obsidian notes", () => {

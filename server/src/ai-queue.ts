@@ -7,10 +7,10 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 2;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-08-19.1";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 3;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-08-19.2";
 
-export type AiJobKind = "ingest" | "correct" | "summary" | "document";
+export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
 
 export interface AiJob {
@@ -105,10 +105,23 @@ const DocumentResultSchema = z.object({
   warnings: z.array(z.string().min(1).max(300)).max(20),
 });
 
+const DocumentQuestionResultSchema = z.object({
+  answer: z.string().min(1).max(10_000),
+  insufficientEvidence: z.boolean(),
+  sources: z.array(z.object({
+    documentId: z.string().uuid(),
+    title: z.string().min(1).max(200),
+    category: z.string().min(1).max(60),
+    vaultPath: z.string().min(1).max(1_000),
+    excerpt: z.string().min(1).max(2_000),
+  })).max(8),
+});
+
 export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "ingest") return IngestResultSchema.parse(value);
   if (kind === "correct") return CorrectResultSchema.parse(value);
   if (kind === "document") return DocumentResultSchema.parse(value);
+  if (kind === "document_question") return DocumentQuestionResultSchema.parse(value);
   return SummaryResultSchema.parse(value);
 }
 
@@ -162,7 +175,7 @@ function rowToJob(row: JobRow): AiJob {
     userId: row.user_id,
     kind: row.kind,
     status: row.status,
-    input: JSON.parse(row.input_json),
+    input: JSON.parse(decField(row.input_json)),
     result: row.result_json ? JSON.parse(decField(row.result_json)) : null,
     error: row.error,
     attempts: row.attempts,
@@ -181,7 +194,15 @@ export function enqueueAiJob(
   const id = crypto.randomUUID();
   db.prepare(`INSERT INTO ai_jobs
     (id,user_id,kind,status,input_json,priority,created_at,updated_at)
-    VALUES (?,?,?,'QUEUED',?,?,?,?)`).run(id, userId, kind, JSON.stringify(input), priority, now, now);
+    VALUES (?,?,?,'QUEUED',?,?,?,?)`).run(
+      id,
+      userId,
+      kind,
+      kind === "document_question" ? encField(JSON.stringify(input)) : JSON.stringify(input),
+      priority,
+      now,
+      now,
+    );
   return getAiJob(id, userId)!;
 }
 
@@ -273,7 +294,9 @@ export function completeAiJob(
   const currentJob = rowToJob(row);
   const result = finalize ? finalize(currentJob, validated) : validated;
   const now = new Date().toISOString();
-  const storedResult = row.kind === "document" ? encField(JSON.stringify(result)) : JSON.stringify(result);
+  const storedResult = row.kind === "document" || row.kind === "document_question"
+    ? encField(JSON.stringify(result))
+    : JSON.stringify(result);
   db.prepare(`UPDATE ai_jobs SET status='COMPLETE',result_json=?,lease_hash=NULL,lease_until=NULL,
     heartbeat_at=NULL,error=NULL,updated_at=? WHERE id=?`).run(storedResult, now, id);
   return rowToJob(db.prepare("SELECT * FROM ai_jobs WHERE id=?").get(id) as unknown as JobRow);

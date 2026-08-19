@@ -541,6 +541,26 @@ app.get(`${API}/documents`, (req, res) => {
   res.json(listDocuments(req.userId!));
 });
 
+const DocumentQuestionSchema = z.object({
+  question: z.string().trim().min(1).max(1_000),
+});
+
+app.post(`${API}/documents/questions`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再提问家庭资料" });
+    return;
+  }
+  const parsed = DocumentQuestionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "问题不能为空" });
+    return;
+  }
+  const job = enqueueAiJob(req.userId!, "document_question", {
+    question: parsed.data.question,
+  }, 95);
+  res.status(202).json({ jobId: job.id, status: job.status });
+});
+
 app.post(
   `${API}/documents`,
   express.raw({ type: () => true, limit: "30mb" }),
