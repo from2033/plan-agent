@@ -222,11 +222,11 @@ test("local document search indexes Obsidian notes and returns excerpts", () => 
     const noteDir = path.join(temporaryDir, "资料", "医疗健康");
     fs.mkdirSync(noteDir, { recursive: true });
     fs.writeFileSync(path.join(noteDir, "门诊票据.md"), `---\ndocument_id: "2b472924-15cc-4676-8d3d-f5f947e574fa"\ntitle: "张三门诊票据"\ncategory: "医疗健康"\n---\n张三门诊个人支付 45.89 元，医保支付 14.74 元。\n`, "utf8");
-    const result = searchLocalDocuments("张三门诊个人支付多少钱", temporaryDir);
+    const result = searchLocalDocuments("张三门诊个人支付多少钱", temporaryDir, 6, { vectorSearch: false });
     assert.equal(result[0].documentId, "2b472924-15cc-4676-8d3d-f5f947e574fa");
     assert.equal(result[0].title, "张三门诊票据");
     assert.match(result[0].excerpt, /45\.89/);
-    const fuzzyResult = searchLocalDocuments("张四门诊开的药是干嘛的", temporaryDir);
+    const fuzzyResult = searchLocalDocuments("张四门诊开的药是干嘛的", temporaryDir, 6, { vectorSearch: false });
     assert.equal(fuzzyResult[0].title, "张三门诊票据");
   } finally {
     fs.rmSync(temporaryDir, { recursive: true, force: true });
@@ -255,8 +255,8 @@ test("local document search never crosses account roots", () => {
     fs.mkdirSync(path.join(secondRoot, "资料"), { recursive: true });
     fs.writeFileSync(path.join(firstNoteDir, "私有处方.md"), `---\ndocument_id: "2b472924-15cc-4676-8d3d-f5f947e574fa"\ntitle: "账号一的私有处方"\ncategory: "医疗健康"\n---\n舒筋健络油只能在一封大药房买到。\n`, "utf8");
 
-    assert.equal(searchLocalDocuments("舒筋健络油", firstRoot).length, 1);
-    assert.deepEqual(searchLocalDocuments("舒筋健络油", secondRoot), []);
+    assert.equal(searchLocalDocuments("舒筋健络油", firstRoot, 6, { vectorSearch: false }).length, 1);
+    assert.deepEqual(searchLocalDocuments("舒筋健络油", secondRoot, 6, { vectorSearch: false }), []);
   } finally {
     fs.rmSync(temporaryDir, { recursive: true, force: true });
   }

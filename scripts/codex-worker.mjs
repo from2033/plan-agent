@@ -23,6 +23,8 @@ const ollamaSmallKeepAlive = process.env.ASSISTANT_OLLAMA_SMALL_KEEP_ALIVE
   || process.env.ASSISTANT_OLLAMA_KEEP_ALIVE
   || "10m";
 const ollamaLargeKeepAlive = process.env.ASSISTANT_OLLAMA_LARGE_KEEP_ALIVE || "2m";
+const embeddingModel = process.env.ASSISTANT_EMBEDDING_MODEL || "qwen3-embedding:0.6b";
+const vectorSearchEnabled = process.env.ASSISTANT_VECTOR_SEARCH !== "false";
 const codexFallback = process.env.ASSISTANT_CODEX_FALLBACK !== "false";
 const vaultRoot = process.env.ASSISTANT_OBSIDIAN_VAULT || path.join(os.homedir(), "Documents", "家庭资料");
 const pdfTextBin = process.env.ASSISTANT_PDFTOTEXT_BIN
@@ -305,7 +307,7 @@ function normalizeOllamaResult(kind, value, input) {
       // empty. Keep that classification valid so the local document-answering
       // pass can handle it without an unnecessary Codex fallback.
       answer: String(value.answer || "").trim().slice(0, 10_000)
-        || (Number(input?.documentCandidateCount || 0) > 0 ? "__QUESTION_CLASSIFIED__" : ""),
+        || "__QUESTION_CLASSIFIED__",
       sourceIds: Array.isArray(value.sourceIds)
         ? value.sourceIds.filter(sourceId => typeof sourceId === "string").slice(0, 20)
         : [],
@@ -770,6 +772,7 @@ async function processDocumentJob(job, leaseToken) {
       userNote,
       path.posix.join("知识库", String(job.spaceId)),
     );
+    refreshLocalDocumentSearchIndexSafely(knowledgeRoot);
     return {
       result: {
         documentId: String(job.input.documentId),
@@ -795,7 +798,9 @@ async function processDocumentNoteJob(job) {
   const documentId = String(job.input?.documentId || "");
   const note = String(job.input?.note || "").trim().slice(0, 2_000);
   if (!documentId || !note) throw new Error("document_note_invalid");
-  const result = appendVaultDocumentNote(documentId, note, resolveKnowledgeSpaceRoot(job));
+  const knowledgeRoot = resolveKnowledgeSpaceRoot(job);
+  const result = appendVaultDocumentNote(documentId, note, knowledgeRoot);
+  refreshLocalDocumentSearchIndexSafely(knowledgeRoot);
   return {
     result: {
       documentId,
@@ -807,10 +812,35 @@ async function processDocumentNoteJob(job) {
   };
 }
 
-export function searchLocalDocuments(question, destinationRoot = vaultRoot, limit = 6) {
-  const output = runTextTool(pythonBin, [
+function documentSearchArguments(destinationRoot, vectorSearch = vectorSearchEnabled) {
+  return [
     documentSearchScript,
     "--vault", destinationRoot,
+    ...(vectorSearch ? ["--embedding-url", ollamaUrl, "--embedding-model", embeddingModel] : []),
+  ];
+}
+
+export function refreshLocalDocumentSearchIndex(destinationRoot = vaultRoot, options = {}) {
+  const output = runTextTool(pythonBin, [
+    ...documentSearchArguments(destinationRoot, options.vectorSearch),
+    "--refresh-only",
+  ]);
+  const parsed = JSON.parse(output || "{}");
+  if (parsed?.ok !== true) throw new Error("document_index_refresh_failed");
+}
+
+function refreshLocalDocumentSearchIndexSafely(destinationRoot) {
+  try {
+    refreshLocalDocumentSearchIndex(destinationRoot);
+  } catch (error) {
+    const reason = String(error?.message || error).replace(/[^a-zA-Z0-9:_-]/g, "_").slice(0, 160);
+    log(`document_index_refresh_failed reason=${reason}`);
+  }
+}
+
+export function searchLocalDocuments(question, destinationRoot = vaultRoot, limit = 6, options = {}) {
+  const output = runTextTool(pythonBin, [
+    ...documentSearchArguments(destinationRoot, options.vectorSearch),
     "--question", String(question || "").slice(0, 1_000),
     "--limit", String(Math.max(1, Math.min(10, limit))),
   ]);
@@ -825,12 +855,13 @@ export function searchLocalDocuments(question, destinationRoot = vaultRoot, limi
 async function processIngestJob(job) {
   const raw = String(job.input?.raw || "").trim();
   if (!raw) return runInference(job);
+  const classified = await runInference(job);
+  if (classified.result?.kind !== "ask") return classified;
   const candidates = searchLocalDocuments(raw, resolveKnowledgeSpaceRoot(job), 3);
-  const classified = await runInference(candidates.length ? {
-    ...job,
-    input: { ...job.input, documentCandidateCount: candidates.length },
-  } : job);
-  if (!candidates.length || classified.result?.kind !== "ask") return classified;
+  if (!candidates.length) {
+    if (classified.result.answer !== "__QUESTION_CLASSIFIED__") return classified;
+    return runInference(job, { model: ollamaLargeModel });
+  }
   const answered = await runInference({
     kind: "document_question",
     input: {

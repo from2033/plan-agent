@@ -31,6 +31,10 @@
     <string>10m</string>
     <key>ASSISTANT_OLLAMA_LARGE_KEEP_ALIVE</key>
     <string>2m</string>
+    <key>ASSISTANT_EMBEDDING_MODEL</key>
+    <string>qwen3-embedding:0.6b</string>
+    <key>ASSISTANT_VECTOR_SEARCH</key>
+    <string>true</string>
     <key>ASSISTANT_CODEX_FALLBACK</key>
     <string>true</string>
     <key>ASSISTANT_OBSIDIAN_VAULT</key>
