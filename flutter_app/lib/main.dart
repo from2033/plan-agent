@@ -731,10 +731,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 .toList();
             showDialog<void>(
               context: context,
-              builder: (context) => _KnowledgeAnswerDialog(
-                answer: answer,
-                sources: sources,
-              ),
+              builder: (context) =>
+                  _KnowledgeAnswerDialog(answer: answer, sources: sources),
             );
           }
         }
@@ -2460,10 +2458,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
 }
 
 class _KnowledgeAnswerDialog extends StatelessWidget {
-  const _KnowledgeAnswerDialog({
-    required this.answer,
-    required this.sources,
-  });
+  const _KnowledgeAnswerDialog({required this.answer, required this.sources});
 
   final String answer;
   final List<Map<String, dynamic>> sources;
@@ -2495,9 +2490,9 @@ class _KnowledgeAnswerDialog extends StatelessWidget {
                 const SizedBox(height: 14),
                 Text(
                   '依据资料（${sources.length}）',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 10),
                 for (var index = 0; index < sources.length; index++) ...[
@@ -2607,7 +2602,11 @@ class _AnswerSourceCard extends StatelessWidget {
             const SizedBox(height: 8),
             const Text(
               '原图保存在家庭 Mac 中，以上内容由图片识别生成，请结合原图核对。',
-              style: TextStyle(fontSize: 11, height: 1.4, color: Color(0xff78716c)),
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.4,
+                color: Color(0xff78716c),
+              ),
             ),
           ],
         ],
