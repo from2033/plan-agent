@@ -73,6 +73,11 @@ export interface KnowledgeItem {
   title: string;
   content: string;
   timestamp: string;
+  sourceType?: "knowledge" | "document";
+  category?: string;
+  mimeType?: string;
+  fileName?: string;
+  vaultPath?: string;
 }
 
 // 统一语音入口的判别式结果：记录 / 存知识 / 问知识。

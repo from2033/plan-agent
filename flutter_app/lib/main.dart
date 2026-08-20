@@ -725,17 +725,15 @@ class _HomeScreenState extends State<HomeScreen> {
         } else if (result['kind'] == 'ask') {
           final answer = result['answer'] as String?;
           if (answer != null && answer.isNotEmpty) {
+            final sources = (result['sources'] as List<dynamic>? ?? const [])
+                .whereType<Map>()
+                .map((source) => Map<String, dynamic>.from(source))
+                .toList();
             showDialog<void>(
               context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('知识库回答'),
-                content: Text(answer),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('知道了'),
-                  ),
-                ],
+              builder: (context) => _KnowledgeAnswerDialog(
+                answer: answer,
+                sources: sources,
               ),
             );
           }
@@ -2458,6 +2456,163 @@ class _KnowledgePaneState extends State<KnowledgePane> {
               ],
             ),
           );
+  }
+}
+
+class _KnowledgeAnswerDialog extends StatelessWidget {
+  const _KnowledgeAnswerDialog({
+    required this.answer,
+    required this.sources,
+  });
+
+  final String answer;
+  final List<Map<String, dynamic>> sources;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.auto_awesome_rounded, size: 21),
+          SizedBox(width: 8),
+          Text('知识库回答'),
+        ],
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SelectableText(
+                answer,
+                style: const TextStyle(fontSize: 16, height: 1.6),
+              ),
+              if (sources.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                const Divider(height: 1),
+                const SizedBox(height: 14),
+                Text(
+                  '依据资料（${sources.length}）',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                for (var index = 0; index < sources.length; index++) ...[
+                  _AnswerSourceCard(index: index + 1, source: sources[index]),
+                  if (index != sources.length - 1) const SizedBox(height: 10),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('知道了'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AnswerSourceCard extends StatelessWidget {
+  const _AnswerSourceCard({required this.index, required this.source});
+
+  final int index;
+  final Map<String, dynamic> source;
+
+  @override
+  Widget build(BuildContext context) {
+    final sourceType = source['sourceType'] as String? ?? 'knowledge';
+    final mimeType = source['mimeType'] as String? ?? '';
+    final isDocument = sourceType == 'document';
+    final isImage = isDocument && mimeType.startsWith('image/');
+    final title = (source['title'] as String? ?? '资料').trim();
+    final excerpt = (source['content'] as String? ?? '').trim();
+    final category = (source['category'] as String? ?? '').trim();
+    final evidenceLabel = isImage
+        ? '图片识别文字'
+        : isDocument
+        ? '原文摘录'
+        : '知识库原文';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xfffffbeb),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xfffde68a)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                isImage
+                    ? Icons.image_outlined
+                    : isDocument
+                    ? Icons.description_outlined
+                    : Icons.notes_rounded,
+                size: 19,
+                color: const Color(0xffb45309),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '$index. $title',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (category.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              category,
+              style: const TextStyle(fontSize: 12, color: Color(0xff78716c)),
+            ),
+          ],
+          if (excerpt.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              evidenceLabel,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xff92400e),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              excerpt,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                color: Color(0xff44403c),
+              ),
+            ),
+          ],
+          if (isImage) ...[
+            const SizedBox(height: 8),
+            const Text(
+              '原图保存在家庭 Mac 中，以上内容由图片识别生成，请结合原图核对。',
+              style: TextStyle(fontSize: 11, height: 1.4, color: Color(0xff78716c)),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 

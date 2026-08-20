@@ -70,6 +70,14 @@ const EntryFieldsSchema = z.object({
   reminderTime: z.string().regex(/^\d{2}:\d{2}$/).nullish().transform((value) => value ?? undefined),
 });
 
+const DocumentEvidenceSchema = z.object({
+  documentId: z.string().uuid(),
+  title: z.string().min(1).max(200),
+  category: z.string().min(1).max(60),
+  vaultPath: z.string().min(1).max(1_000),
+  excerpt: z.string().min(1).max(2_000),
+});
+
 const IngestResultSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("record"), fields: z.array(EntryFieldsSchema).min(1).max(8) }),
   z.object({
@@ -81,6 +89,7 @@ const IngestResultSchema = z.discriminatedUnion("kind", [
     kind: z.literal("ask"),
     answer: z.string().min(1).max(10_000),
     sourceIds: z.array(z.string()).max(20).default([]),
+    documentSources: z.array(DocumentEvidenceSchema).max(8).default([]),
   }),
 ]);
 
@@ -108,13 +117,7 @@ const DocumentResultSchema = z.object({
 const DocumentQuestionResultSchema = z.object({
   answer: z.string().min(1).max(10_000),
   insufficientEvidence: z.boolean(),
-  sources: z.array(z.object({
-    documentId: z.string().uuid(),
-    title: z.string().min(1).max(200),
-    category: z.string().min(1).max(60),
-    vaultPath: z.string().min(1).max(1_000),
-    excerpt: z.string().min(1).max(2_000),
-  })).max(8),
+  sources: z.array(DocumentEvidenceSchema).max(8),
 });
 
 const DocumentNoteResultSchema = z.object({

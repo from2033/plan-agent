@@ -852,6 +852,20 @@ export function searchLocalDocuments(question, destinationRoot = vaultRoot, limi
     && typeof source.excerpt === "string").slice(0, limit);
 }
 
+export function documentSourcesForAnswer(candidates, modelResult) {
+  const indexes = [...new Set((Array.isArray(modelResult?.sourceIndexes)
+    ? modelResult.sourceIndexes
+    : []).filter(index => Number.isInteger(index) && index >= 0 && index < candidates.length))];
+  if (!indexes.length && !modelResult?.insufficientEvidence && candidates.length) indexes.push(0);
+  return indexes.map(index => ({
+    documentId: String(candidates[index].documentId || ""),
+    title: String(candidates[index].title || "资料").slice(0, 200),
+    category: String(candidates[index].category || "其他").slice(0, 60),
+    vaultPath: String(candidates[index].vaultPath || "").slice(0, 1_000),
+    excerpt: String(candidates[index].excerpt || "").slice(0, 2_000),
+  }));
+}
+
 async function processIngestJob(job) {
   const raw = String(job.input?.raw || "").trim();
   if (!raw) return runInference(job);
@@ -881,6 +895,7 @@ async function processIngestJob(job) {
       kind: "ask",
       answer: answered.result.answer,
       sourceIds: [],
+      documentSources: documentSourcesForAnswer(candidates, answered.result),
     },
     provider: answered.provider,
   };

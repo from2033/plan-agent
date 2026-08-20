@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   appendVaultDocumentNote,
+  documentSourcesForAnswer,
   extractDocumentText,
   hasExplicitTimeRange,
   ollamaModelForJob,
@@ -214,6 +215,33 @@ test("runOllama answers document questions with explicit source indexes", async 
   assert.equal(result.sourceIndexes[0], 0);
   assert.equal(requestBody.options.num_predict, 480);
   assert.deepEqual(requestBody.format.required, ["answer", "sourceIndexes", "insufficientEvidence"]);
+});
+
+test("only document evidence cited by the answering model is returned", () => {
+  const candidates = [
+    {
+      documentId: "2b472924-15cc-4676-8d3d-f5f947e574fa",
+      title: "房屋租赁合同",
+      category: "合同",
+      vaultPath: "资料/合同/房屋租赁合同.md",
+      excerpt: "租赁期限至 2027 年 8 月 31 日。",
+    },
+    {
+      documentId: "642db6c9-03ef-4bd1-93b5-4c61e573e70c",
+      title: "无关票据",
+      category: "票据",
+      vaultPath: "资料/票据/无关票据.md",
+      excerpt: "个人支付 45.89 元。",
+    },
+  ];
+  assert.deepEqual(
+    documentSourcesForAnswer(candidates, { sourceIndexes: [0, 0, 99], insufficientEvidence: false }),
+    [candidates[0]],
+  );
+  assert.deepEqual(
+    documentSourcesForAnswer(candidates, { sourceIndexes: [], insufficientEvidence: true }),
+    [],
+  );
 });
 
 test("local document search indexes Obsidian notes and returns excerpts", () => {

@@ -240,6 +240,13 @@ interface WorkerIngestResult {
   content?: string;
   answer?: string;
   sourceIds?: string[];
+  documentSources?: Array<{
+    documentId: string;
+    title: string;
+    category: string;
+    vaultPath: string;
+    excerpt: string;
+  }>;
 }
 
 function fallbackKnowledge(raw: string): { title: string; content: string } {
@@ -371,8 +378,25 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
   }
   if (result.kind === "ask") {
     const wanted = new Set(result.sourceIds || []);
-    const sources = (input.knowledge || []).filter((item) => wanted.has(item.id));
-    return { kind: "ask", answer: result.answer, sources };
+    const knowledgeSources = (input.knowledge || [])
+      .filter((item) => wanted.has(item.id))
+      .map((item) => ({ ...item, sourceType: "knowledge" as const }));
+    const documentSources = (result.documentSources || []).map((source) => {
+      const document = getDocument(source.documentId, job.userId);
+      if (!document) throw new Error("ingest_document_source_ownership_mismatch");
+      return {
+        id: document.id,
+        title: source.title,
+        content: source.excerpt,
+        timestamp: document.createdAt,
+        sourceType: "document" as const,
+        category: source.category,
+        mimeType: document.mimeType,
+        fileName: document.fileName,
+        vaultPath: source.vaultPath,
+      };
+    });
+    return { kind: "ask", answer: result.answer, sources: [...documentSources, ...knowledgeSources] };
   }
 
   const now = new Date();

@@ -433,7 +433,7 @@ function AnswerCard({ answer, sources, onClose }: {
   sources: api.KnowledgeItem[];
   onClose: () => void;
 }) {
-  const [showSrc, setShowSrc] = useState(false);
+  const [showSrc, setShowSrc] = useState(true);
   return (
     <div className="rounded-xl p-3.5 mb-1" style={{ background: "#fff", border: "1.5px solid #9333ea" }}>
       <div className="flex items-start justify-between gap-2 mb-1.5">
@@ -460,7 +460,18 @@ function AnswerCard({ answer, sources, onClose }: {
               {sources.map((s) => (
                 <div key={s.id} className="rounded-lg px-2.5 py-1.5" style={{ background: "#faf8f4" }}>
                   <p className="text-[11px] font-medium" style={{ color: "#1a1a1e" }}>{s.title}</p>
-                  <p className="text-[11px] leading-relaxed mt-0.5 whitespace-pre-wrap" style={{ color: "#8a8680" }}>{s.content}</p>
+                  {s.category && <p className="text-[10px] mt-0.5" style={{ color: "#8a8680" }}>{s.category}</p>}
+                  <p className="text-[10px] font-medium mt-1.5" style={{ color: "#92400e" }}>
+                    {s.sourceType === "document"
+                      ? s.mimeType?.startsWith("image/") ? "图片识别文字" : "原文摘录"
+                      : "知识库原文"}
+                  </p>
+                  <p className="text-[11px] leading-relaxed mt-0.5 whitespace-pre-wrap" style={{ color: "#5a5650" }}>{s.content}</p>
+                  {s.sourceType === "document" && s.mimeType?.startsWith("image/") && (
+                    <p className="text-[10px] leading-relaxed mt-1.5" style={{ color: "#8a8680" }}>
+                      原图保存在家庭 Mac 中，识别文字请结合原图核对。
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

@@ -65,6 +65,27 @@ test("用户对上传资料的补充说明在任务数据库中加密", () => {
   inspection.close();
 });
 
+test("统一提问任务保留家庭资料的原文证据", () => {
+  const job = enqueueAiJob("user-1", "ingest", {
+    raw: "租赁合同什么时候到期？",
+  }, 200);
+  const claimed = claimAiJob("test-worker");
+  const result = {
+    kind: "ask" as const,
+    answer: "合同于 2027 年 8 月 31 日到期。",
+    sourceIds: [],
+    documentSources: [{
+      documentId: "2b472924-15cc-4676-8d3d-f5f947e574fa",
+      title: "房屋租赁合同",
+      category: "合同",
+      vaultPath: "资料/合同/房屋租赁合同.md",
+      excerpt: "租赁期限至 2027 年 8 月 31 日。",
+    }],
+  };
+  completeAiJob(job.id, claimed!.leaseToken, result);
+  assert.deepEqual(getAiJob(job.id, "user-1")?.result, result);
+});
+
 test.after(() => {
   fs.rmSync(temporaryDir, { recursive: true, force: true });
 });
