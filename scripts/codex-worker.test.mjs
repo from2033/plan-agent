@@ -8,6 +8,8 @@ import test from "node:test";
 import {
   appendVaultDocumentNote,
   extractDocumentText,
+  hasExplicitTimeRange,
+  ollamaModelForJob,
   resolveKnowledgeSpaceRoot,
   runInference,
   runOllama,
@@ -74,9 +76,9 @@ test("runOllama sends a constrained non-thinking request and parses JSON", async
   assert.equal(requestBody.model, "test-model");
   assert.equal(requestBody.think, false);
   assert.equal(requestBody.stream, false);
-  assert.equal(requestBody.options.num_predict, 160);
+  assert.equal(requestBody.options.num_predict, 320);
   assert.equal(requestBody.format.type, "object");
-  assert.deepEqual(requestBody.format.required, ["kind"]);
+  assert.deepEqual(requestBody.format.required, ["kind", "fields", "title", "content", "answer", "sourceIds"]);
   assert.deepEqual(JSON.parse(requestBody.messages[1].content), { input: ingestJob.input });
 });
 
@@ -89,6 +91,41 @@ test("runInference falls back to Codex when Ollama is unavailable", async () => 
     codexFallback: true,
   });
   assert.equal(inference.provider, "codex-fallback");
+  assert.equal(inference.result, expected);
+});
+
+test("daily input uses the small model while complex jobs use the large model", () => {
+  assert.equal(ollamaModelForJob({ kind: "ingest" }), "qwen3:4b");
+  assert.equal(ollamaModelForJob({ kind: "summary" }), "qwen3:14b");
+  assert.equal(ollamaModelForJob({ kind: "document" }), "qwen3:14b");
+  assert.equal(ollamaModelForJob({ kind: "document_question" }), "qwen3:14b");
+});
+
+test("only explicit clock ranges are accepted from a local model", () => {
+  assert.equal(hasExplicitTimeRange("下午3-5点跑步"), true);
+  assert.equal(hasExplicitTimeRange("晚上7点到9点看书"), true);
+  assert.equal(hasExplicitTimeRange("08:30-09:15开会"), true);
+  assert.equal(hasExplicitTimeRange("早上跑步30分钟"), false);
+  assert.equal(hasExplicitTimeRange("2026-08-20去医院"), false);
+});
+
+test("invalid small-model output escalates to the large local model before Codex", async () => {
+  const calls = [];
+  const expected = { kind: "record", fields: [] };
+  const inference = await runInference(ingestJob, {
+    provider: "ollama",
+    localRunner: async (_job, options) => {
+      calls.push(options.model);
+      throw new Error("small_invalid");
+    },
+    largeLocalRunner: async (_job, options) => {
+      calls.push(options.model);
+      return expected;
+    },
+    cloudRunner: async () => { throw new Error("cloud_should_not_run"); },
+  });
+  assert.deepEqual(calls, ["qwen3:4b", "qwen3:14b"]);
+  assert.equal(inference.provider, "ollama-large-fallback");
   assert.equal(inference.result, expected);
 });
 

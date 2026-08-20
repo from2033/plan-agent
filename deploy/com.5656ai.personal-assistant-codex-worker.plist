@@ -21,12 +21,16 @@
     <string>ollama</string>
     <key>ASSISTANT_OLLAMA_URL</key>
     <string>http://127.0.0.1:11434</string>
-    <key>ASSISTANT_OLLAMA_MODEL</key>
+    <key>ASSISTANT_OLLAMA_SMALL_MODEL</key>
+    <string>qwen3:4b</string>
+    <key>ASSISTANT_OLLAMA_LARGE_MODEL</key>
     <string>qwen3:14b</string>
     <key>ASSISTANT_OLLAMA_TIMEOUT_MS</key>
     <string>60000</string>
-    <key>ASSISTANT_OLLAMA_KEEP_ALIVE</key>
+    <key>ASSISTANT_OLLAMA_SMALL_KEEP_ALIVE</key>
     <string>10m</string>
+    <key>ASSISTANT_OLLAMA_LARGE_KEEP_ALIVE</key>
+    <string>2m</string>
     <key>ASSISTANT_CODEX_FALLBACK</key>
     <string>true</string>
     <key>ASSISTANT_OBSIDIAN_VAULT</key>
