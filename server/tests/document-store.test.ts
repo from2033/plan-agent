@@ -14,6 +14,7 @@ const {
   appendDocumentNote,
   findDuplicateDocument,
   resolveDocumentEvidence,
+  registerLocalDocument,
   storeDocumentUpload,
 } = await import("../src/document-store.js");
 
@@ -33,6 +34,36 @@ test("相同账号上传完全相同的文件时能找到已有资料", () => {
     "第一次说明",
     "第二次说明",
   ]);
+});
+
+test("Mac 本地资料可幂等登记且不会保存原始文件内容", () => {
+  const id = crypto.randomUUID();
+  const registration = {
+    documentId: id,
+    fileName: "杜茂才.zip",
+    mimeType: "application/zip",
+    byteSize: 123456,
+    vaultPath: "资料/医疗健康/杜茂才-DICOM.md",
+    result: {
+      documentId: id,
+      title: "杜茂才核磁 DICOM 原始影像",
+      category: "医疗健康",
+      summary: "原始 DICOM 影像压缩包，仅保存在家庭 Mac。",
+      people: ["杜茂才"],
+      keywords: ["DICOM", "核磁共振"],
+      documentDate: "2026-08-21",
+      vaultPath: "资料/医疗健康/杜茂才-DICOM.md",
+      attachmentPath: "附件/2026/2026-08/杜茂才.zip",
+      textLength: 0,
+      warnings: [],
+    },
+  };
+  const first = registerLocalDocument("user-1", registration);
+  const second = registerLocalDocument("user-1", { ...registration, byteSize: 654321 });
+  assert.equal(first.id, second.id);
+  assert.equal(second.byteSize, 654321);
+  assert.equal(second.storageKind, "local");
+  assert.equal(fs.existsSync(path.join(temporaryDir, "uploads", `${id}.paf`)), false);
 });
 
 test("整理记录只有在关联原始资料属于同一账号时才能作为证据", () => {

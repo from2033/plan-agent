@@ -74,6 +74,7 @@ import {
   getDocument,
   listDocuments,
   readDocumentUpload,
+  registerLocalDocument,
   resolveDocumentEvidence,
   storeDocumentUpload,
 } from "./document-store.js";
@@ -229,6 +230,48 @@ app.get(`${WORKER_API}/jobs/:id/document`, requireWorker, (req, res) => {
   res.setHeader("x-document-id", uploaded.document.id);
   res.setHeader("x-file-name-b64", Buffer.from(uploaded.document.fileName, "utf8").toString("base64"));
   res.send(uploaded.content);
+});
+
+const LocalDocumentRegistrationSchema = z.object({
+  userId: z.string().min(1).max(320),
+  spaceId: z.string().regex(/^[a-f0-9]{64}$/),
+  documentId: z.string().uuid(),
+  fileName: z.string().min(1).max(240),
+  mimeType: z.string().min(1).max(120),
+  byteSize: z.number().int().nonnegative().max(10 * 1024 * 1024 * 1024),
+  vaultPath: z.string().min(1).max(1_000),
+  result: z.object({
+    documentId: z.string().uuid(),
+    title: z.string().min(1).max(200),
+    category: z.string().min(1).max(60),
+    summary: z.string().max(5_000),
+    people: z.array(z.string().min(1).max(80)).max(20),
+    keywords: z.array(z.string().min(1).max(80)).max(30),
+    documentDate: z.string().max(20),
+    vaultPath: z.string().min(1).max(1_000),
+    attachmentPath: z.string().min(1).max(1_000),
+    textLength: z.number().int().nonnegative(),
+    warnings: z.array(z.string().min(1).max(300)).max(20),
+  }),
+  notes: z.array(z.string().min(1).max(2_000)).max(50).default([]),
+}).superRefine((value, context) => {
+  if (value.documentId !== value.result.documentId || value.vaultPath !== value.result.vaultPath) {
+    context.addIssue({ code: "custom", message: "local_document_identity_mismatch" });
+  }
+});
+
+app.post(`${WORKER_API}/local-documents`, requireWorker, (req, res) => {
+  const parsed = LocalDocumentRegistrationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "local_document_invalid" });
+    return;
+  }
+  if (knowledgeSpaceIdForUser(parsed.data.userId) !== parsed.data.spaceId) {
+    res.status(403).json({ error: "knowledge_space_mismatch" });
+    return;
+  }
+  const document = registerLocalDocument(parsed.data.userId, parsed.data);
+  res.status(201).json({ ok: true, documentId: document.id, storageKind: document.storageKind });
 });
 
 interface WorkerIngestResult {

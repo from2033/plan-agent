@@ -23,6 +23,8 @@ db.exec(`
     result_json   TEXT,
     notes_json    TEXT,
     error         TEXT,
+    storage_kind  TEXT NOT NULL DEFAULT 'uploaded',
+    local_ref     TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
   );
@@ -34,7 +36,14 @@ if (!hasContentHash) db.exec("ALTER TABLE documents ADD COLUMN content_hash TEXT
 const hasNotesJson = (db.prepare("PRAGMA table_info(documents)").all() as unknown as { name: string }[])
   .some((column) => column.name === "notes_json");
 if (!hasNotesJson) db.exec("ALTER TABLE documents ADD COLUMN notes_json TEXT");
+const hasStorageKind = (db.prepare("PRAGMA table_info(documents)").all() as unknown as { name: string }[])
+  .some((column) => column.name === "storage_kind");
+if (!hasStorageKind) db.exec("ALTER TABLE documents ADD COLUMN storage_kind TEXT NOT NULL DEFAULT 'uploaded'");
+const hasLocalRef = (db.prepare("PRAGMA table_info(documents)").all() as unknown as { name: string }[])
+  .some((column) => column.name === "local_ref");
+if (!hasLocalRef) db.exec("ALTER TABLE documents ADD COLUMN local_ref TEXT");
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(user_id,content_hash) WHERE content_hash IS NOT NULL");
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_local_ref ON documents(user_id,local_ref) WHERE local_ref IS NOT NULL");
 
 export interface StoredDocument {
   id: string;
@@ -46,6 +55,7 @@ export interface StoredDocument {
   result: unknown | null;
   notes: string[];
   error: string | null;
+  storageKind: "uploaded" | "local";
   createdAt: string;
   updatedAt: string;
 }
@@ -60,6 +70,7 @@ interface DocumentRow {
   result_json: string | null;
   notes_json: string | null;
   error: string | null;
+  storage_kind: string;
   created_at: string;
   updated_at: string;
 }
@@ -89,9 +100,59 @@ function rowToDocument(row: DocumentRow): StoredDocument {
     result: row.result_json ? JSON.parse(decField(row.result_json)) : null,
     notes: row.notes_json ? JSON.parse(decField(row.notes_json)) : [],
     error: row.error,
+    storageKind: row.storage_kind === "local" ? "local" : "uploaded",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+export interface LocalDocumentRegistration {
+  documentId: string;
+  fileName: string;
+  mimeType: string;
+  byteSize: number;
+  vaultPath: string;
+  result: Record<string, unknown>;
+  notes?: string[];
+}
+
+export function registerLocalDocument(userId: string, value: LocalDocumentRegistration): StoredDocument {
+  const localRef = crypto.createHash("sha256").update(value.vaultPath, "utf8").digest("hex");
+  const existing = db.prepare("SELECT * FROM documents WHERE user_id=? AND local_ref=? LIMIT 1")
+    .get(userId, localRef) as unknown as DocumentRow | undefined;
+  const now = new Date().toISOString();
+  if (existing) {
+    if (existing.id !== value.documentId) throw new Error("local_document_id_mismatch");
+    db.prepare(`UPDATE documents SET file_name=?,mime_type=?,byte_size=?,status='COMPLETE',
+      result_json=?,notes_json=?,error=NULL,updated_at=? WHERE id=? AND user_id=?`)
+      .run(
+        encField(value.fileName),
+        value.mimeType,
+        value.byteSize,
+        encField(JSON.stringify(value.result)),
+        encField(JSON.stringify(value.notes || [])),
+        now,
+        existing.id,
+        userId,
+      );
+    return getDocument(existing.id, userId)!;
+  }
+  db.prepare(`INSERT INTO documents
+    (id,user_id,file_name,mime_type,byte_size,status,result_json,notes_json,storage_kind,local_ref,created_at,updated_at)
+    VALUES (?,?,?,?,?,'COMPLETE',?,?, 'local',?,?,?)`)
+    .run(
+      value.documentId,
+      userId,
+      encField(value.fileName),
+      value.mimeType,
+      value.byteSize,
+      encField(JSON.stringify(value.result)),
+      encField(JSON.stringify(value.notes || [])),
+      localRef,
+      now,
+      now,
+    );
+  return getDocument(value.documentId, userId)!;
 }
 
 export function storeDocumentUpload(
