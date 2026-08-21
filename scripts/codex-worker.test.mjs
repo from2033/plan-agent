@@ -225,6 +225,7 @@ test("only document evidence cited by the answering model is returned", () => {
       category: "合同",
       vaultPath: "资料/合同/房屋租赁合同.md",
       excerpt: "租赁期限至 2027 年 8 月 31 日。",
+      relatedDocumentIds: ["b71848a8-17de-4c97-8444-3c4270de1f77"],
     },
     {
       documentId: "642db6c9-03ef-4bd1-93b5-4c61e573e70c",
@@ -249,10 +250,11 @@ test("local document search indexes Obsidian notes and returns excerpts", () => 
   try {
     const noteDir = path.join(temporaryDir, "资料", "医疗健康");
     fs.mkdirSync(noteDir, { recursive: true });
-    fs.writeFileSync(path.join(noteDir, "门诊票据.md"), `---\ndocument_id: "2b472924-15cc-4676-8d3d-f5f947e574fa"\ntitle: "张三门诊票据"\ncategory: "医疗健康"\n---\n张三门诊个人支付 45.89 元，医保支付 14.74 元。\n`, "utf8");
+    fs.writeFileSync(path.join(noteDir, "门诊票据.md"), `---\ndocument_id: "2b472924-15cc-4676-8d3d-f5f947e574fa"\ntitle: "张三门诊票据"\ncategory: "医疗健康"\nrelated_documents: ["b71848a8-17de-4c97-8444-3c4270de1f77"]\n---\n张三门诊个人支付 45.89 元，医保支付 14.74 元。\n`, "utf8");
     const result = searchLocalDocuments("张三门诊个人支付多少钱", temporaryDir, 6, { vectorSearch: false });
     assert.equal(result[0].documentId, "2b472924-15cc-4676-8d3d-f5f947e574fa");
     assert.equal(result[0].title, "张三门诊票据");
+    assert.deepEqual(result[0].relatedDocumentIds, ["b71848a8-17de-4c97-8444-3c4270de1f77"]);
     assert.match(result[0].excerpt, /45\.89/);
     const fuzzyResult = searchLocalDocuments("张四门诊开的药是干嘛的", temporaryDir, 6, { vectorSearch: false });
     assert.equal(fuzzyResult[0].title, "张三门诊票据");

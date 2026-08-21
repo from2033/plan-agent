@@ -137,6 +137,19 @@ export function getDocument(id: string, userId: string): StoredDocument | null {
   return row ? rowToDocument(row) : null;
 }
 
+export function resolveDocumentEvidence(
+  userId: string,
+  documentId: string,
+  relatedDocumentIds: string[],
+): { document: StoredDocument; sourceKind: "uploaded" | "derived" } | null {
+  const direct = getDocument(documentId, userId);
+  if (direct) return { document: direct, sourceKind: "uploaded" };
+  if (!relatedDocumentIds.length) return null;
+  const related = [...new Set(relatedDocumentIds)].map(id => getDocument(id, userId));
+  if (related.some(document => !document)) return null;
+  return { document: related[0]!, sourceKind: "derived" };
+}
+
 export function listDocuments(userId: string): StoredDocument[] {
   return (db.prepare("SELECT * FROM documents WHERE user_id=? ORDER BY created_at DESC LIMIT 200")
     .all(userId) as unknown as DocumentRow[]).map(rowToDocument);

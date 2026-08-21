@@ -2525,11 +2525,14 @@ class _AnswerSourceCard extends StatelessWidget {
     final sourceType = source['sourceType'] as String? ?? 'knowledge';
     final mimeType = source['mimeType'] as String? ?? '';
     final isDocument = sourceType == 'document';
+    final isDerived = source['sourceKind'] == 'derived';
     final isImage = isDocument && mimeType.startsWith('image/');
     final title = (source['title'] as String? ?? '资料').trim();
     final excerpt = (source['content'] as String? ?? '').trim();
     final category = (source['category'] as String? ?? '').trim();
-    final evidenceLabel = isImage
+    final evidenceLabel = isDerived
+        ? '整理记录摘录'
+        : isImage
         ? '图片识别文字'
         : isDocument
         ? '原文摘录'

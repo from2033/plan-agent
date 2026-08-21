@@ -37,6 +37,7 @@ test("资料问题和回答在任务数据库中加密，读取时可正常解�
       category: "合同",
       vaultPath: "资料/合同/房屋租赁合同.md",
       excerpt: "租赁期限至 2027 年 8 月 31 日。",
+      relatedDocumentIds: [],
     }],
   };
   completeAiJob(job.id, claimed!.leaseToken, result);
@@ -80,6 +81,7 @@ test("统一提问任务保留家庭资料的原文证据", () => {
       category: "合同",
       vaultPath: "资料/合同/房屋租赁合同.md",
       excerpt: "租赁期限至 2027 年 8 月 31 日。",
+      relatedDocumentIds: [],
     }],
   };
   completeAiJob(job.id, claimed!.leaseToken, result);

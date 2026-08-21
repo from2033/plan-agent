@@ -76,6 +76,7 @@ const DocumentEvidenceSchema = z.object({
   category: z.string().min(1).max(60),
   vaultPath: z.string().min(1).max(1_000),
   excerpt: z.string().min(1).max(2_000),
+  relatedDocumentIds: z.array(z.string().uuid()).max(20).default([]),
 });
 
 const IngestResultSchema = z.discriminatedUnion("kind", [

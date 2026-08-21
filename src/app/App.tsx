@@ -463,7 +463,8 @@ function AnswerCard({ answer, sources, onClose }: {
                   {s.category && <p className="text-[10px] mt-0.5" style={{ color: "#8a8680" }}>{s.category}</p>}
                   <p className="text-[10px] font-medium mt-1.5" style={{ color: "#92400e" }}>
                     {s.sourceType === "document"
-                      ? s.mimeType?.startsWith("image/") ? "图片识别文字" : "原文摘录"
+                      ? s.sourceKind === "derived" ? "整理记录摘录"
+                        : s.mimeType?.startsWith("image/") ? "图片识别文字" : "原文摘录"
                       : "知识库原文"}
                   </p>
                   <p className="text-[11px] leading-relaxed mt-0.5 whitespace-pre-wrap" style={{ color: "#5a5650" }}>{s.content}</p>

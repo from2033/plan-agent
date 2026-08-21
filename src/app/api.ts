@@ -78,6 +78,7 @@ export interface KnowledgeItem {
   mimeType?: string;
   fileName?: string;
   vaultPath?: string;
+  sourceKind?: "uploaded" | "derived";
 }
 
 // 统一语音入口的判别式结果：记录 / 存知识 / 问知识。

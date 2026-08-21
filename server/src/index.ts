@@ -74,6 +74,7 @@ import {
   getDocument,
   listDocuments,
   readDocumentUpload,
+  resolveDocumentEvidence,
   storeDocumentUpload,
 } from "./document-store.js";
 
@@ -246,6 +247,7 @@ interface WorkerIngestResult {
     category: string;
     vaultPath: string;
     excerpt: string;
+    relatedDocumentIds?: string[];
   }>;
 }
 
@@ -323,11 +325,14 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
   }
   if (job.kind === "document_question") {
     const result = value as {
-      sources?: Array<{ documentId?: unknown }>;
+      sources?: Array<{ documentId?: unknown; relatedDocumentIds?: unknown }>;
     };
     for (const source of result.sources || []) {
       const documentId = String(source.documentId || "");
-      if (!documentId || !getDocument(documentId, job.userId)) {
+      const relatedDocumentIds = Array.isArray(source.relatedDocumentIds)
+        ? source.relatedDocumentIds.filter((id): id is string => typeof id === "string")
+        : [];
+      if (!documentId || !resolveDocumentEvidence(job.userId, documentId, relatedDocumentIds)) {
         throw new Error("document_question_source_ownership_mismatch");
       }
     }
@@ -382,18 +387,24 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
       .filter((item) => wanted.has(item.id))
       .map((item) => ({ ...item, sourceType: "knowledge" as const }));
     const documentSources = (result.documentSources || []).map((source) => {
-      const document = getDocument(source.documentId, job.userId);
-      if (!document) throw new Error("ingest_document_source_ownership_mismatch");
+      const resolved = resolveDocumentEvidence(
+        job.userId,
+        source.documentId,
+        source.relatedDocumentIds || [],
+      );
+      if (!resolved) throw new Error("ingest_document_source_ownership_mismatch");
+      const { document, sourceKind } = resolved;
       return {
-        id: document.id,
+        id: source.documentId,
         title: source.title,
         content: source.excerpt,
         timestamp: document.createdAt,
         sourceType: "document" as const,
         category: source.category,
-        mimeType: document.mimeType,
-        fileName: document.fileName,
+        mimeType: sourceKind === "derived" ? "text/markdown" : document.mimeType,
+        fileName: sourceKind === "derived" ? `${source.title}.md` : document.fileName,
         vaultPath: source.vaultPath,
+        sourceKind,
       };
     });
     return { kind: "ask", answer: result.answer, sources: [...documentSources, ...knowledgeSources] };

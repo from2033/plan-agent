@@ -13,6 +13,7 @@ process.env.DB_ENCRYPTION_KEY = crypto.randomBytes(32).toString("base64");
 const {
   appendDocumentNote,
   findDuplicateDocument,
+  resolveDocumentEvidence,
   storeDocumentUpload,
 } = await import("../src/document-store.js");
 
@@ -32,6 +33,21 @@ test("相同账号上传完全相同的文件时能找到已有资料", () => {
     "第一次说明",
     "第二次说明",
   ]);
+});
+
+test("整理记录只有在关联原始资料属于同一账号时才能作为证据", () => {
+  const original = storeDocumentUpload(
+    "user-1",
+    "核磁报告.jpg",
+    "image/jpeg",
+    Buffer.from("owned-report"),
+  );
+  assert.equal(
+    resolveDocumentEvidence("user-1", crypto.randomUUID(), [original.id])?.sourceKind,
+    "derived",
+  );
+  assert.equal(resolveDocumentEvidence("user-2", crypto.randomUUID(), [original.id]), null);
+  assert.equal(resolveDocumentEvidence("user-1", crypto.randomUUID(), []), null);
 });
 
 test.after(() => {

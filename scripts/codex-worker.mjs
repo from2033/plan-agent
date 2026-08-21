@@ -829,6 +829,30 @@ export function refreshLocalDocumentSearchIndex(destinationRoot = vaultRoot, opt
   if (parsed?.ok !== true) throw new Error("document_index_refresh_failed");
 }
 
+function relatedDocumentIdsForSource(source, destinationRoot) {
+  const relativePath = String(source?.vaultPath || "");
+  if (!relativePath || path.isAbsolute(relativePath)) return [];
+  const notePath = path.resolve(destinationRoot, relativePath);
+  const rootPath = path.resolve(destinationRoot) + path.sep;
+  if (!notePath.startsWith(rootPath) || !fs.existsSync(notePath)) return [];
+  const head = fs.readFileSync(notePath, "utf8").slice(0, 20_000);
+  const frontmatterEnd = head.indexOf("\n---\n", 4);
+  const frontmatter = head.startsWith("---\n") && frontmatterEnd >= 0
+    ? head.slice(4, frontmatterEnd)
+    : "";
+  const match = frontmatter.match(/^related_documents:\s*(.+)$/m);
+  if (!match) return [];
+  try {
+    const values = JSON.parse(match[1]);
+    return Array.isArray(values)
+      ? [...new Set(values.filter(value => typeof value === "string"
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)))].slice(0, 20)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function refreshLocalDocumentSearchIndexSafely(destinationRoot) {
   try {
     refreshLocalDocumentSearchIndex(destinationRoot);
@@ -849,7 +873,10 @@ export function searchLocalDocuments(question, destinationRoot = vaultRoot, limi
   return parsed.filter(source => source && typeof source === "object"
     && typeof source.title === "string"
     && typeof source.vaultPath === "string"
-    && typeof source.excerpt === "string").slice(0, limit);
+    && typeof source.excerpt === "string").slice(0, limit).map(source => ({
+      ...source,
+      relatedDocumentIds: relatedDocumentIdsForSource(source, destinationRoot),
+    }));
 }
 
 export function documentSourcesForAnswer(candidates, modelResult) {
@@ -863,6 +890,9 @@ export function documentSourcesForAnswer(candidates, modelResult) {
     category: String(candidates[index].category || "其他").slice(0, 60),
     vaultPath: String(candidates[index].vaultPath || "").slice(0, 1_000),
     excerpt: String(candidates[index].excerpt || "").slice(0, 2_000),
+    relatedDocumentIds: Array.isArray(candidates[index].relatedDocumentIds)
+      ? candidates[index].relatedDocumentIds.slice(0, 20)
+      : [],
   }));
 }
 
@@ -928,20 +958,11 @@ async function processDocumentQuestionJob(job) {
     },
   });
   const modelResult = inference.result;
-  const indexes = [...new Set((Array.isArray(modelResult.sourceIndexes) ? modelResult.sourceIndexes : [])
-    .filter(index => Number.isInteger(index) && index >= 0 && index < candidates.length))];
-  if (!indexes.length && !modelResult.insufficientEvidence) indexes.push(0);
   return {
     result: {
       answer: String(modelResult.answer || "现有资料中没有找到足够信息。").slice(0, 10_000),
       insufficientEvidence: Boolean(modelResult.insufficientEvidence),
-      sources: indexes.map(index => ({
-        documentId: String(candidates[index].documentId || ""),
-        title: String(candidates[index].title || "资料").slice(0, 200),
-        category: String(candidates[index].category || "其他").slice(0, 60),
-        vaultPath: String(candidates[index].vaultPath || "").slice(0, 1_000),
-        excerpt: String(candidates[index].excerpt || "").slice(0, 2_000),
-      })),
+      sources: documentSourcesForAnswer(candidates, modelResult),
     },
     provider: inference.provider,
   };
