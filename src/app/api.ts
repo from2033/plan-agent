@@ -102,6 +102,92 @@ export function deleteKnowledge(id: string): Promise<void> {
   return request<void>(`/knowledge/${id}`, { method: "DELETE" });
 }
 
+export type MistakeMastery = "learning" | "review" | "mastered";
+export type ReviewResult = "again" | "hard" | "good";
+
+export interface MistakeReview {
+  id: string;
+  result: ReviewResult;
+  note: string;
+  reviewedAt: string;
+}
+
+export interface Mistake {
+  id: string;
+  childName: string;
+  subject: string;
+  grade: string;
+  knowledgePoint: string;
+  problem: string;
+  wrongAnswer: string;
+  correctAnswer: string;
+  explanation: string;
+  errorType: string;
+  mastery: MistakeMastery;
+  documentId: string | null;
+  reviewCount: number;
+  lastReviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  reviews: MistakeReview[];
+}
+
+export interface MistakeInput {
+  childName: string;
+  subject: string;
+  grade?: string;
+  knowledgePoint?: string;
+  problem: string;
+  wrongAnswer?: string;
+  correctAnswer?: string;
+  explanation?: string;
+  errorType: string;
+  mastery?: MistakeMastery;
+  documentId?: string | null;
+}
+
+export function listMistakes(): Promise<Mistake[]> {
+  return request<Mistake[]>("/mistakes");
+}
+
+export function createMistake(input: MistakeInput): Promise<Mistake> {
+  return request<Mistake>("/mistakes", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function deleteMistake(id: string): Promise<void> {
+  return request<void>(`/mistakes/${id}`, { method: "DELETE" });
+}
+
+export function reviewMistake(id: string, result: ReviewResult, note = ""): Promise<Mistake> {
+  return request<Mistake>(`/mistakes/${id}/reviews`, {
+    method: "POST",
+    body: JSON.stringify({ result, note }),
+  });
+}
+
+export async function uploadDocument(file: File, note = ""): Promise<{ documentId: string; jobId?: string }> {
+  const encodedNote = note
+    ? btoa(String.fromCharCode(...new TextEncoder().encode(note)))
+    : "";
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  const inferredType = extension === "heic" ? "image/heic"
+    : extension === "heif" ? "image/heif"
+    : extension === "png" ? "image/png"
+    : "image/jpeg";
+  const res = await fetch(`${API_BASE}/documents?fileName=${encodeURIComponent(file.name)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": file.type || inferredType,
+      Authorization: `Bearer ${getToken()}`,
+      ...(encodedNote ? { "x-document-note-b64": encodedNote } : {}),
+    },
+    body: file,
+  });
+  if (res.status === 401) throw new UnauthorizedError("未授权");
+  if (!res.ok) throw new Error(`原题图片上传失败 (${res.status})`);
+  return (await res.json()) as { documentId: string; jobId?: string };
+}
+
 export function toggleDone(id: string, done: boolean): Promise<Entry> {
   return request<Entry>(`/entries/${id}`, {
     method: "PATCH",

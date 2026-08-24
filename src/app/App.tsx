@@ -23,10 +23,12 @@ import {
   BarChart2,
   LogOut,
   Lightbulb,
+  GraduationCap,
   X,
 } from "lucide-react";
 import * as api from "./api";
 import { StreamingAsr, recordingSupported } from "./asrStream";
+import MistakeBook from "./MistakeBook";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -47,7 +49,7 @@ interface Entry {
   timestamp: Date;
 }
 
-type Tab = "today" | "ledger" | "memo" | "wish" | "knowledge";
+type Tab = "today" | "ledger" | "memo" | "wish" | "knowledge" | "mistakes";
 
 interface SpeechRecognitionResultEventLike {
   resultIndex: number;
@@ -749,6 +751,7 @@ function TokenGate({ onSubmit }: { onSubmit: (token: string) => void }) {
 export default function App() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [knowledge, setKnowledge] = useState<api.KnowledgeItem[]>([]);
+  const [mistakes, setMistakes] = useState<api.Mistake[]>([]);
   // 知识库提问的答案（展示在知识标签顶部）。
   const [answer, setAnswer] = useState<{ answer: string; sources: api.KnowledgeItem[] } | null>(null);
   // 刚存入知识库的提示（带撤销=删除）。
@@ -812,11 +815,17 @@ export default function App() {
     setLoading(true);
     (async () => {
       try {
-        const [data, meRes, kn] = await Promise.all([api.getEntries(), api.getMe(), api.listKnowledge()]);
+        const [data, meRes, kn, mistakeItems] = await Promise.all([
+          api.getEntries(),
+          api.getMe(),
+          api.listKnowledge(),
+          api.listMistakes(),
+        ]);
         if (!cancelled) {
           setEntries(data.map(toLocal));
           setMe(meRes.user);
           setKnowledge(kn);
+          setMistakes(mistakeItems);
           setError(null);
         }
       } catch (err) {
@@ -918,6 +927,48 @@ export default function App() {
     } catch {
       setKnowledge(prev);
       setError("删除失败");
+    }
+  }
+
+  async function handleCreateMistake(input: api.MistakeInput, photo: File | null) {
+    try {
+      let documentId: string | null = null;
+      if (photo) {
+        const note = `孩子错题；学生：${input.childName}；学科：${input.subject}；知识点：${input.knowledgePoint || "待整理"}`;
+        const uploaded = await api.uploadDocument(photo, note);
+        documentId = uploaded.documentId;
+      }
+      const created = await api.createMistake({ ...input, documentId });
+      setMistakes((current) => [created, ...current]);
+      api.listKnowledge().then(setKnowledge).catch(() => {});
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "错题保存失败");
+      throw err;
+    }
+  }
+
+  async function handleReviewMistake(id: string, result: api.ReviewResult) {
+    try {
+      const updated = await api.reviewMistake(id, result);
+      setMistakes((current) => current.map((item) => item.id === id ? updated : item));
+      api.listKnowledge().then(setKnowledge).catch(() => {});
+    } catch {
+      setError("复习记录保存失败");
+    }
+  }
+
+  async function handleDeleteMistake(id: string) {
+    const previous = mistakes;
+    const previousKnowledge = knowledge;
+    setMistakes((current) => current.filter((item) => item.id !== id));
+    setKnowledge((current) => current.filter((item) => item.id !== id));
+    try {
+      await api.deleteMistake(id);
+    } catch {
+      setMistakes(previous);
+      setKnowledge(previousKnowledge);
+      setError("错题删除失败");
     }
   }
 
@@ -1070,6 +1121,7 @@ export default function App() {
     setMe("");
     setEntries([]);
     setKnowledge([]);
+    setMistakes([]);
     setAnswer(null);
     setSavedNote(null);
   }
@@ -1208,6 +1260,7 @@ export default function App() {
             { key: "memo" as Tab, label: "备忘", icon: <BookOpen size={11} />, count: memoEntries.filter(m => !m.done).length },
             { key: "wish" as Tab, label: "心愿", icon: <Star size={11} />, count: wishEntries.length },
             { key: "knowledge" as Tab, label: "知识", icon: <Lightbulb size={11} />, count: knowledge.length },
+            { key: "mistakes" as Tab, label: "错题", icon: <GraduationCap size={11} />, count: mistakes.filter((item) => item.mastery !== "mastered").length },
           ].map(({ key, label, icon, count }) => (
             <button
               key={key}
@@ -1259,6 +1312,13 @@ export default function App() {
             </div>
           ) : showSummary ? (
             <SummaryPanel dayEntries={dayEntries} monthEntries={monthEntries} selectedDate={selectedDate} />
+          ) : tab === "mistakes" ? (
+            <MistakeBook
+              mistakes={mistakes}
+              onCreate={handleCreateMistake}
+              onReview={handleReviewMistake}
+              onDelete={handleDeleteMistake}
+            />
           ) : tab === "knowledge" ? (
             <>
               {answer && (

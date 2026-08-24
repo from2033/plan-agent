@@ -78,6 +78,12 @@ import {
   resolveDocumentEvidence,
   storeDocumentUpload,
 } from "./document-store.js";
+import {
+  deleteMistake,
+  insertMistake,
+  listMistakes,
+  reviewMistake,
+} from "./mistakes.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
@@ -643,6 +649,69 @@ app.get(`${API}/documents`, (req, res) => {
     return;
   }
   res.json(listDocuments(req.userId!));
+});
+
+const MistakeInputSchema = z.object({
+  childName: z.string().trim().min(1).max(60),
+  subject: z.string().trim().min(1).max(40),
+  grade: z.string().trim().max(40).optional().default(""),
+  knowledgePoint: z.string().trim().max(100).optional().default(""),
+  problem: z.string().trim().min(1).max(10_000),
+  wrongAnswer: z.string().trim().max(5_000).optional().default(""),
+  correctAnswer: z.string().trim().max(5_000).optional().default(""),
+  explanation: z.string().trim().max(10_000).optional().default(""),
+  errorType: z.enum(["概念不清", "审题错误", "计算失误", "方法不熟", "其他"]),
+  mastery: z.enum(["learning", "review", "mastered"]).optional(),
+  documentId: z.string().uuid().nullable().optional(),
+});
+
+app.get(`${API}/mistakes`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.json([]);
+    return;
+  }
+  res.json(listMistakes(req.userId!));
+});
+
+app.post(`${API}/mistakes`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再保存孩子的错题" });
+    return;
+  }
+  const parsed = MistakeInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "错题信息不完整" });
+    return;
+  }
+  if (parsed.data.documentId && !getDocument(parsed.data.documentId, req.userId!)) {
+    res.status(400).json({ error: "关联的原题图片不存在" });
+    return;
+  }
+  res.status(201).json(insertMistake(req.userId!, parsed.data));
+});
+
+app.delete(`${API}/mistakes/:id`, (req, res) => {
+  const ok = deleteMistake(req.params.id, req.userId!);
+  res.status(ok ? 204 : 404).end();
+});
+
+const MistakeReviewSchema = z.object({
+  result: z.enum(["again", "hard", "good"]),
+  note: z.string().trim().max(1_000).optional().default(""),
+});
+
+app.post(`${API}/mistakes/:id/reviews`, (req, res) => {
+  const parsed = MistakeReviewSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "复习结果无效" });
+    return;
+  }
+  const mistake = reviewMistake(req.params.id, req.userId!, parsed.data.result, parsed.data.note);
+  if (!mistake) {
+    res.status(404).json({ error: "错题不存在" });
+    return;
+  }
+  res.json(mistake);
 });
 
 const DocumentQuestionSchema = z.object({

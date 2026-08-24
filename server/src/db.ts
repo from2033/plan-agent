@@ -289,6 +289,8 @@ export function deleteAccountData(userId: string): void {
   try {
     db.prepare("DELETE FROM entries WHERE user_id = ?").run(userId);
     db.prepare("DELETE FROM knowledge WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM mistake_reviews WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM mistakes WHERE user_id = ?").run(userId);
     db.prepare("DELETE FROM client_imports WHERE user_id = ?").run(userId);
     db.prepare("DELETE FROM report_cache WHERE user_id = ?").run(userId);
     db.prepare("DELETE FROM ai_jobs WHERE user_id = ?").run(userId);
