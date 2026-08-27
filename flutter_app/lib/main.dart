@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
+import 'mistake_book.dart';
 import 'models.dart';
 import 'reminder_service.dart';
 import 'voice_service.dart';
@@ -1448,12 +1449,17 @@ class _HomeScreenState extends State<HomeScreen> {
               ButtonSegment(
                 value: 0,
                 icon: Icon(Icons.folder_outlined),
-                label: Text('资料与知识'),
+                label: Text('资料'),
               ),
               ButtonSegment(
                 value: 1,
                 icon: Icon(Icons.star_outline_rounded),
                 label: Text('心愿'),
+              ),
+              ButtonSegment(
+                value: 2,
+                icon: Icon(Icons.school_outlined),
+                label: Text('错题'),
               ),
             ],
             selected: {librarySection},
@@ -1467,6 +1473,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   key: ValueKey(_knowledgeRevision),
                   api: widget.api,
                 )
+              : librarySection == 2
+              ? MistakeBookPane(api: widget.api, isGuest: widget.isGuest)
               : wishes.isEmpty
               ? const Center(
                   child: Text(

@@ -141,3 +141,94 @@ class KnowledgeItem {
     'content': content,
   };
 }
+
+enum MistakeMastery { learning, review, mastered }
+
+enum MistakeReviewResult { again, hard, good }
+
+class MistakeItem {
+  const MistakeItem({
+    required this.id,
+    required this.childName,
+    required this.subject,
+    required this.grade,
+    required this.knowledgePoint,
+    required this.problem,
+    required this.wrongAnswer,
+    required this.correctAnswer,
+    required this.explanation,
+    required this.errorType,
+    required this.mastery,
+    required this.reviewCount,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String childName;
+  final String subject;
+  final String grade;
+  final String knowledgePoint;
+  final String problem;
+  final String wrongAnswer;
+  final String correctAnswer;
+  final String explanation;
+  final String errorType;
+  final MistakeMastery mastery;
+  final int reviewCount;
+  final DateTime createdAt;
+
+  factory MistakeItem.fromJson(Map<String, dynamic> json) => MistakeItem(
+    id: json['id'] as String,
+    childName: json['childName'] as String? ?? '',
+    subject: json['subject'] as String? ?? '',
+    grade: json['grade'] as String? ?? '',
+    knowledgePoint: json['knowledgePoint'] as String? ?? '',
+    problem: json['problem'] as String? ?? '',
+    wrongAnswer: json['wrongAnswer'] as String? ?? '',
+    correctAnswer: json['correctAnswer'] as String? ?? '',
+    explanation: json['explanation'] as String? ?? '',
+    errorType: json['errorType'] as String? ?? '',
+    mastery: MistakeMastery.values.firstWhere(
+      (value) => value.name == json['mastery'],
+      orElse: () => MistakeMastery.learning,
+    ),
+    reviewCount: json['reviewCount'] as int? ?? 0,
+    createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+  );
+}
+
+class MistakeDraft {
+  const MistakeDraft({
+    required this.childName,
+    required this.subject,
+    required this.problem,
+    required this.errorType,
+    this.grade = '',
+    this.knowledgePoint = '',
+    this.wrongAnswer = '',
+    this.correctAnswer = '',
+    this.explanation = '',
+  });
+
+  final String childName;
+  final String subject;
+  final String grade;
+  final String knowledgePoint;
+  final String problem;
+  final String wrongAnswer;
+  final String correctAnswer;
+  final String explanation;
+  final String errorType;
+
+  Map<String, dynamic> toJson() => {
+    'childName': childName,
+    'subject': subject,
+    'grade': grade,
+    'knowledgePoint': knowledgePoint,
+    'problem': problem,
+    'wrongAnswer': wrongAnswer,
+    'correctAnswer': correctAnswer,
+    'explanation': explanation,
+    'errorType': errorType,
+  };
+}
