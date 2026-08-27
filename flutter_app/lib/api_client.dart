@@ -59,7 +59,13 @@ class ApiClient {
         }
       }
       return _isGuest ? SessionMode.guest : SessionMode.signedIn;
-    } catch (_) {
+    } catch (error) {
+      // A temporary network/server failure during launch must never sign the
+      // user out. Only an explicit 401 proves that the saved token is invalid.
+      final unauthorized = error is ApiException && error.status == 401;
+      if (!unauthorized) {
+        return _isGuest ? SessionMode.guest : SessionMode.signedIn;
+      }
       if (_isGuest) {
         try {
           await startGuestSession(forceRenew: true);

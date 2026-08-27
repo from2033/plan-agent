@@ -2,6 +2,18 @@
 
 A new Flutter project.
 
+## Install on the paired iPhone
+
+Build the signed release, then use CoreDevice for an in-place upgrade:
+
+```bash
+flutter build ios --release
+xcrun devicectl device install app --device <core-device-identifier> build/ios/iphoneos/Runner.app
+```
+
+Do not use `flutter install` for routine updates. It uninstalls the existing
+app first and can clear local app state, including the remembered login.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.
