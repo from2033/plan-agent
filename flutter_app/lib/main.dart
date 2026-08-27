@@ -8,7 +8,6 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
-import 'mistake_book.dart';
 import 'models.dart';
 import 'reminder_service.dart';
 import 'voice_service.dart';
@@ -1456,11 +1455,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icon(Icons.star_outline_rounded),
                 label: Text('心愿'),
               ),
-              ButtonSegment(
-                value: 2,
-                icon: Icon(Icons.school_outlined),
-                label: Text('错题'),
-              ),
             ],
             selected: {librarySection},
             onSelectionChanged: (value) =>
@@ -1473,8 +1467,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   key: ValueKey(_knowledgeRevision),
                   api: widget.api,
                 )
-              : librarySection == 2
-              ? MistakeBookPane(api: widget.api, isGuest: widget.isGuest)
               : wishes.isEmpty
               ? const Center(
                   child: Text(
@@ -2194,7 +2186,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
 
   Future<void> upload() async {
     if (widget.api.isGuest) {
-      setState(() => error = '请先登录后再上传家庭资料');
+      setState(() => error = '请先登录后再拍照或上传资料');
       return;
     }
     try {
@@ -2228,7 +2220,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                   ? '资料已存在，补充说明已追加'
                   : uploadResult['duplicate'] == true
                   ? '这份资料已经存在，没有重复归档'
-                  : '资料已保存到家庭档案',
+                  : '资料已保存，以后可直接询问',
             ),
           ),
         );
@@ -2431,6 +2423,33 @@ class _KnowledgePaneState extends State<KnowledgePane> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xffffead5),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.auto_awesome_rounded,
+                        color: Color(0xffb45f06),
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '资料、报告、合同和孩子错题都从这里上传。拍照后说一两句，大模型会自动识别内容、知识点和用途。',
+                          style: TextStyle(
+                            color: Color(0xff8f4f0b),
+                            height: 1.45,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed: uploading ? null : upload,
                   icon: uploading
@@ -2439,8 +2458,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.upload_file_rounded),
-                  label: Text(uploading ? '正在归档…' : '上传家庭资料'),
+                      : const Icon(Icons.add_a_photo_outlined),
+                  label: Text(uploading ? '正在识别并保存…' : '拍照 / 上传'),
                 ),
                 const SizedBox(height: 14),
                 if (error != null)
@@ -2852,7 +2871,7 @@ class _UploadNoteDialogState extends State<_UploadNoteDialog> {
   Widget build(BuildContext context) {
     final busy = recording || transcribing;
     return AlertDialog(
-      title: const Text('补充资料说明'),
+      title: const Text('说一下这是什么'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2871,7 +2890,7 @@ class _UploadNoteDialogState extends State<_UploadNoteDialog> {
               maxLines: 6,
               maxLength: 1000,
               decoration: const InputDecoration(
-                hintText: '可补充资料用途、来源、注意事项或个人经验，也可以留空。',
+                hintText: '例如：这是孩子今天的数学错题，主要是分数通分不会。也可以留空。',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -2897,7 +2916,7 @@ class _UploadNoteDialogState extends State<_UploadNoteDialog> {
                       ? '正在识别…'
                       : recording
                       ? '正在录音，点此结束'
-                      : '用语音补充说明',
+                      : '按一下，说一两句',
                 ),
               ),
             ),
@@ -2910,7 +2929,7 @@ class _UploadNoteDialogState extends State<_UploadNoteDialog> {
             ],
             const SizedBox(height: 6),
             const Text(
-              '说明会和原资料一起保存，并用于以后查询。',
+              '照片、OCR 文字和这段说明会一起保存，以后可以直接问或生成同类练习。',
               style: TextStyle(fontSize: 12, color: Color(0xff8a8680)),
             ),
           ],

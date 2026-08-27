@@ -178,36 +178,6 @@ class ApiClient {
         .toList();
   }
 
-  Future<List<MistakeItem>> mistakes() async {
-    if (_isGuest) return const [];
-    final value = await _request('GET', '/mistakes') as List<dynamic>;
-    return value
-        .map((item) => MistakeItem.fromJson(item as Map<String, dynamic>))
-        .toList();
-  }
-
-  Future<MistakeItem> createMistake(MistakeDraft draft) async {
-    if (_isGuest) throw const ApiException('请先登录后再保存孩子的错题');
-    final value = await _request('POST', '/mistakes', body: draft.toJson());
-    return MistakeItem.fromJson(value as Map<String, dynamic>);
-  }
-
-  Future<MistakeItem> reviewMistake(
-    String id,
-    MistakeReviewResult result,
-  ) async {
-    final value = await _request(
-      'POST',
-      '/mistakes/${Uri.encodeComponent(id)}/reviews',
-      body: {'result': result.name},
-    );
-    return MistakeItem.fromJson(value as Map<String, dynamic>);
-  }
-
-  Future<void> deleteMistake(String id) async {
-    await _request('DELETE', '/mistakes/${Uri.encodeComponent(id)}');
-  }
-
   Future<List<Map<String, dynamic>>> documents() async {
     if (_isGuest) return const [];
     final value = await _request('GET', '/documents') as List<dynamic>;

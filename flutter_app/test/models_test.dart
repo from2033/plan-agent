@@ -82,39 +82,4 @@ void main() {
     expect(restored.title, original.title);
     expect(restored.content, original.content);
   });
-
-  test('parses a family mistake with mastery state', () {
-    final mistake = MistakeItem.fromJson({
-      'id': 'mistake-1',
-      'childName': '小明',
-      'subject': '数学',
-      'grade': '三年级',
-      'knowledgePoint': '分数',
-      'problem': '1/2 + 1/4 = ?',
-      'wrongAnswer': '2/6',
-      'correctAnswer': '3/4',
-      'explanation': '先通分',
-      'errorType': '概念不清',
-      'mastery': 'review',
-      'reviewCount': 2,
-      'createdAt': '2026-08-28T08:00:00.000Z',
-    });
-
-    expect(mistake.childName, '小明');
-    expect(mistake.mastery, MistakeMastery.review);
-    expect(mistake.reviewCount, 2);
-  });
-
-  test('serializes the required mistake draft fields', () {
-    const draft = MistakeDraft(
-      childName: '小明',
-      subject: '数学',
-      problem: '2 + 2 = ?',
-      errorType: '计算失误',
-    );
-
-    expect(draft.toJson()['childName'], '小明');
-    expect(draft.toJson()['problem'], '2 + 2 = ?');
-    expect(draft.toJson()['errorType'], '计算失误');
-  });
 }
