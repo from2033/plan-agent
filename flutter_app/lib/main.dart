@@ -98,6 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String? error;
 
   Future<void> submit() async {
+    if (busy) return;
     final address = email.text.trim();
     if (!address.contains('@') || !address.contains('.')) {
       setState(() => error = '请输入有效的邮箱地址');
@@ -341,6 +342,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                     hint: '6 位验证码',
                                     icon: Icons.lock_outline_rounded,
                                   ).copyWith(counterText: ''),
+                                  onChanged: (value) {
+                                    if (value.trim().length == 6 && !busy) {
+                                      submit();
+                                    }
+                                  },
                                   onSubmitted: (_) => submit(),
                                 ),
                               ],
@@ -1511,8 +1517,13 @@ class _HomeScreenState extends State<HomeScreen> {
               : Icons.cloud_done_outlined,
           widget.isGuest ? '登录并云端保存' : '已登录云端账号',
           widget.isGuest ? '登录后可换设备恢复数据' : '数据已按账号隔离保存',
-          widget.isGuest ? widget.onLogin : logout,
+          widget.isGuest ? widget.onLogin : null,
+          trailing: widget.isGuest
+              ? const Icon(Icons.chevron_right_rounded)
+              : const Icon(Icons.verified_rounded, color: Color(0xff16a34a)),
         ),
+        if (!widget.isGuest)
+          _settingsTile(Icons.logout_rounded, '退出登录', '仅在你明确需要切换账号时使用', logout),
         _settingsTile(
           Icons.alarm_on_rounded,
           '提醒状态',
@@ -1535,8 +1546,9 @@ class _HomeScreenState extends State<HomeScreen> {
     IconData icon,
     String title,
     String subtitle,
-    VoidCallback onTap, {
+    VoidCallback? onTap, {
     bool destructive = false,
+    Widget? trailing,
   }) {
     return Card(
       elevation: 0,
@@ -1556,7 +1568,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         subtitle: Text(subtitle),
-        trailing: const Icon(Icons.chevron_right_rounded),
+        trailing:
+            trailing ??
+            (onTap == null ? null : const Icon(Icons.chevron_right_rounded)),
       ),
     );
   }
