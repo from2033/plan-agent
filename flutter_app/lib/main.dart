@@ -2168,6 +2168,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   bool loading = true;
   bool uploading = false;
   String? error;
+  String documentCategory = '全部';
   static const documentChannel = MethodChannel(
     'com.from2033.assistant/documents',
   );
@@ -2259,6 +2260,21 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     return result?['title'] as String? ??
         document['fileName'] as String? ??
         '资料';
+  }
+
+  String categoryOf(Map<String, dynamic> document) {
+    final result = document['result'] as Map<String, dynamic>?;
+    final category = result?['category'] as String? ?? '其他';
+    final searchable = [
+      documentTitle(document),
+      result?['summary'] as String? ?? '',
+      ...(document['notes'] as List<dynamic>? ?? const []).whereType<String>(),
+    ].join(' ');
+    if (searchable.contains('错题')) return '错题';
+    if (searchable.contains('会议录音') || searchable.contains('谈话录音')) {
+      return '会议录音';
+    }
+    return category;
   }
 
   Future<void> addNote(Map<String, dynamic> document) async {
@@ -2430,6 +2446,17 @@ class _KnowledgePaneState extends State<KnowledgePane> {
 
   @override
   Widget build(BuildContext context) {
+    final categories = <String>{
+      '全部',
+      ...documents
+          .where((item) => item['status'] == 'COMPLETE')
+          .map(categoryOf),
+    }.toList();
+    final visibleDocuments = documentCategory == '全部'
+        ? documents
+        : documents
+              .where((item) => categoryOf(item) == documentCategory)
+              .toList();
     return loading
         ? const Center(child: CircularProgressIndicator())
         : RefreshIndicator(
@@ -2490,12 +2517,46 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                     ),
                   ),
                 if (documents.isNotEmpty) ...[
-                  const Text(
-                    '家庭档案',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '资料分类',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${documents.length} 份',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xff8a8680),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 9),
-                  for (final document in documents)
+                  SizedBox(
+                    height: 38,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: categories.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 7),
+                      itemBuilder: (_, index) {
+                        final category = categories[index];
+                        return ChoiceChip(
+                          label: Text(category),
+                          selected: documentCategory == category,
+                          onSelected: (_) =>
+                              setState(() => documentCategory = category),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  for (final document in visibleDocuments)
                     InkWell(
                       onTap: () => showDocument(document),
                       borderRadius: BorderRadius.circular(15),
@@ -2527,21 +2588,31 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                                     ),
                                   ),
                                   const SizedBox(height: 3),
-                                  Text(
-                                    document['status'] == 'COMPLETE'
-                                        ? (((document['result']
-                                                      as Map<
-                                                        String,
-                                                        dynamic
-                                                      >?)?['category']
-                                                  as String?) ??
-                                              '已归档')
-                                        : document['status'] == 'FAILED'
-                                        ? '处理失败'
-                                        : '正在处理',
-                                    style: const TextStyle(
-                                      color: Color(0xff8a8680),
-                                      fontSize: 12,
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xffffead5),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        document['status'] == 'COMPLETE'
+                                            ? categoryOf(document)
+                                            : document['status'] == 'FAILED'
+                                            ? '处理失败'
+                                            : '正在处理',
+                                        style: const TextStyle(
+                                          color: Color(0xff8f4f0b),
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],
