@@ -552,9 +552,11 @@ class _HomeScreenState extends State<HomeScreen> {
   bool recognizing = false;
   String? error;
   Set<String> scheduledReminderIds = {};
+  String reminderSyncMode = 'none';
   final List<_PendingVoiceTask> pendingTasks = [];
   int _nextPendingId = 1;
   int _knowledgeRevision = 0;
+  int librarySection = 0;
   DateTime selectedDate = DateUtils.dateOnly(DateTime.now());
   Future<void>? _voiceStart;
   DateTime? _pressStartedAt;
@@ -562,12 +564,11 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _disposing = false;
   bool deletingAccount = false;
 
-  static const List<(EntryType?, String, IconData)> tabs = [
-    (EntryType.activity, '行程', Icons.schedule_rounded),
-    (EntryType.expense, '账单', Icons.credit_card_rounded),
-    (EntryType.memo, '备忘', Icons.book_outlined),
-    (EntryType.wish, '心愿', Icons.star_outline_rounded),
-    (null, '资料', Icons.folder_copy_outlined),
+  static const List<(String, IconData)> tabs = [
+    ('首页', Icons.mic_none_rounded),
+    ('提醒', Icons.alarm_rounded),
+    ('资料库', Icons.folder_copy_outlined),
+    ('我的', Icons.person_outline_rounded),
   ];
 
   @override
@@ -599,6 +600,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         setState(() {
           scheduledReminderIds = result.scheduledEntryIds;
+          reminderSyncMode = result.mode;
           if (result.mode == 'denied') {
             error = '备忘已保存，但系统未允许闹钟或通知，请到“设置”中开启权限';
           }
@@ -716,7 +718,8 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => pendingTasks.removeWhere((item) => item.id == task.id));
         if (result['kind'] == 'save') {
           setState(() {
-            tab = 4;
+            tab = 2;
+            librarySection = 0;
             _knowledgeRevision += 1;
           });
           ScaffoldMessenger.of(
@@ -1072,497 +1075,648 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final type = tabs[tab].$1;
-    final isToday = DateUtils.isSameDay(selectedDate, DateTime.now());
-    final selectedDayEntries = entries
-        .where((entry) => DateUtils.isSameDay(entry.timestamp, selectedDate))
-        .toList();
-    final visible = entries
-        .where(
-          (entry) =>
-              entry.type == type &&
-              (type == EntryType.wish ||
-                  DateUtils.isSameDay(entry.timestamp, selectedDate)),
-        )
-        .toList()
-        .reversed
-        .toList();
-    // Keep the primary date line compact. Putting the year, month, day and
-    // weekday on one line overflows between the navigation/action buttons on
-    // narrow phones, so historical dates show the year in the secondary line.
-    final dateLabel = DateFormat('M月d日 EEEE', 'zh_CN').format(selectedDate);
-    final dateMeta = isToday
-        ? '${selectedDayEntries.length} 条记录 · 今天'
-        : '${selectedDate.year}年 · ${selectedDayEntries.length} 条记录';
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: () => moveDate(-1),
-                    tooltip: '前一天',
-                    icon: const Icon(Icons.chevron_left_rounded, size: 26),
+            _buildPageHeader(),
+            if (widget.isGuest) _buildGuestBanner(),
+            if (error != null) _buildErrorBanner(),
+            Expanded(child: _buildCurrentPage()),
+            if (tab == 0) _buildPendingTasks(),
+            if (tab == 0) _buildVoiceInput(),
+          ],
+        ),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (index) => setState(() => tab = index),
+        backgroundColor: const Color(0xfffbfaf7),
+        indicatorColor: const Color(0xffffdfb8),
+        destinations: [
+          for (final item in tabs)
+            NavigationDestination(icon: Icon(item.$2), label: item.$1),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPageHeader() {
+    const titles = ['今天', '提醒', '资料库', '我的'];
+    const subtitles = ['说一句，我来记录和查询', '确认不会忘记的事', '长期保存的资料与知识', '账号、权限与数据'];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  titles[tab],
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xff1a1a1e),
                   ),
-                  Expanded(
-                    child: InkWell(
-                      onTap: pickDate,
-                      borderRadius: BorderRadius.circular(12),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  dateLabel,
-                                  style: const TextStyle(
-                                    fontSize: 19,
-                                    color: Color(0xff1a1a1e),
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(width: 5),
-                                const Icon(
-                                  Icons.calendar_month_outlined,
-                                  size: 16,
-                                  color: Color(0xff8a8680),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              dateMeta,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Color(0xff8a8680),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                ),
+                Text(
+                  subtitles[tab],
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xff8a8680),
                   ),
-                  IconButton(
-                    onPressed: () => moveDate(1),
-                    tooltip: '后一天',
-                    icon: Icon(
-                      Icons.chevron_right_rounded,
-                      size: 26,
-                      color: const Color(0xff1a1a1e),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: openReport,
-                    tooltip: '日报与月报',
-                    icon: const Icon(Icons.insights_rounded, size: 21),
-                  ),
-                  PopupMenuButton<String>(
-                    tooltip: '更多',
-                    icon: const Icon(Icons.more_horiz_rounded, size: 22),
-                    onSelected: (value) {
-                      if (value == 'help') showHelp();
-                      if (value == 'login') widget.onLogin();
-                      if (value == 'logout') logout();
-                      if (value == 'deleteAccount') confirmDeleteAccount();
-                    },
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(
-                        value: 'help',
-                        child: ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: Icon(Icons.help_outline_rounded),
-                          title: Text('使用帮助'),
-                        ),
-                      ),
-                      if (widget.isGuest)
-                        const PopupMenuItem(
-                          value: 'login',
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(Icons.cloud_upload_outlined),
-                            title: Text('登录并云端保存'),
-                          ),
-                        )
-                      else ...const [
-                        PopupMenuItem(
-                          value: 'logout',
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(Icons.logout_rounded),
-                            title: Text('退出登录'),
-                          ),
-                        ),
-                        PopupMenuDivider(),
-                        PopupMenuItem(
-                          value: 'deleteAccount',
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(
-                              Icons.delete_forever_outlined,
-                              color: Colors.red,
-                            ),
-                            title: Text(
-                              '删除账户',
-                              style: TextStyle(color: Colors.red),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            SizedBox(
-              height: 42,
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                scrollDirection: Axis.horizontal,
-                itemCount: tabs.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 3),
-                itemBuilder: (context, index) {
-                  final selected = tab == index;
-                  final itemType = tabs[index].$1;
-                  final count = itemType == null
-                      ? null
-                      : entries
-                            .where(
-                              (entry) =>
-                                  entry.type == itemType &&
-                                  (itemType == EntryType.wish ||
-                                      DateUtils.isSameDay(
-                                        entry.timestamp,
-                                        selectedDate,
-                                      )),
-                            )
-                            .length;
-                  return InkWell(
-                    onTap: () => setState(() => tab = index),
-                    borderRadius: BorderRadius.circular(999),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? const Color(0xffd97706)
-                            : const Color(0xffede9e1),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Row(
+          ),
+          if (tab == 0)
+            IconButton(
+              onPressed: openReport,
+              tooltip: '日报与月报',
+              icon: const Icon(Icons.insights_rounded),
+            ),
+          IconButton(
+            onPressed: refresh,
+            tooltip: '刷新',
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCurrentPage() {
+    if (loading) return const Center(child: CircularProgressIndicator());
+    return switch (tab) {
+      0 => _buildHomePage(),
+      1 => _buildReminderPage(),
+      2 => _buildLibraryPage(),
+      _ => _buildProfilePage(),
+    };
+  }
+
+  Widget _buildHomePage() {
+    final dayEntries = entries
+        .where((entry) => DateUtils.isSameDay(entry.timestamp, selectedDate))
+        .toList()
+        .reversed
+        .toList();
+    final nextReminder =
+        entries
+            .where(
+              (entry) =>
+                  entry.type == EntryType.memo &&
+                  !entry.done &&
+                  entry.reminderAt != null &&
+                  entry.reminderAt!.isAfter(DateTime.now()),
+            )
+            .toList()
+          ..sort((a, b) => a.reminderAt!.compareTo(b.reminderAt!));
+    return RefreshIndicator(
+      onRefresh: refresh,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+        children: [
+          _buildDateNavigator(dayEntries.length),
+          if (nextReminder.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            InkWell(
+              onTap: () => setState(() => tab = 1),
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.all(15),
+                decoration: BoxDecoration(
+                  color: const Color(0xffffead5),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.alarm_rounded, color: Color(0xffb45f06)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(
-                            tabs[index].$3,
-                            size: 13,
-                            color: selected
-                                ? Colors.white
-                                : const Color(0xff716b63),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            count == null
-                                ? tabs[index].$2
-                                : '${tabs[index].$2} $count',
+                          const Text(
+                            '下一个提醒',
                             style: TextStyle(
                               fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: selected
-                                  ? Colors.white
-                                  : const Color(0xff5f5a53),
+                              color: Color(0xff8f4f0b),
+                            ),
+                          ),
+                          Text(
+                            nextReminder.first.description,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          Text(
+                            DateFormat(
+                              'M月d日 HH:mm',
+                              'zh_CN',
+                            ).format(nextReminder.first.reminderAt!),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xff8f4f0b),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  );
-                },
-              ),
-            ),
-            if (widget.isGuest)
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xffffead5),
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Row(
-                  children: [
                     const Icon(
-                      Icons.person_outline_rounded,
-                      size: 17,
+                      Icons.chevron_right_rounded,
                       color: Color(0xffb45f06),
                     ),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text(
-                        '访客模式 · 数据保存在本机',
-                        style: TextStyle(
-                          color: Color(0xff8f4f0b),
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: widget.onLogin,
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        foregroundColor: const Color(0xffb45f06),
-                      ),
-                      child: const Text('登录保存'),
-                    ),
                   ],
                 ),
               ),
-            if (error != null)
-              Container(
-                margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xffffe4e4),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        error!,
-                        style: const TextStyle(
-                          color: Color(0xffb42318),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => setState(() => error = null),
-                      icon: const Icon(Icons.close, size: 16),
-                    ),
-                  ],
-                ),
-              ),
-            Expanded(
-              child: tab == 4
-                  ? KnowledgePane(
-                      key: ValueKey(_knowledgeRevision),
-                      api: widget.api,
-                    )
-                  : loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : RefreshIndicator(
-                      onRefresh: refresh,
-                      child: visible.isEmpty
-                          ? ListView(
-                              children: const [
-                                SizedBox(height: 160),
-                                Center(
-                                  child: Text(
-                                    '还没有记录，按住下方按钮说一句',
-                                    style: TextStyle(color: Color(0xff8a8680)),
-                                  ),
-                                ),
-                              ],
-                            )
-                          : ListView.separated(
-                              padding: const EdgeInsets.all(16),
-                              itemCount: visible.length,
-                              separatorBuilder: (_, _) =>
-                                  const SizedBox(height: 9),
-                              itemBuilder: (context, index) => EntryCard(
-                                entry: visible[index],
-                                reminderScheduled: scheduledReminderIds
-                                    .contains(visible[index].id),
-                                onToggleDone:
-                                    visible[index].type == EntryType.memo
-                                    ? () => toggleEntryDone(visible[index])
-                                    : null,
-                                onDelete: () =>
-                                    confirmDeleteEntry(visible[index]),
-                              ),
-                            ),
-                    ),
             ),
-            if (pendingTasks.isNotEmpty)
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xffe5ded4)),
-                ),
-                child: Column(
-                  children: [
-                    for (final task in pendingTasks.take(3))
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.graphic_eq_rounded,
-                              size: 16,
-                              color: Color(0xff8a8680),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    task.text,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                  if (task.errorMessage != null)
-                                    Text(
-                                      task.errorMessage!,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Color(0xffb42318),
-                                        fontSize: 10,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: task.failed
-                                    ? const Color(0xffffe4e4)
-                                    : const Color(0xfffff0df),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                task.status,
-                                style: TextStyle(
-                                  color: task.failed
-                                      ? const Color(0xffb42318)
-                                      : const Color(0xffb45f06),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            if (task.failed)
-                              IconButton(
-                                tooltip: '移除',
-                                visualDensity: VisualDensity.compact,
-                                onPressed: () => setState(
-                                  () => pendingTasks.removeWhere(
-                                    (item) => item.id == task.id,
-                                  ),
-                                ),
-                                icon: const Icon(Icons.close_rounded, size: 16),
-                              ),
-                          ],
-                        ),
-                      ),
-                    if (pendingTasks.length > 3)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Text(
-                          '还有 ${pendingTasks.length - 3} 条等待处理',
-                          style: const TextStyle(
-                            color: Color(0xff8a8680),
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
-                  ],
+          ],
+          const Padding(
+            padding: EdgeInsets.only(top: 18, bottom: 8),
+            child: Text(
+              '当天记录',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (dayEntries.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 34),
+              child: Center(
+                child: Text(
+                  '还没有记录，按住下方说一句',
+                  style: TextStyle(color: Color(0xff8a8680)),
                 ),
               ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
+            )
+          else
+            for (final entry in dayEntries) ...[
+              EntryCard(
+                entry: entry,
+                reminderScheduled: scheduledReminderIds.contains(entry.id),
+                onToggleDone: entry.type == EntryType.memo
+                    ? () => toggleEntryDone(entry)
+                    : null,
+                onDelete: () => confirmDeleteEntry(entry),
+              ),
+              const SizedBox(height: 9),
+            ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDateNavigator(int count) {
+    final isToday = DateUtils.isSameDay(selectedDate, DateTime.now());
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => moveDate(-1),
+            icon: const Icon(Icons.chevron_left_rounded),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: pickDate,
               child: Column(
                 children: [
-                  Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerDown: (_) => startVoice(),
-                    onPointerUp: (_) => queueStopVoice(),
-                    onPointerCancel: (_) => queueStopVoice(),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      width: 108,
-                      height: 108,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: recognizing
-                            ? const Color(0xffede9e1)
-                            : recording
-                            ? const Color(0xffffe2e2)
-                            : const Color(0xffd97706),
-                        boxShadow: recording || recognizing
-                            ? const []
-                            : [
-                                BoxShadow(
-                                  color: const Color(
-                                    0xffd97706,
-                                  ).withValues(alpha: .32),
-                                  blurRadius: 22,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ],
-                      ),
-                      child: recognizing
-                          ? const Padding(
-                              padding: EdgeInsets.all(39),
-                              child: CircularProgressIndicator(
-                                color: Color(0xff8a8680),
-                                strokeWidth: 2.5,
-                              ),
-                            )
-                          : Icon(
-                              recording
-                                  ? Icons.graphic_eq_rounded
-                                  : Icons.mic_rounded,
-                              size: 42,
-                              color: recording
-                                  ? const Color(0xffdc2626)
-                                  : Colors.white,
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 9),
                   Text(
-                    recording
-                        ? '正在聆听 · 松开即记录'
-                        : recognizing
-                        ? '正在发送语音…'
-                        : pendingTasks.isNotEmpty
-                        ? '信息处理中 · 可继续按住录入下一条'
-                        : '按住说话 · 松开直接记录',
+                    DateFormat('M月d日 EEEE', 'zh_CN').format(selectedDate),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  Text(
+                    isToday
+                        ? '$count 条记录 · 今天'
+                        : '${selectedDate.year}年 · $count 条记录',
                     style: const TextStyle(
-                      color: Color(0xff9b968e),
-                      fontSize: 11,
+                      fontSize: 10,
+                      color: Color(0xff8a8680),
                     ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+          IconButton(
+            onPressed: () => moveDate(1),
+            icon: const Icon(Icons.chevron_right_rounded),
+          ),
+        ],
       ),
     );
   }
+
+  Widget _buildReminderPage() {
+    final now = DateTime.now();
+    final active =
+        entries
+            .where((entry) => entry.type == EntryType.memo && !entry.done)
+            .toList()
+          ..sort((a, b) {
+            if (a.reminderAt == null && b.reminderAt == null) {
+              return b.timestamp.compareTo(a.timestamp);
+            }
+            if (a.reminderAt == null) return 1;
+            if (b.reminderAt == null) return -1;
+            return a.reminderAt!.compareTo(b.reminderAt!);
+          });
+    final completed = entries
+        .where((entry) => entry.type == EntryType.memo && entry.done)
+        .toList()
+        .reversed
+        .toList();
+    final scheduled = active
+        .where((entry) => scheduledReminderIds.contains(entry.id))
+        .length;
+    final untimed = active.where((entry) => entry.reminderAt == null).length;
+    final modeLabel = reminderSyncMode == 'alarmkit'
+        ? 'iPhone 系统闹钟'
+        : reminderSyncMode == 'notification'
+        ? '系统通知'
+        : reminderSyncMode == 'denied'
+        ? '系统权限未开启'
+        : '尚无可安排提醒';
+    return RefreshIndicator(
+      onRefresh: refresh,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xffffead5),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.verified_rounded,
+                      color: Color(0xffb45f06),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$scheduled 个提醒已安排',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '$modeLabel · $untimed 条无时间待办',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xff8f4f0b),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 18, bottom: 8),
+            child: Text(
+              '即将提醒与待办',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+            ),
+          ),
+          if (active.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 36),
+              child: Center(
+                child: Text(
+                  '当前没有未完成的提醒',
+                  style: TextStyle(color: Color(0xff8a8680)),
+                ),
+              ),
+            )
+          else
+            for (final entry in active) ...[
+              EntryCard(
+                entry: entry,
+                reminderScheduled: scheduledReminderIds.contains(entry.id),
+                onToggleDone: () => toggleEntryDone(entry),
+                onDelete: () => confirmDeleteEntry(entry),
+              ),
+              if (entry.reminderAt != null && entry.reminderAt!.isBefore(now))
+                const SizedBox.shrink(),
+              const SizedBox(height: 9),
+            ],
+          if (completed.isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.only(top: 14, bottom: 8),
+              child: Text(
+                '已完成',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+              ),
+            ),
+            for (final entry in completed.take(20)) ...[
+              EntryCard(
+                entry: entry,
+                reminderScheduled: false,
+                onToggleDone: () => toggleEntryDone(entry),
+                onDelete: () => confirmDeleteEntry(entry),
+              ),
+              const SizedBox(height: 9),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLibraryPage() {
+    final wishes = entries
+        .where((entry) => entry.type == EntryType.wish)
+        .toList()
+        .reversed
+        .toList();
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+          child: SegmentedButton<int>(
+            segments: const [
+              ButtonSegment(
+                value: 0,
+                icon: Icon(Icons.folder_outlined),
+                label: Text('资料与知识'),
+              ),
+              ButtonSegment(
+                value: 1,
+                icon: Icon(Icons.star_outline_rounded),
+                label: Text('心愿'),
+              ),
+            ],
+            selected: {librarySection},
+            onSelectionChanged: (value) =>
+                setState(() => librarySection = value.first),
+          ),
+        ),
+        Expanded(
+          child: librarySection == 0
+              ? KnowledgePane(
+                  key: ValueKey(_knowledgeRevision),
+                  api: widget.api,
+                )
+              : wishes.isEmpty
+              ? const Center(
+                  child: Text(
+                    '还没有心愿，可以直接用语音记下',
+                    style: TextStyle(color: Color(0xff8a8680)),
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: wishes.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 9),
+                  itemBuilder: (_, index) => EntryCard(
+                    entry: wishes[index],
+                    reminderScheduled: false,
+                    onDelete: () => confirmDeleteEntry(wishes[index]),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProfilePage() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      children: [
+        _settingsTile(
+          Icons.help_outline_rounded,
+          '使用帮助',
+          '了解语音录入、提醒和资料库',
+          showHelp,
+        ),
+        _settingsTile(
+          Icons.insights_rounded,
+          '日报与月报',
+          '回顾行程、支出和完成情况',
+          openReport,
+        ),
+        _settingsTile(
+          widget.isGuest
+              ? Icons.cloud_upload_outlined
+              : Icons.cloud_done_outlined,
+          widget.isGuest ? '登录并云端保存' : '已登录云端账号',
+          widget.isGuest ? '登录后可换设备恢复数据' : '数据已按账号隔离保存',
+          widget.isGuest ? widget.onLogin : logout,
+        ),
+        _settingsTile(
+          Icons.alarm_on_rounded,
+          '提醒状态',
+          '${scheduledReminderIds.length} 个系统提醒已安排',
+          () => setState(() => tab = 1),
+        ),
+        if (!widget.isGuest)
+          _settingsTile(
+            Icons.delete_forever_outlined,
+            '删除账户',
+            '永久删除全部云端数据',
+            confirmDeleteAccount,
+            destructive: true,
+          ),
+      ],
+    );
+  }
+
+  Widget _settingsTile(
+    IconData icon,
+    String title,
+    String subtitle,
+    VoidCallback onTap, {
+    bool destructive = false,
+  }) {
+    return Card(
+      elevation: 0,
+      color: Colors.white,
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ListTile(
+        onTap: onTap,
+        leading: Icon(
+          icon,
+          color: destructive ? Colors.red : const Color(0xffb45f06),
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: destructive ? Colors.red : null,
+          ),
+        ),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right_rounded),
+      ),
+    );
+  }
+
+  Widget _buildGuestBanner() => Container(
+    width: double.infinity,
+    margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: const Color(0xffffead5),
+      borderRadius: BorderRadius.circular(11),
+    ),
+    child: Row(
+      children: [
+        const Icon(
+          Icons.person_outline_rounded,
+          size: 17,
+          color: Color(0xffb45f06),
+        ),
+        const SizedBox(width: 8),
+        const Expanded(
+          child: Text(
+            '访客模式 · 数据保存在本机',
+            style: TextStyle(
+              color: Color(0xff8f4f0b),
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        TextButton(onPressed: widget.onLogin, child: const Text('登录保存')),
+      ],
+    ),
+  );
+
+  Widget _buildErrorBanner() => Container(
+    margin: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: const Color(0xffffe4e4),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            error!,
+            style: const TextStyle(color: Color(0xffb42318), fontSize: 12),
+          ),
+        ),
+        IconButton(
+          onPressed: () => setState(() => error = null),
+          icon: const Icon(Icons.close, size: 16),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildPendingTasks() {
+    if (pendingTasks.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xffe5ded4)),
+      ),
+      child: Column(
+        children: [
+          for (final task in pendingTasks.take(3))
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.graphic_eq_rounded, size: 18),
+              title: Text(
+                task.text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                task.errorMessage ?? task.status,
+                style: TextStyle(
+                  color: task.failed
+                      ? const Color(0xffb42318)
+                      : const Color(0xffb45f06),
+                ),
+              ),
+              trailing: task.failed
+                  ? IconButton(
+                      onPressed: () =>
+                          setState(() => pendingTasks.remove(task)),
+                      icon: const Icon(Icons.close_rounded),
+                    )
+                  : null,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVoiceInput() => Padding(
+    padding: const EdgeInsets.fromLTRB(24, 6, 24, 12),
+    child: Column(
+      children: [
+        Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (_) => startVoice(),
+          onPointerUp: (_) => queueStopVoice(),
+          onPointerCancel: (_) => queueStopVoice(),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            width: 92,
+            height: 92,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: recognizing
+                  ? const Color(0xffede9e1)
+                  : recording
+                  ? const Color(0xffffe2e2)
+                  : const Color(0xffd97706),
+              boxShadow: recording || recognizing
+                  ? const []
+                  : [
+                      BoxShadow(
+                        color: const Color(0xffd97706).withValues(alpha: .32),
+                        blurRadius: 20,
+                        offset: const Offset(0, 7),
+                      ),
+                    ],
+            ),
+            child: recognizing
+                ? const Padding(
+                    padding: EdgeInsets.all(34),
+                    child: CircularProgressIndicator(
+                      color: Color(0xff8a8680),
+                      strokeWidth: 2.5,
+                    ),
+                  )
+                : Icon(
+                    recording ? Icons.graphic_eq_rounded : Icons.mic_rounded,
+                    size: 38,
+                    color: recording ? const Color(0xffdc2626) : Colors.white,
+                  ),
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          recording
+              ? '正在聆听 · 松开即记录'
+              : recognizing
+              ? '正在发送语音…'
+              : pendingTasks.isNotEmpty
+              ? '信息处理中 · 可继续录入'
+              : '按住说话 · 可以记录，也可以直接问',
+          style: const TextStyle(color: Color(0xff9b968e), fontSize: 11),
+        ),
+      ],
+    ),
+  );
 }
 
 class _HelpItem extends StatelessWidget {
