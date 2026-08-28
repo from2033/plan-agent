@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -18,23 +20,44 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
   Map<String, dynamic>? data;
   bool loading = false;
   String? error;
+  Timer? analysisTimer;
 
   @override
   void initState() {
     super.initState();
     data = widget.initialData;
-    if (data == null) refresh();
+    if (data == null) {
+      refresh();
+    } else {
+      scheduleAnalysisRefresh();
+    }
   }
 
-  Future<void> refresh() async {
+  @override
+  void dispose() {
+    analysisTimer?.cancel();
+    super.dispose();
+  }
+
+  void scheduleAnalysisRefresh() {
+    analysisTimer?.cancel();
+    if (data?['analysisStatus'] == 'PROCESSING') {
+      analysisTimer = Timer(const Duration(seconds: 5), refresh);
+    }
+  }
+
+  Future<void> refresh({bool force = false}) async {
     if (loading) return;
     setState(() {
       loading = true;
       error = null;
     });
     try {
-      final value = await widget.api.worldPulse(force: true);
-      if (mounted) setState(() => data = value);
+      final value = await widget.api.worldPulse(force: force);
+      if (mounted) {
+        setState(() => data = value);
+        scheduleAnalysisRefresh();
+      }
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
     } finally {
@@ -43,16 +66,18 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
   }
 
   IconData iconFor(String id) => switch (id) {
-    'ai' => Icons.memory_rounded,
-    'macro' => Icons.account_balance_rounded,
-    'markets' => Icons.show_chart_rounded,
+    'gold_impact' => Icons.show_chart_rounded,
+    'china_housing' => Icons.apartment_rounded,
+    'china_policy' => Icons.account_balance_rounded,
+    'china_policy_preview' => Icons.upcoming_rounded,
     _ => Icons.public_rounded,
   };
 
   Color colorFor(String id) => switch (id) {
-    'ai' => const Color(0xff6d28d9),
-    'macro' => const Color(0xff1d4ed8),
-    'markets' => const Color(0xffb7791f),
+    'gold_impact' => const Color(0xffb7791f),
+    'china_housing' => const Color(0xff2563eb),
+    'china_policy' => const Color(0xffdc2626),
+    'china_policy_preview' => const Color(0xff7c3aed),
     _ => const Color(0xff047857),
   };
 
@@ -85,11 +110,11 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
         .toList();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('全球脉搏'),
+        title: const Text('趋势观察'),
         actions: [
           IconButton(
-            onPressed: loading ? null : refresh,
-            tooltip: '刷新新闻',
+            onPressed: loading ? null : () => refresh(force: true),
+            tooltip: '刷新趋势',
             icon: loading
                 ? const SizedBox(
                     width: 18,
@@ -101,7 +126,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: refresh,
+        onRefresh: () => refresh(force: true),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
           children: [
@@ -117,7 +142,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    '看趋势，不刷信息流',
+                    '看懂趋势，不刷新闻',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 20,
@@ -125,9 +150,13 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  const Text(
-                    '聚合过去 24 小时的重要公开报道。先看发生了什么，再判断它会不会形成持续影响。',
-                    style: TextStyle(color: Color(0xffd1d5db), height: 1.45),
+                  Text(
+                    data?['overview'] as String? ??
+                        '只关注黄金、国内楼市、中国政策和国际大事。模型会用普通话总结影响，原始来源放在下面核实。',
+                    style: const TextStyle(
+                      color: Color(0xffd1d5db),
+                      height: 1.45,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -231,6 +260,10 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                 _insightLine('为什么重要', section['whyItMatters'] as String? ?? ''),
                 const SizedBox(height: 7),
                 _insightLine('接下来关注', section['watchNext'] as String? ?? ''),
+                if ((section['action'] as String? ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 7),
+                  _insightLine('现在怎么做', section['action'] as String),
+                ],
               ],
             ),
           ),

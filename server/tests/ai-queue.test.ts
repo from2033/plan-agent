@@ -14,6 +14,7 @@ const {
   claimAiJob,
   completeAiJob,
   enqueueAiJob,
+  failAiJob,
   getAiJob,
 } = await import("../src/ai-queue.js");
 
@@ -63,6 +64,9 @@ test("用户对上传资料的补充说明在任务数据库中加密", () => {
     (getAiJob(job.id, "user-1")?.input as { userNote: string }).userNote,
     "目前只能在一封大药房买到。",
   );
+  const claimed = claimAiJob("test-worker");
+  assert.equal(claimed?.job.id, job.id);
+  failAiJob(job.id, claimed!.leaseToken, "test cleanup", false);
   inspection.close();
 });
 
@@ -86,6 +90,27 @@ test("统一提问任务保留家庭资料的原文证据", () => {
   };
   completeAiJob(job.id, claimed!.leaseToken, result);
   assert.deepEqual(getAiJob(job.id, "user-1")?.result, result);
+});
+
+test("全球趋势分析输入和结果加密存储且结构受校验", () => {
+  const job = enqueueAiJob("world-pulse-system", "world_pulse", {
+    fingerprint: "today",
+    sections: [{ id: "gold_impact", headlines: [{ title: "美元走强" }] }],
+  }, 55);
+  const claimed = claimAiJob("test-worker");
+  assert.equal(claimed?.job.id, job.id);
+  const result = {
+    overview: "今天主要观察美元和利率变化。",
+    sections: [{
+      id: "gold_impact",
+      summary: "美元走强可能给黄金带来短期压力。",
+      impact: "这是影响金价的一个因素，但不能单独决定走势。",
+      outlook: "继续看利率和避险需求是否同向变化。",
+      action: "无需行动，继续观察。",
+    }],
+  };
+  completeAiJob(job.id, claimed!.leaseToken, result);
+  assert.deepEqual(getAiJob(job.id, "world-pulse-system")?.result, result);
 });
 
 test.after(() => {

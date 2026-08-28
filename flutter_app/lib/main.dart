@@ -578,6 +578,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Map<String, dynamic>? worldPulse;
   bool worldPulseLoading = false;
   String? worldPulseError;
+  Timer? worldPulseAnalysisTimer;
 
   static const List<(String, IconData)> tabs = [
     ('首页', Icons.mic_none_rounded),
@@ -605,7 +606,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     try {
       final value = await widget.api.worldPulse(force: force);
-      if (mounted) setState(() => worldPulse = value);
+      if (mounted) {
+        setState(() => worldPulse = value);
+        worldPulseAnalysisTimer?.cancel();
+        if (value['analysisStatus'] == 'PROCESSING') {
+          worldPulseAnalysisTimer = Timer(
+            const Duration(seconds: 5),
+            refreshWorldPulse,
+          );
+        }
+      }
     } catch (exception) {
       if (mounted) setState(() => worldPulseError = exception.toString());
     } finally {
@@ -1153,6 +1163,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     _disposing = true;
     WidgetsBinding.instance.removeObserver(this);
+    worldPulseAnalysisTimer?.cancel();
     voice.dispose();
     meetingRecorder.dispose();
     super.dispose();
@@ -1217,6 +1228,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           if (tab == 0)
             IconButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      WorldPulsePage(api: widget.api, initialData: worldPulse),
+                ),
+              ),
+              tooltip: '世界趋势与中国政策',
+              icon: const Icon(Icons.public_rounded),
+            ),
+          if (tab == 0)
+            IconButton(
               onPressed: openReport,
               tooltip: '日报与月报',
               icon: const Icon(Icons.insights_rounded),
@@ -1264,8 +1286,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
         children: [
           _buildDateNavigator(dayEntries.length),
-          const SizedBox(height: 12),
-          _buildWorldPulseCard(),
           if (nextReminder.isNotEmpty) ...[
             const SizedBox(height: 12),
             InkWell(
@@ -1350,130 +1370,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ),
     );
-  }
-
-  Widget _buildWorldPulseCard() {
-    final sections = (worldPulse?['sections'] as List<dynamic>? ?? const [])
-        .whereType<Map<String, dynamic>>()
-        .toList();
-    final updatedAt = DateTime.tryParse(
-      worldPulse?['updatedAt'] as String? ?? '',
-    )?.toLocal();
-    return InkWell(
-      onTap: worldPulse == null
-          ? () => refreshWorldPulse(force: true)
-          : () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    WorldPulsePage(api: widget.api, initialData: worldPulse),
-              ),
-            ),
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xff1f2937), Color(0xff111827)],
-          ),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.public_rounded, color: Color(0xffffc978)),
-                const SizedBox(width: 9),
-                const Expanded(
-                  child: Text(
-                    '今日全球脉搏',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                if (worldPulseLoading)
-                  const SizedBox(
-                    width: 17,
-                    height: 17,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Color(0xffffc978),
-                    ),
-                  )
-                else
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: Color(0xffd1d5db),
-                  ),
-              ],
-            ),
-            if (worldPulseError != null && sections.isEmpty) ...[
-              const SizedBox(height: 10),
-              Text(
-                worldPulseError!,
-                style: const TextStyle(color: Color(0xffffb4b4), fontSize: 12),
-              ),
-              const SizedBox(height: 5),
-              const Text(
-                '点击重新获取',
-                style: TextStyle(color: Color(0xffffc978), fontSize: 12),
-              ),
-            ] else if (sections.isEmpty) ...[
-              const SizedBox(height: 12),
-              const Text(
-                '正在汇集 AI、美债、黄金和国际局势…',
-                style: TextStyle(color: Color(0xffd1d5db), fontSize: 12),
-              ),
-            ] else ...[
-              const SizedBox(height: 12),
-              for (final section in sections.take(4)) ...[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      margin: const EdgeInsets.only(top: 6),
-                      width: 5,
-                      height: 5,
-                      decoration: const BoxDecoration(
-                        color: Color(0xffffc978),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${section['title']}：${_firstHeadline(section)}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xffe5e7eb),
-                          fontSize: 12,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 7),
-              ],
-              Text(
-                '更新于 ${updatedAt == null ? '刚刚' : DateFormat('HH:mm').format(updatedAt)} · 点击查看趋势与来源',
-                style: const TextStyle(color: Color(0xff9ca3af), fontSize: 10),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _firstHeadline(Map<String, dynamic> section) {
-    final items = section['items'] as List<dynamic>? ?? const [];
-    if (items.isEmpty || items.first is! Map<String, dynamic>) return '暂无新动态';
-    return (items.first as Map<String, dynamic>)['title'] as String? ?? '暂无新动态';
   }
 
   Widget _buildDateNavigator(int count) {

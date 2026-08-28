@@ -7,10 +7,10 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 5;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-08-20.1";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 6;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-08-28.1";
 
-export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note";
+export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
 
 export interface AiJob {
@@ -128,12 +128,24 @@ const DocumentNoteResultSchema = z.object({
   vaultPath: z.string().min(1).max(1_000),
 });
 
+const WorldPulseResultSchema = z.object({
+  overview: z.string().min(1).max(600),
+  sections: z.array(z.object({
+    id: z.string().min(1).max(60),
+    summary: z.string().min(1).max(600),
+    impact: z.string().min(1).max(600),
+    outlook: z.string().min(1).max(600),
+    action: z.string().min(1).max(300),
+  })).min(1).max(8),
+});
+
 export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "ingest") return IngestResultSchema.parse(value);
   if (kind === "correct") return CorrectResultSchema.parse(value);
   if (kind === "document") return DocumentResultSchema.parse(value);
   if (kind === "document_question") return DocumentQuestionResultSchema.parse(value);
   if (kind === "document_note") return DocumentNoteResultSchema.parse(value);
+  if (kind === "world_pulse") return WorldPulseResultSchema.parse(value);
   return SummaryResultSchema.parse(value);
 }
 
@@ -210,7 +222,7 @@ export function enqueueAiJob(
       id,
       userId,
       kind,
-      kind === "document" || kind === "document_question" || kind === "document_note"
+      kind === "document" || kind === "document_question" || kind === "document_note" || kind === "world_pulse"
         ? encField(JSON.stringify(input))
         : JSON.stringify(input),
       priority,
@@ -308,7 +320,7 @@ export function completeAiJob(
   const currentJob = rowToJob(row);
   const result = finalize ? finalize(currentJob, validated) : validated;
   const now = new Date().toISOString();
-  const storedResult = row.kind === "document" || row.kind === "document_question" || row.kind === "document_note"
+  const storedResult = row.kind === "document" || row.kind === "document_question" || row.kind === "document_note" || row.kind === "world_pulse"
     ? encField(JSON.stringify(result))
     : JSON.stringify(result);
   db.prepare(`UPDATE ai_jobs SET status='COMPLETE',result_json=?,lease_hash=NULL,lease_until=NULL,

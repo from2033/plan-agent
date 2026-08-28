@@ -84,7 +84,13 @@ import {
   listMistakes,
   reviewMistake,
 } from "./mistakes.js";
-import { getWorldPulse } from "./world-pulse.js";
+import {
+  getWorldPulse,
+  markWorldPulseAnalysisQueued,
+  saveWorldPulseAnalysis,
+  worldPulseAnalysisRequest,
+  type WorldPulseAnalysis,
+} from "./world-pulse.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
@@ -358,6 +364,12 @@ function shanghaiDate(timestamp: string): string {
 }
 
 function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
+  if (job.kind === "world_pulse") {
+    const fingerprint = String((job.input as { fingerprint?: unknown }).fingerprint || "");
+    if (!fingerprint) throw new Error("world_pulse_fingerprint_missing");
+    saveWorldPulseAnalysis(fingerprint, value as WorldPulseAnalysis);
+    return value;
+  }
   if (job.kind === "document") {
     const documentId = String((job.input as { documentId?: unknown })?.documentId || "");
     if (!documentId) throw new Error("document_id_missing");
@@ -610,7 +622,14 @@ app.use(API, requireAuth);
 
 app.get(`${API}/world-pulse`, async (req, res) => {
   try {
-    res.json(await getWorldPulse(req.query.refresh === "1"));
+    let pulse = await getWorldPulse(req.query.refresh === "1");
+    const request = worldPulseAnalysisRequest(pulse);
+    if (request && codexQueueEnabled()) {
+      enqueueAiJob("world-pulse-system", "world_pulse", request.input, 55);
+      markWorldPulseAnalysisQueued(request.hash);
+      pulse = await getWorldPulse();
+    }
+    res.json(pulse);
   } catch (error) {
     console.error("[world pulse] 新闻聚合失败:", error);
     res.status(502).json({ error: "暂时无法获取全球新闻，请稍后重试" });
