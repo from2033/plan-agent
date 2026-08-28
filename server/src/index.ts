@@ -17,6 +17,7 @@ import {
   getEntry,
   updateEntry,
   repairEntryReminder,
+  clearEntryScheduledDate,
   listKnowledge,
   insertKnowledge,
   deleteKnowledge,
@@ -34,6 +35,7 @@ import { bridgeToNls } from "./asr.js";
 import {
   assistantClock,
   entryTiming,
+  hasExplicitDateExpression,
   inferReminderTimeFromText,
   inferTimeRangeFromText,
   isFutureObligation,
@@ -486,7 +488,8 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
   const now = new Date();
   const clock = input.context || assistantClock(now);
   const entries = (result.fields || []).map((fields, i): Entry => {
-    const { date, reminderTime, ...entryFields } = fields;
+    const { date: modelDate, reminderTime, ...entryFields } = fields;
+    const date = hasExplicitDateExpression(input.raw) ? modelDate : undefined;
     const forceMemo = isFutureObligation(input.raw, date, reminderTime, clock);
     if (forceMemo) {
       entryFields.type = "memo";
@@ -969,6 +972,14 @@ app.get(`${API}/entries`, (req, res) => {
   const clock = assistantClock();
   const now = new Date(`${clock.currentDate}T${clock.currentTime}:00+08:00`).getTime();
   const entries = listEntries(req.userId!).map((entry) => {
+    if (
+      entry.type === "memo" &&
+      entry.scheduledDate &&
+      !entry.reminderAt &&
+      !hasExplicitDateExpression(entry.raw)
+    ) {
+      entry = clearEntryScheduledDate(entry.id, req.userId!) || entry;
+    }
     if (entry.reminderAt || entry.done) return entry;
     const reminderTime = /^\d{2}:\d{2}$/.test(entry.time)
       ? entry.time
@@ -1051,7 +1062,8 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     const clock = assistantClock(now);
     // 一句话可能拆成多条；逐条入库。timestamp 加毫秒偏移，保证拆出的顺序稳定。
     const entries: Entry[] = result.fields.map((f, i) => {
-      const { date, reminderTime, ...entryFields } = f;
+      const { date: modelDate, reminderTime, ...entryFields } = f;
+      const date = hasExplicitDateExpression(raw) ? modelDate : undefined;
       const forceMemo = isFutureObligation(raw, date, reminderTime, clock);
       if (forceMemo) {
         entryFields.type = "memo";

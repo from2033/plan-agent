@@ -87,6 +87,10 @@ export function inferDateFromText(raw: string, currentDate: string): string | un
   return undefined;
 }
 
+export function hasExplicitDateExpression(raw: string): boolean {
+  return /(?:今天|今日|明天|明日|后天|大后天|(?:本|这|下|下下)?(?:周|星期|礼拜)[一二三四五六日天]|20\d{2}[\u5e74/-]\d{1,2}[\u6708/-]\d{1,2}[日号]?|\d{1,2}月\d{1,2}[日号])/.test(raw);
+}
+
 function normalizeHour(hour: number, period: string | undefined): number {
   if (period === "晚上" || period === "今晚" || period === "夜里") {
     if (hour === 12) return 0;
@@ -178,7 +182,8 @@ export function isFutureObligation(
   clock: AssistantClock,
 ): boolean {
   const obligation = /(?:需要|必须|务必|得要|得去|一定要|别忘|记得|提醒我)/.test(raw);
-  const explicitlyPending = /(?:待办|待使用|待领取|待兑换|待处理|待办理|待支付|待缴费|待提交|待回复|待确认|未使用|未领取|未兑换|还没使用|还没处理)/.test(raw);
+  const explicitlyPending = /(?:待办|待使用|待领取|待兑换|待处理|待办理|待支付|待缴费|待提交|待回复|待确认|未使用|未领取|未兑换|还没使用|还没处理)/.test(raw)
+    || /(?:优惠券|礼包|权益).*(?:没有用|没用|没使用)/.test(raw);
   if (!obligation && !explicitlyPending) return false;
   const timestamp = reminderTimestamp(raw, explicitDate, explicitTime, clock);
   if (timestamp) return new Date(timestamp).getTime() > clockTimestamp(clock);

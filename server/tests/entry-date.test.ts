@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   isFutureObligation,
+  hasExplicitDateExpression,
   reminderTimeAt,
   reminderTimestamp,
   type AssistantClock,
@@ -56,6 +57,17 @@ test("明确未完成的权益即使没日期也是待办", () => {
     isFutureObligation("我需要买牛奶", undefined, undefined, clock),
     true,
   );
+  assert.equal(
+    isFutureObligation("平安好车主还有礼包没有用", undefined, undefined, clock),
+    true,
+  );
+});
+
+test("只接受用户真正说出的日期", () => {
+  assert.equal(hasExplicitDateExpression("平安好车主还有礼包没有用"), false);
+  assert.equal(hasExplicitDateExpression("今天把平安好车主礼包用了"), true);
+  assert.equal(hasExplicitDateExpression("下周一交材料"), true);
+  assert.equal(hasExplicitDateExpression("9月3日交材料"), true);
 });
 
 test("有日期没时间的必做事项仍然是待办但不生成闹钟", () => {
