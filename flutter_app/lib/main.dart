@@ -550,7 +550,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final VoiceService voice = VoiceService(widget.api);
   late final PersistentMeetingRecorder meetingRecorder =
       PersistentMeetingRecorder(widget.api);
@@ -573,6 +573,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _voiceReady = false;
   bool _disposing = false;
   bool deletingAccount = false;
+  bool _recoveringMeetingRecordings = false;
 
   static const List<(String, IconData)> tabs = [
     ('首页', Icons.mic_none_rounded),
@@ -584,11 +585,15 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     refresh();
     if (!widget.isGuest) unawaited(_recoverMeetingRecordings());
   }
 
   Future<void> _recoverMeetingRecordings() async {
+    if (_recoveringMeetingRecordings || meetingRecorder.isRecording) return;
+    _recoveringMeetingRecordings = true;
+    await meetingRecorder.beginProcessing();
     try {
       final recovered = await meetingRecorder.recoverPending();
       for (final result in recovered) {
@@ -602,6 +607,7 @@ class _HomeScreenState extends State<HomeScreen> {
           note: result.transcript.isEmpty
               ? '会议/谈话录音。App 意外结束后已恢复原始录音。'
               : '会议/谈话录音恢复转写：\n${result.transcript}',
+          waitForProcessing: false,
         );
         await meetingRecorder.markUploaded(result.sessionId);
       }
@@ -611,7 +617,19 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     } catch (_) {
-      // Keep durable local files and retry on the next launch.
+      if (mounted) {
+        setState(() => error = '有录音安全保存在本机，进入资料库可重新上传');
+      }
+    } finally {
+      await meetingRecorder.endProcessing();
+      _recoveringMeetingRecordings = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !widget.isGuest) {
+      unawaited(_recoverMeetingRecordings());
     }
   }
 
@@ -1107,6 +1125,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _disposing = true;
+    WidgetsBinding.instance.removeObserver(this);
     voice.dispose();
     meetingRecorder.dispose();
     super.dispose();
@@ -2208,6 +2227,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   bool uploading = false;
   bool meetingRecording = false;
   bool meetingSaving = false;
+  bool retryingRecordings = false;
+  int pendingRecordingCount = 0;
   int meetingProcessedChunks = 0;
   DateTime? meetingStartedAt;
   Duration meetingElapsed = Duration.zero;
@@ -2240,11 +2261,13 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       final values = await Future.wait([
         widget.api.knowledge(),
         widget.api.documents(),
+        widget.meetingRecorder.pendingCount(),
       ]);
       if (mounted) {
         setState(() {
           items = values[0] as List<KnowledgeItem>;
           documents = values[1] as List<Map<String, dynamic>>;
+          pendingRecordingCount = values[2] as int;
           error = null;
         });
       }
@@ -2336,6 +2359,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       error = null;
     });
     meetingTimer?.cancel();
+    await widget.meetingRecorder.beginProcessing();
     try {
       final result = await widget.meetingRecorder.stop();
       await _archiveRecording(result);
@@ -2343,11 +2367,18 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('录音和边录边生成的转写已保存')));
+        ).showSnackBar(const SnackBar(content: Text('录音已安全上传，服务器会在后台继续整理')));
       }
     } catch (exception) {
-      if (mounted) setState(() => error = exception.toString());
+      if (mounted) {
+        final count = await widget.meetingRecorder.pendingCount();
+        setState(() {
+          pendingRecordingCount = count;
+          error = '上传暂未完成，录音仍安全保存在本机，可点击“立即重试”';
+        });
+      }
     } finally {
+      await widget.meetingRecorder.endProcessing();
       if (mounted) {
         setState(() {
           meetingSaving = false;
@@ -2378,8 +2409,41 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       note: result.transcript.isEmpty
           ? '会议/谈话录音。转写暂时失败，原始录音已保留。'
           : '会议/谈话录音自动转写：\n${result.transcript}',
+      waitForProcessing: false,
     );
     await widget.meetingRecorder.markUploaded(result.sessionId);
+  }
+
+  Future<void> retryPendingRecordings() async {
+    if (retryingRecordings || meetingRecording || meetingSaving) return;
+    setState(() {
+      retryingRecordings = true;
+      error = null;
+    });
+    await widget.meetingRecorder.beginProcessing();
+    try {
+      final recovered = await widget.meetingRecorder.recoverPending();
+      for (final result in recovered) {
+        await _archiveRecording(result);
+      }
+      await load();
+      if (mounted && recovered.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已重新上传 ${recovered.length} 段录音，服务器正在后台整理')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        final count = await widget.meetingRecorder.pendingCount();
+        setState(() {
+          pendingRecordingCount = count;
+          error = '仍未连接成功，录音保存在本机，网络恢复后可再次重试';
+        });
+      }
+    } finally {
+      await widget.meetingRecorder.endProcessing();
+      if (mounted) setState(() => retryingRecordings = false);
+    }
   }
 
   Future<String?> requestUploadNote(String fileName) async {
@@ -2722,6 +2786,36 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                     ),
                   ),
                 const SizedBox(height: 14),
+                if (pendingRecordingCount > 0)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xfffff3cd),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.cloud_upload_outlined,
+                          color: Color(0xff8a5a00),
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            '有 $pendingRecordingCount 段录音保存在本机，尚未完成上传',
+                            style: const TextStyle(color: Color(0xff704800)),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: retryingRecordings
+                              ? null
+                              : retryPendingRecordings,
+                          child: Text(retryingRecordings ? '重试中…' : '立即重试'),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (error != null)
                   Container(
                     margin: const EdgeInsets.only(bottom: 12),

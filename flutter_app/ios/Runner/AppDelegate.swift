@@ -20,6 +20,7 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
   UIImagePickerControllerDelegate, UINavigationControllerDelegate {
   private var documentPickerResult: FlutterResult?
   private var capturedCameraImages: [UIImage] = []
+  private var recordingProcessingTask: UIBackgroundTaskIdentifier = .invalid
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -59,7 +60,7 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
       name: "com.from2033.assistant/recording",
       binaryMessenger: registrar.messenger()
     )
-    recordingChannel.setMethodCallHandler { call, result in
+    recordingChannel.setMethodCallHandler { [weak self] call, result in
       let session = AVAudioSession.sharedInstance()
       do {
         switch call.method {
@@ -74,6 +75,12 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
         case "deactivate":
           try session.setActive(false, options: [.notifyOthersOnDeactivation])
           result(nil)
+        case "beginProcessing":
+          self?.beginRecordingProcessingTask()
+          result(nil)
+        case "endProcessing":
+          self?.endRecordingProcessingTask()
+          result(nil)
         default:
           result(FlutterMethodNotImplemented)
         }
@@ -85,6 +92,21 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
         ))
       }
     }
+  }
+
+  private func beginRecordingProcessingTask() {
+    endRecordingProcessingTask()
+    recordingProcessingTask = UIApplication.shared.beginBackgroundTask(
+      withName: "Finish recording upload"
+    ) { [weak self] in
+      self?.endRecordingProcessingTask()
+    }
+  }
+
+  private func endRecordingProcessingTask() {
+    guard recordingProcessingTask != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(recordingProcessingTask)
+    recordingProcessingTask = .invalid
   }
 
   private func activeRootViewController() -> UIViewController? {

@@ -47,9 +47,22 @@ class PersistentMeetingRecorder {
   int completedChunks = 0;
   int processedBytes = 0;
   bool transcriptionFailed = false;
+  bool _recovering = false;
 
   bool get isRecording => sessionDirectory != null;
   DateTime? get startedAt => createdAt;
+
+  Future<void> beginProcessing() async {
+    try {
+      await recordingChannel.invokeMethod<void>('beginProcessing');
+    } catch (_) {}
+  }
+
+  Future<void> endProcessing() async {
+    try {
+      await recordingChannel.invokeMethod<void>('endProcessing');
+    } catch (_) {}
+  }
 
   Future<void> start({void Function(int completedChunks)? onProgress}) async {
     await cancelActive();
@@ -153,51 +166,73 @@ class PersistentMeetingRecorder {
   }
 
   Future<List<PersistentMeetingResult>> recoverPending() async {
-    final root = await _root();
-    if (!await root.exists()) return const [];
-    final results = <PersistentMeetingResult>[];
-    await for (final entity in root.list()) {
-      if (entity is! Directory) continue;
-      final metadataFile = File('${entity.path}/session.json');
-      final pcmFile = File('${entity.path}/audio.pcm');
-      if (!await metadataFile.exists() || !await pcmFile.exists()) continue;
-      try {
-        final metadata =
-            jsonDecode(await metadataFile.readAsString())
-                as Map<String, dynamic>;
-        final started = DateTime.parse(
-          metadata['createdAt'] as String,
-        ).toLocal();
-        final alreadyProcessed =
-            (metadata['processedBytes'] as num?)?.toInt() ?? 0;
-        final transcriptFile = File('${entity.path}/transcript.txt');
-        final pcm = await pcmFile.readAsBytes();
-        if (alreadyProcessed < pcm.length) {
-          final safeOffset = alreadyProcessed.clamp(0, pcm.length);
-          final pieces = splitPcm(Uint8List.fromList(pcm.sublist(safeOffset)));
-          final transcript = <String>[];
-          for (final piece in pieces) {
-            final text = (await api.transcribeAudio(pcmToWav(piece))).trim();
-            if (text.isNotEmpty) transcript.add(text);
+    if (_recovering || isRecording) return const [];
+    _recovering = true;
+    try {
+      final root = await _root();
+      if (!await root.exists()) return const [];
+      final results = <PersistentMeetingResult>[];
+      await for (final entity in root.list()) {
+        if (entity is! Directory) continue;
+        final metadataFile = File('${entity.path}/session.json');
+        final pcmFile = File('${entity.path}/audio.pcm');
+        if (!await metadataFile.exists() || !await pcmFile.exists()) continue;
+        try {
+          final metadata =
+              jsonDecode(await metadataFile.readAsString())
+                  as Map<String, dynamic>;
+          final started = DateTime.parse(
+            metadata['createdAt'] as String,
+          ).toLocal();
+          final alreadyProcessed =
+              (metadata['processedBytes'] as num?)?.toInt() ?? 0;
+          final transcriptFile = File('${entity.path}/transcript.txt');
+          final pcm = await pcmFile.readAsBytes();
+          if (alreadyProcessed < pcm.length) {
+            final safeOffset = alreadyProcessed.clamp(0, pcm.length);
+            final pieces = splitPcm(
+              Uint8List.fromList(pcm.sublist(safeOffset)),
+            );
+            final transcript = <String>[];
+            for (final piece in pieces) {
+              final text = (await api.transcribeAudio(pcmToWav(piece))).trim();
+              if (text.isNotEmpty) transcript.add(text);
+            }
+            await transcriptFile.writeAsString(
+              '${transcript.join('\n')}\n',
+              mode: FileMode.append,
+              flush: true,
+            );
+            processedBytes = pcm.length;
+            createdAt = started;
+            sessionDirectory = entity;
+            await _writeMetadata(entity, state: 'ready');
+            sessionDirectory = null;
+            createdAt = null;
           }
-          await transcriptFile.writeAsString(
-            '${transcript.join('\n')}\n',
-            mode: FileMode.append,
-            flush: true,
-          );
-          processedBytes = pcm.length;
-          createdAt = started;
-          sessionDirectory = entity;
-          await _writeMetadata(entity, state: 'ready');
-          sessionDirectory = null;
-          createdAt = null;
+          results.add(await _resultFromDirectory(entity, started));
+        } catch (_) {
+          // Leave unreadable/incomplete sessions untouched for a later retry.
         }
-        results.add(await _resultFromDirectory(entity, started));
-      } catch (_) {
-        // Leave unreadable/incomplete sessions untouched for a later retry.
+      }
+      return results;
+    } finally {
+      _recovering = false;
+    }
+  }
+
+  Future<int> pendingCount() async {
+    final root = await _root();
+    if (!await root.exists()) return 0;
+    var count = 0;
+    await for (final entity in root.list()) {
+      if (entity is Directory &&
+          await File('${entity.path}/session.json').exists() &&
+          await File('${entity.path}/audio.pcm').exists()) {
+        count += 1;
       }
     }
-    return results;
+    return count;
   }
 
   Future<void> markUploaded(String sessionId) async {

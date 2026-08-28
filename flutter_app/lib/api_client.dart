@@ -207,6 +207,7 @@ class ApiClient {
     required String mimeType,
     required Uint8List bytes,
     String note = '',
+    bool waitForProcessing = true,
   }) async {
     if (_isGuest) throw const ApiException('请先登录后再上传家庭资料');
     final uri = Uri.parse(
@@ -224,7 +225,7 @@ class ApiClient {
         body: bytes,
       );
       final json = _decode(response) as Map<String, dynamic>;
-      if (response.statusCode != 202) return json;
+      if (response.statusCode != 202 || !waitForProcessing) return json;
       final result = await _waitForJob(
         json['jobId'] as String,
         timeoutSeconds: 300,
