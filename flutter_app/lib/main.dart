@@ -3033,11 +3033,73 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     }
   }
 
+  void showKnowledgeItem(KnowledgeItem item) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 0, 22, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.lightbulb_outline_rounded,
+                    color: Color(0xff8b5e34),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      item.title,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(sheetContext),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              SelectableText(
+                item.content,
+                style: const TextStyle(height: 1.55, color: Color(0xff514c46)),
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  const Chip(label: Text('笔记')),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      unawaited(remove(item));
+                    },
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    label: const Text('删除'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final categories = <String>{
       '全部',
-      if (items.isNotEmpty) '知识笔记',
+      if (items.isNotEmpty) '笔记',
       if (documents.any(_isResearch)) '研究报告',
       '错题',
       '会议录音',
@@ -3046,8 +3108,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
           .map(categoryOf),
     }.toList();
     final showKnowledgeItems =
-        documentCategory == '全部' || documentCategory == '知识笔记';
-    final visibleDocuments = documentCategory == '知识笔记'
+        documentCategory == '全部' || documentCategory == '笔记';
+    final visibleDocuments = documentCategory == '笔记'
         ? <Map<String, dynamic>>[]
         : documentCategory == '全部'
         ? documents
@@ -3080,7 +3142,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          '资料、研究报告、合同和孩子错题都保存在这里。说“帮我研究…”后，报告会在后台完成。',
+                          '资料、笔记、研究报告、合同和孩子错题都保存在这里。说“帮我研究…”后，报告会在后台完成。',
                           style: TextStyle(
                             color: Color(0xff8f4f0b),
                             height: 1.45,
@@ -3329,14 +3391,6 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                         ),
                       ),
                     ),
-                  const SizedBox(height: 12),
-                ],
-                if (showKnowledgeItems && items.isNotEmpty) ...[
-                  const Text(
-                    '知识笔记',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 9),
                 ],
                 if (items.isEmpty && documents.isEmpty)
                   const Padding(
@@ -3367,57 +3421,71 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                   )
                 else if (showKnowledgeItems)
                   for (final item in items)
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(15),
-                        border: Border.all(
-                          color: Colors.black.withValues(alpha: .06),
+                    InkWell(
+                      onTap: () => showKnowledgeItem(item),
+                      borderRadius: BorderRadius.circular(15),
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 9),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(15),
+                          border: Border.all(
+                            color: Colors.black.withValues(alpha: .06),
+                          ),
                         ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(
-                            Icons.lightbulb_rounded,
-                            color: Color(0xffd97706),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  item.title,
-                                  style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  item.content,
-                                  style: const TextStyle(
-                                    color: Color(0xff716b63),
-                                    height: 1.45,
-                                  ),
-                                ),
-                              ],
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.lightbulb_outline_rounded,
+                              color: Color(0xff8b5e34),
                             ),
-                          ),
-                          IconButton(
-                            onPressed: () => remove(item),
-                            tooltip: '删除知识',
-                            icon: const Icon(
-                              Icons.delete_outline_rounded,
-                              size: 19,
-                              color: Color(0xffaaa59c),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xffffead5),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        '笔记',
+                                        style: TextStyle(
+                                          color: Color(0xff8f4f0b),
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              color: Color(0xffb7b0a7),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                 if (totalCount > 0 && !hasVisibleContent)
