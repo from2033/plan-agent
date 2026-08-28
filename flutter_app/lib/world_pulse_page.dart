@@ -41,8 +41,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
 
   void scheduleAnalysisRefresh() {
     analysisTimer?.cancel();
-    if (data?['analysisStatus'] == 'PROCESSING' ||
-        data?['discoveryStatus'] == 'QUEUED' ||
+    if (data?['discoveryStatus'] == 'QUEUED' ||
         data?['discoveryStatus'] == 'PROCESSING') {
       analysisTimer = Timer(const Duration(seconds: 5), refresh);
     }
@@ -116,6 +115,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
     final sections = (data?['sections'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList();
+    final dailyBriefing = data?['dailyBriefing'] as Map<String, dynamic>?;
     return Scaffold(
       appBar: AppBar(
         title: const Text('趋势观察'),
@@ -181,7 +181,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                         ),
                         SizedBox(width: 7),
                         Text(
-                          '正在进行今日全网巡检…',
+                          '正在生成今日重点，本次由本地模型处理…',
                           style: TextStyle(
                             color: Color(0xffd1d5db),
                             fontSize: 11,
@@ -192,7 +192,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                     const SizedBox(height: 8),
                   ],
                   Text(
-                    '更新于 ${timeLabel(data?['updatedAt'] as String?)}${data?['stale'] == true ? ' · 部分来源暂未更新' : ''}',
+                    '新闻源更新于 ${timeLabel(data?['updatedAt'] as String?)} · 每天 06:30 自动生成重点${data?['stale'] == true ? ' · 部分来源暂未更新' : ''}',
                     style: const TextStyle(
                       color: Color(0xff9ca3af),
                       fontSize: 11,
@@ -214,6 +214,10 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                   style: const TextStyle(color: Color(0xffb42318)),
                 ),
               ),
+            if (dailyBriefing != null) ...[
+              const SizedBox(height: 16),
+              _dailyBriefingCard(dailyBriefing),
+            ],
             if (sections.isEmpty && loading)
               const Padding(
                 padding: EdgeInsets.only(top: 100),
@@ -359,6 +363,129 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
             ),
             if (index != items.length - 1)
               const Divider(height: 1, indent: 16, endIndent: 16),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _dailyBriefingCard(Map<String, dynamic> briefing) {
+    final events = (briefing['events'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: const Color(0xfffffbeb),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xfff4d58d)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.auto_awesome_rounded,
+                      color: Color(0xffa16207),
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        '今日重点',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      briefing['dayKey'] as String? ?? '',
+                      style: const TextStyle(
+                        color: Color(0xff8a6a28),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  briefing['overview'] as String? ?? '',
+                  style: const TextStyle(height: 1.5, color: Color(0xff55431d)),
+                ),
+              ],
+            ),
+          ),
+          if (events.isNotEmpty)
+            const Divider(height: 1, color: Color(0xfff0dca7)),
+          for (var index = 0; index < events.length; index++) ...[
+            InkWell(
+              onTap: () {
+                final sources =
+                    (events[index]['sources'] as List<dynamic>? ?? const [])
+                        .whereType<Map<String, dynamic>>()
+                        .toList();
+                if (sources.isNotEmpty) {
+                  openArticle(sources.first['url'] as String?);
+                }
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      events[index]['title'] as String? ?? '今日变化',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      events[index]['summary'] as String? ?? '',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.45,
+                        color: Color(0xff5f5a53),
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    Text(
+                      '为什么重要：${events[index]['whyItMatters'] ?? ''}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.4,
+                        color: Color(0xff7a5b17),
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      '${_verificationLabel(events[index]['verification'] as String?).replaceFirst(' · ', '')} · 点击查看来源',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xff9a7629),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (index != events.length - 1)
+              const Divider(
+                height: 1,
+                indent: 16,
+                endIndent: 16,
+                color: Color(0xfff0dca7),
+              ),
           ],
         ],
       ),

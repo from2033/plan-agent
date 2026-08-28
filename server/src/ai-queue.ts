@@ -287,6 +287,12 @@ export function getLatestAiJob(userId: string, kind: AiJobKind): AiJob | null {
   return row ? rowToJob(row) : null;
 }
 
+export function getLatestCompletedAiJob(userId: string, kind: AiJobKind): AiJob | null {
+  const row = db.prepare("SELECT * FROM ai_jobs WHERE user_id=? AND kind=? AND status='COMPLETE' ORDER BY created_at DESC LIMIT 1")
+    .get(userId, kind) as unknown as JobRow | undefined;
+  return row ? rowToJob(row) : null;
+}
+
 export function findActiveSummaryJob(
   userId: string,
   scope: string,

@@ -59,6 +59,8 @@ interface SectionDefinition {
   id: string;
   title: string;
   query?: string;
+  discoveryQueries?: string[];
+  discoveryMaxAgeDays?: number;
   priorityTerms: string[];
   whyItMatters: string;
   watchNext: string;
@@ -75,6 +77,12 @@ const sections: SectionDefinition[] = [
     id: "gold_impact",
     title: "世界变化对黄金的影响",
     query: "黄金 OR 美联储 OR 美债 OR 美元 OR 地缘冲突 OR 央行购金 when:2d",
+    discoveryQueries: [
+      "(黄金 OR 金价) (美联储 OR 美债 OR 美元 OR 通胀 OR 央行购金) when:2d",
+      "(gold OR bullion) (Federal Reserve OR Treasury yields OR central bank buying) when:2d",
+      "(战争 OR 制裁 OR 关税 OR 能源) (黄金 OR 避险) when:2d",
+    ],
+    discoveryMaxAgeDays: 3,
     priorityTerms: [
       "黄金", "金价", "美联储", "美债", "美元", "降息", "加息", "通胀",
       "央行购金", "冲突", "停火",
@@ -86,6 +94,13 @@ const sections: SectionDefinition[] = [
     id: "china_housing",
     title: "中国房价与楼市走势",
     query: "中国房价 OR 楼市 OR 房地产政策 OR 二手房 OR 新房 when:7d",
+    discoveryQueries: [
+      "个人住房贷款 最长 40年 when:3d",
+      "(房贷 OR 个人住房贷款 OR 首付 OR 公积金) (央行 OR 金融监管总局 OR 住建部) when:3d",
+      "(房地产新政 OR 楼市政策 OR 住房政策) 中国 when:3d",
+      "(房价 OR 二手房 OR 新房 OR 成交 OR 库存) 中国 when:7d",
+    ],
+    discoveryMaxAgeDays: 7,
     priorityTerms: [
       "房价", "楼市", "二手房", "新房", "成交", "库存", "房地产政策", "公积金",
       "一线城市", "核心城市",
@@ -97,6 +112,11 @@ const sections: SectionDefinition[] = [
     id: "nanjing_housing",
     title: "南京房价与楼市走势",
     query: "南京房价 OR 南京楼市 OR 南京二手房 OR 南京新房 OR 南京房地产政策 when:14d",
+    discoveryQueries: [
+      "南京 (房贷 OR 公积金 OR 购房政策 OR 房地产新政) when:14d",
+      "南京 (二手房 OR 新房 OR 房价 OR 成交 OR 挂牌 OR 土拍) when:14d",
+    ],
+    discoveryMaxAgeDays: 14,
     priorityTerms: [
       "南京", "房价", "二手房", "新房", "成交", "挂牌", "库存", "土拍",
       "公积金", "购房政策",
@@ -108,6 +128,12 @@ const sections: SectionDefinition[] = [
     id: "china_programmer_jobs",
     title: "中国程序员市场与职场",
     query: "(程序员 OR 软件开发工程师 OR IT招聘) (就业 OR 招聘 OR 薪资 OR 裁员 OR 职场) 中国 when:7d",
+    discoveryQueries: [
+      "中国 (程序员 OR 软件工程师 OR 开发者) (招聘 OR 裁员 OR 薪资 OR 就业) when:7d",
+      "(AI招聘 OR 人工智能岗位 OR 大模型人才 OR 应届生招聘) 中国 when:7d",
+      "(developer jobs OR software engineer hiring OR tech layoffs) China when:7d",
+    ],
+    discoveryMaxAgeDays: 10,
     priorityTerms: [
       "程序员", "软件开发", "工程师", "招聘", "就业", "岗位", "薪资", "裁员",
       "校招", "社招", "外包", "技能",
@@ -119,6 +145,14 @@ const sections: SectionDefinition[] = [
     id: "ai_development",
     title: "AI产业与技术发展",
     query: "人工智能 OR AI大模型 OR 智能体 OR AI芯片 OR 具身智能 OR 机器人 when:2d",
+    discoveryQueries: [
+      "(Dario Amodei OR Anthropic CEO) (essay OR longform OR views OR viral) when:14d",
+      "(Anthropic OR OpenAI OR Google DeepMind OR 英伟达 OR Meta AI) when:3d",
+      "(AI大模型 OR 智能体 OR AI芯片 OR 机器人 OR 具身智能) when:3d",
+      "(AI长文 OR AI观点 OR 阅读量 OR 围观 OR 爆火) when:7d",
+      "(AI essay OR AI launch OR AI research OR AI viral) when:3d",
+    ],
+    discoveryMaxAgeDays: 4,
     priorityTerms: [
       "人工智能", "AI", "大模型", "智能体", "芯片", "算力", "机器人", "开源",
       "应用", "产业",
@@ -130,6 +164,12 @@ const sections: SectionDefinition[] = [
     id: "international",
     title: "国际上真正重要的变化",
     query: "国际局势 OR 地缘政治 OR 全球经济 OR 国际贸易 OR 能源危机 when:2d",
+    discoveryQueries: [
+      "(战争 OR 停火 OR 制裁 OR 关税 OR 能源 OR 供应链) 国际 when:3d",
+      "(global economy OR geopolitics OR sanctions OR tariffs OR energy) when:3d",
+      "(美国 OR 欧盟 OR 俄罗斯 OR 中东 OR 日本) (政策 OR 经济 OR 冲突) when:3d",
+    ],
+    discoveryMaxAgeDays: 3,
     priorityTerms: [
       "冲突", "战争", "停火", "制裁", "关税", "贸易", "经济", "能源", "供应链",
       "选举", "政策",
@@ -250,13 +290,28 @@ function feedUrl(definition: SectionDefinition): string {
   return url.toString();
 }
 
-async function fetchSection(definition: SectionDefinition): Promise<WorldPulseSection> {
-  const response = await fetch(feedUrl(definition), {
+function queryFeedUrl(query: string): string {
+  return feedUrl({
+    id: "discovery",
+    title: "discovery",
+    query,
+    priorityTerms: [],
+    whyItMatters: "",
+    watchNext: "",
+  });
+}
+
+async function fetchNewsQuery(query: string): Promise<WorldNewsItem[]> {
+  const response = await fetch(queryFeedUrl(query), {
     headers: { "user-agent": "Daynote/1.0 personal-news-reader" },
     signal: AbortSignal.timeout(12_000),
   });
   if (!response.ok) throw new Error(`news_feed_${response.status}`);
-  const parsed = parseGoogleNewsRss(await response.text());
+  return parseGoogleNewsRss(await response.text());
+}
+
+async function fetchSection(definition: SectionDefinition): Promise<WorldPulseSection> {
+  const parsed = await fetchNewsQuery(definition.query || "");
   const seen = new Set<string>();
   const items = parsed
     .filter(item => {
@@ -402,37 +457,9 @@ function withAnalysis(pulse: WorldPulse): WorldPulse {
 
 function withDiscovery(pulse: WorldPulse): WorldPulse {
   if (!discovery) return pulse;
-  const bySection = new Map<string, WorldPulseDiscovery["events"]>();
-  for (const event of discovery.events) {
-    const values = bySection.get(event.sectionId) || [];
-    values.push(event);
-    bySection.set(event.sectionId, values);
-  }
   return {
     ...pulse,
-    overview: pulse.overview || discovery.overview,
-    sections: pulse.sections.map(section => {
-      const discovered = bySection.get(section.id) || [];
-      if (!discovered.length) return section;
-      const existingKeys = new Set(section.items.map(item => item.title.replace(/\s+/g, "").toLowerCase()));
-      const extra = discovered.flatMap(event => {
-        const key = event.title.replace(/\s+/g, "").toLowerCase();
-        if (existingKeys.has(key)) return [];
-        const source = event.sources[0];
-        return [{
-          title: event.title,
-          source: source.publisher,
-          url: source.url,
-          publishedAt: source.publishedAt || discovery!.discoveredAt,
-          context: event.summary,
-          verification: event.verification,
-        } satisfies WorldNewsItem];
-      });
-      return {
-        ...section,
-        items: [...extra, ...section.items].slice(0, 8),
-      };
-    }),
+    overview: discovery.overview,
   };
 }
 
@@ -462,6 +489,46 @@ export function worldPulseDiscoveryInput(pulse: WorldPulse, dayKey: string): unk
       headlines: section.items.map(item => item.title),
     })),
   };
+}
+
+export async function buildWorldPulseDiscoveryInput(pulse: WorldPulse, dayKey: string): Promise<unknown> {
+  const grouped = await Promise.all(sections.map(async definition => {
+    const queries = definition.discoveryQueries?.length
+      ? definition.discoveryQueries
+      : [definition.query || ""];
+    const results = await Promise.allSettled(queries.map(fetchNewsQuery));
+    const seen = new Set<string>();
+    const cutoff = Date.parse(pulse.updatedAt) - (definition.discoveryMaxAgeDays || 7) * 86_400_000;
+    const candidates = results.flatMap(result => result.status === "fulfilled" ? result.value.slice(0, 4) : [])
+      .filter(item => {
+        const key = item.title.replace(/\s+/g, "").toLowerCase();
+        if (!key || seen.has(key) || Date.parse(item.publishedAt) < cutoff) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 8);
+    return { sectionId: definition.id, title: definition.title, candidates };
+  }));
+  const policyCandidates = pulse.sections
+    .filter(section => section.id === "china_policy" || section.id === "china_policy_preview")
+    .map(section => ({
+      sectionId: section.id,
+      title: section.title,
+      candidates: section.items.filter(item => section.id === "china_policy_preview"
+        || Date.parse(item.publishedAt) >= Date.parse(pulse.updatedAt) - 7 * 86_400_000),
+    }));
+  return {
+    dayKey,
+    currentTime: pulse.updatedAt,
+    locale: "zh-CN",
+    audience: "居住在中国南京的普通用户",
+    selectionGoal: "从候选中选出今天真正值得普通人知道的变化，优先直接影响生活、资产、工作与未来趋势的事件",
+    candidateGroups: [...grouped, ...policyCandidates],
+  };
+}
+
+export function currentWorldPulseDiscovery(): { dayKey: string; value: WorldPulseDiscovery } | null {
+  return discovery ? { dayKey: discoveryDayKey, value: discovery } : null;
 }
 
 export function worldPulseAnalysisRequest(pulse: WorldPulse): {

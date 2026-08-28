@@ -97,6 +97,7 @@ test("runInference falls back to Codex when Ollama is unavailable", async () => 
 
 test("daily input uses the small model while complex jobs use the large model", () => {
   assert.equal(ollamaModelForJob({ kind: "ingest" }), "qwen3:4b");
+  assert.equal(ollamaModelForJob({ kind: "world_discovery" }), "qwen3:4b");
   assert.equal(ollamaModelForJob({ kind: "summary" }), "qwen3:14b");
   assert.equal(ollamaModelForJob({ kind: "document" }), "qwen3:14b");
   assert.equal(ollamaModelForJob({ kind: "document_question" }), "qwen3:14b");
