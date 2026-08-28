@@ -2480,15 +2480,28 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   String categoryOf(Map<String, dynamic> document) {
     final result = document['result'] as Map<String, dynamic>?;
     final category = result?['category'] as String? ?? '其他';
-    final searchable = [
-      documentTitle(document),
-      result?['summary'] as String? ?? '',
-      ...(document['notes'] as List<dynamic>? ?? const []).whereType<String>(),
-    ].join(' ');
-    if (searchable.contains('错题')) return '错题';
-    if (searchable.contains('会议录音') || searchable.contains('谈话录音')) {
-      return '会议录音';
+    final mimeType = document['mimeType'] as String? ?? '';
+    if (mimeType.startsWith('audio/')) return '会议录音';
+
+    final title = documentTitle(document);
+    final summary = result?['summary'] as String? ?? '';
+    final notes = (document['notes'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .join(' ');
+    final explicitlyNotAMistake = RegExp(
+      r'不是错题|并非错题|非错题|误分.{0,6}错题|不要.{0,6}错题',
+    ).hasMatch('$title $notes');
+    final explicitlyMarkedAsMistake =
+        !explicitlyNotAMistake &&
+        (title.contains('错题') || RegExp(r'错题|做错|答错|错因|错误答案').hasMatch(notes));
+    final hasExerciseEvidence = RegExp(
+      r'题目|解题|作答|错因|错误答案|正确答案|计算题|选择题|填空题|得分',
+    ).hasMatch('$title $summary $notes');
+    if (explicitlyMarkedAsMistake ||
+        (category == '错题' && hasExerciseEvidence)) {
+      return '错题';
     }
+    if (category == '错题') return '其他';
     return category;
   }
 
