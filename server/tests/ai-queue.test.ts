@@ -16,6 +16,7 @@ const {
   enqueueAiJob,
   failAiJob,
   getAiJob,
+  getLatestAiJob,
 } = await import("../src/ai-queue.js");
 
 test("资料问题和回答在任务数据库中加密，读取时可正常解密", () => {
@@ -111,6 +112,40 @@ test("全球趋势分析输入和结果加密存储且结构受校验", () => {
   };
   completeAiJob(job.id, claimed!.leaseToken, result);
   assert.deepEqual(getAiJob(job.id, "world-pulse-system")?.result, result);
+});
+
+test("每日全网巡检结果加密保存并可按类型读取最新任务", () => {
+  const job = enqueueAiJob("world-pulse-system", "world_discovery", {
+    dayKey: "2026-08-29",
+    knownHeadlines: [],
+  }, 60);
+  const inspection = new DatabaseSync(process.env.DB_PATH!);
+  const queued = inspection.prepare("SELECT input_json FROM ai_jobs WHERE id=?")
+    .get(job.id) as unknown as { input_json: string };
+  assert.match(queued.input_json, /^enc1:/);
+  const claimed = claimAiJob("test-worker");
+  assert.equal(claimed?.job.id, job.id);
+  const result = {
+    overview: "补充发现一条需要核验的住房政策变化。",
+    events: [{
+      sectionId: "china_policy_preview",
+      title: "个人住房贷款期限调整进入公开讨论",
+      summary: "媒体报道了调整方向，但尚未找到正式生效文件。",
+      whyItMatters: "可能影响月供和总利息。",
+      watchNext: "等待监管部门正式文件。",
+      verification: "single_source",
+      sources: [{
+        title: "相关报道",
+        publisher: "示例媒体",
+        url: "https://example.com/housing",
+        publishedAt: "2026-08-29T01:00:00.000Z",
+      }],
+    }],
+    discoveredAt: "2026-08-29T02:00:00.000Z",
+  };
+  completeAiJob(job.id, claimed!.leaseToken, result);
+  assert.deepEqual(getLatestAiJob("world-pulse-system", "world_discovery")?.result, result);
+  inspection.close();
 });
 
 test("研究主题和报告加密存储且必须有可核对来源", () => {

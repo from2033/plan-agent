@@ -3,6 +3,8 @@ export interface WorldNewsItem {
   source: string;
   url: string;
   publishedAt: string;
+  context?: string;
+  verification?: "official" | "multi_source" | "single_source" | "unverified";
 }
 
 export interface WorldPulseSection {
@@ -32,6 +34,25 @@ export interface WorldPulseAnalysis {
     outlook: string;
     action: string;
   }>;
+}
+
+export interface WorldPulseDiscovery {
+  overview: string;
+  events: Array<{
+    sectionId: string;
+    title: string;
+    summary: string;
+    whyItMatters: string;
+    watchNext: string;
+    verification: "official" | "multi_source" | "single_source" | "unverified";
+    sources: Array<{
+      title: string;
+      publisher: string;
+      url: string;
+      publishedAt: string;
+    }>;
+  }>;
+  discoveredAt: string;
 }
 
 interface SectionDefinition {
@@ -127,6 +148,8 @@ let analysisHash = "";
 let analysis: WorldPulseAnalysis | null = null;
 let queuedAnalysisHash = "";
 let queuedAnalysisAt = 0;
+let discoveryDayKey = "";
+let discovery: WorldPulseDiscovery | null = null;
 
 function decodeXml(value: string): string {
   return value
@@ -351,6 +374,7 @@ function analysisFingerprint(pulse: WorldPulse): string {
 }
 
 function withAnalysis(pulse: WorldPulse): WorldPulse {
+  pulse = withDiscovery(pulse);
   const hash = analysisFingerprint(pulse);
   if (!analysis || analysisHash !== hash) {
     return {
@@ -376,6 +400,70 @@ function withAnalysis(pulse: WorldPulse): WorldPulse {
   };
 }
 
+function withDiscovery(pulse: WorldPulse): WorldPulse {
+  if (!discovery) return pulse;
+  const bySection = new Map<string, WorldPulseDiscovery["events"]>();
+  for (const event of discovery.events) {
+    const values = bySection.get(event.sectionId) || [];
+    values.push(event);
+    bySection.set(event.sectionId, values);
+  }
+  return {
+    ...pulse,
+    overview: pulse.overview || discovery.overview,
+    sections: pulse.sections.map(section => {
+      const discovered = bySection.get(section.id) || [];
+      if (!discovered.length) return section;
+      const existingKeys = new Set(section.items.map(item => item.title.replace(/\s+/g, "").toLowerCase()));
+      const extra = discovered.flatMap(event => {
+        const key = event.title.replace(/\s+/g, "").toLowerCase();
+        if (existingKeys.has(key)) return [];
+        const source = event.sources[0];
+        return [{
+          title: event.title,
+          source: source.publisher,
+          url: source.url,
+          publishedAt: source.publishedAt || discovery!.discoveredAt,
+          context: event.summary,
+          verification: event.verification,
+        } satisfies WorldNewsItem];
+      });
+      return {
+        ...section,
+        items: [...extra, ...section.items].slice(0, 8),
+      };
+    }),
+  };
+}
+
+export function saveWorldPulseDiscovery(dayKey: string, value: WorldPulseDiscovery): void {
+  discoveryDayKey = dayKey;
+  discovery = value;
+}
+
+export function currentWorldPulseDiscoveryDay(): string {
+  return discoveryDayKey;
+}
+
+export function worldPulseDiscoveryInput(pulse: WorldPulse, dayKey: string): unknown {
+  return {
+    dayKey,
+    currentTime: pulse.updatedAt,
+    locale: "zh-CN",
+    audience: "居住在中国南京的普通用户",
+    interests: [
+      "世界变化对黄金的影响", "中国房价与楼市", "南京房价与楼市",
+      "中国程序员就业和职场", "AI产业与技术", "中国正式政策",
+      "可能出台的中国政策", "影响中国与全球经济的国际重大事件",
+    ],
+    knownHeadlines: pulse.sections.map(section => ({
+      sectionId: section.id,
+      title: section.title,
+      headlines: section.items.map(item => item.title),
+    })),
+  };
+}
+
 export function worldPulseAnalysisRequest(pulse: WorldPulse): {
   hash: string;
   input: unknown;
@@ -395,6 +483,8 @@ export function worldPulseAnalysisRequest(pulse: WorldPulse): {
           title: item.title,
           source: item.source,
           publishedAt: item.publishedAt,
+          context: item.context,
+          verification: item.verification,
         })),
       })),
     },

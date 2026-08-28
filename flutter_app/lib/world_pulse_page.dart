@@ -41,7 +41,9 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
 
   void scheduleAnalysisRefresh() {
     analysisTimer?.cancel();
-    if (data?['analysisStatus'] == 'PROCESSING') {
+    if (data?['analysisStatus'] == 'PROCESSING' ||
+        data?['discoveryStatus'] == 'QUEUED' ||
+        data?['discoveryStatus'] == 'PROCESSING') {
       analysisTimer = Timer(const Duration(seconds: 5), refresh);
     }
   }
@@ -165,6 +167,30 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                     ),
                   ),
                   const SizedBox(height: 10),
+                  if (data?['discoveryStatus'] == 'QUEUED' ||
+                      data?['discoveryStatus'] == 'PROCESSING') ...[
+                    const Row(
+                      children: [
+                        SizedBox(
+                          width: 13,
+                          height: 13,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.8,
+                            color: Color(0xffd1d5db),
+                          ),
+                        ),
+                        SizedBox(width: 7),
+                        Text(
+                          '正在进行今日全网巡检…',
+                          style: TextStyle(
+                            color: Color(0xffd1d5db),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   Text(
                     '更新于 ${timeLabel(data?['updatedAt'] as String?)}${data?['stale'] == true ? ' · 部分来源暂未更新' : ''}',
                     style: const TextStyle(
@@ -296,9 +322,23 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                               height: 1.35,
                             ),
                           ),
+                          if ((items[index]['context'] as String? ?? '')
+                              .isNotEmpty) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              items[index]['context'] as String,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xff5f5a53),
+                                fontSize: 12,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 5),
                           Text(
-                            '${items[index]['source'] ?? '来源'} · ${timeLabel(items[index]['publishedAt'] as String?)}',
+                            '${items[index]['source'] ?? '来源'} · ${timeLabel(items[index]['publishedAt'] as String?)}${_verificationLabel(items[index]['verification'] as String?)}',
                             style: const TextStyle(
                               color: Color(0xff8a8680),
                               fontSize: 11,
@@ -324,6 +364,14 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
       ),
     );
   }
+
+  String _verificationLabel(String? value) => switch (value) {
+    'official' => ' · 一手来源核验',
+    'multi_source' => ' · 多来源核验',
+    'single_source' => ' · 单一来源',
+    'unverified' => ' · 尚待核实',
+    _ => '',
+  };
 
   Widget _insightLine(String label, String value) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,

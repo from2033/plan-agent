@@ -61,6 +61,7 @@ import {
   failAiJob,
   findActiveSummaryJob,
   getAiJob,
+  getLatestAiJob,
   heartbeatAiJob,
   getLeasedAiJob,
   validWorkerToken,
@@ -89,11 +90,15 @@ import {
   reviewMistake,
 } from "./mistakes.js";
 import {
+  currentWorldPulseDiscoveryDay,
   getWorldPulse,
   markWorldPulseAnalysisQueued,
   saveWorldPulseAnalysis,
+  saveWorldPulseDiscovery,
   worldPulseAnalysisRequest,
+  worldPulseDiscoveryInput,
   type WorldPulseAnalysis,
+  type WorldPulseDiscovery,
 } from "./world-pulse.js";
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -379,6 +384,14 @@ function scheduledDateFor(
 }
 
 function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
+  if (job.kind === "world_discovery") {
+    const dayKey = String((job.input as { dayKey?: unknown }).dayKey || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
+      throw new Error("world_discovery_day_missing");
+    }
+    saveWorldPulseDiscovery(dayKey, value as WorldPulseDiscovery);
+    return value;
+  }
   if (job.kind === "world_pulse") {
     const fingerprint = String((job.input as { fingerprint?: unknown }).fingerprint || "");
     if (!fingerprint) throw new Error("world_pulse_fingerprint_missing");
@@ -655,13 +668,39 @@ app.use(API, requireAuth);
 app.get(`${API}/world-pulse`, async (req, res) => {
   try {
     let pulse = await getWorldPulse(req.query.refresh === "1");
-    const request = worldPulseAnalysisRequest(pulse);
+    const dayKey = shanghaiDate(new Date().toISOString());
+    let discoveryJob = getLatestAiJob("world-pulse-system", "world_discovery");
+    let discoveryJobDay = String((discoveryJob?.input as { dayKey?: unknown } | undefined)?.dayKey || "");
+    if (
+      discoveryJob?.status === "COMPLETE" &&
+      discoveryJobDay === dayKey &&
+      discoveryJob.result &&
+      currentWorldPulseDiscoveryDay() !== dayKey
+    ) {
+      saveWorldPulseDiscovery(dayKey, discoveryJob.result as WorldPulseDiscovery);
+      pulse = await getWorldPulse();
+    }
+    if (codexQueueEnabled() && discoveryJobDay !== dayKey) {
+      discoveryJob = enqueueAiJob(
+        "world-pulse-system",
+        "world_discovery",
+        worldPulseDiscoveryInput(pulse, dayKey),
+        60,
+      );
+      discoveryJobDay = dayKey;
+    }
+    const discoveryPending = discoveryJobDay === dayKey &&
+      (discoveryJob?.status === "QUEUED" || discoveryJob?.status === "PROCESSING");
+    const request = discoveryPending ? null : worldPulseAnalysisRequest(pulse);
     if (request && codexQueueEnabled()) {
       enqueueAiJob("world-pulse-system", "world_pulse", request.input, 55);
       markWorldPulseAnalysisQueued(request.hash);
       pulse = await getWorldPulse();
     }
-    res.json(pulse);
+    res.json({
+      ...pulse,
+      discoveryStatus: discoveryJobDay === dayKey ? discoveryJob?.status : undefined,
+    });
   } catch (error) {
     console.error("[world pulse] 新闻聚合失败:", error);
     res.status(502).json({ error: "暂时无法获取全球新闻，请稍后重试" });
