@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'api_client.dart';
 import 'document_audio_player.dart';
 import 'models.dart';
+import 'persistent_meeting_recorder.dart';
 import 'reminder_service.dart';
 import 'voice_service.dart';
 
@@ -551,6 +552,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final VoiceService voice = VoiceService(widget.api);
+  late final PersistentMeetingRecorder meetingRecorder =
+      PersistentMeetingRecorder(widget.api);
   final ReminderService reminders = ReminderService();
   List<AssistantEntry> entries = [];
   int tab = 0;
@@ -582,6 +585,34 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     refresh();
+    if (!widget.isGuest) unawaited(_recoverMeetingRecordings());
+  }
+
+  Future<void> _recoverMeetingRecordings() async {
+    try {
+      final recovered = await meetingRecorder.recoverPending();
+      for (final result in recovered) {
+        final timestamp = DateFormat(
+          'yyyyMMdd-HHmmss',
+        ).format(result.createdAt);
+        await widget.api.uploadDocument(
+          fileName: '会议录音-$timestamp.wav',
+          mimeType: 'audio/wav',
+          bytes: result.wav,
+          note: result.transcript.isEmpty
+              ? '会议/谈话录音。App 意外结束后已恢复原始录音。'
+              : '会议/谈话录音恢复转写：\n${result.transcript}',
+        );
+        await meetingRecorder.markUploaded(result.sessionId);
+      }
+      if (mounted && recovered.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已恢复并归档 ${recovered.length} 段意外中断的录音')),
+        );
+      }
+    } catch (_) {
+      // Keep durable local files and retry on the next launch.
+    }
   }
 
   Future<void> refresh() async {
@@ -1077,6 +1108,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _disposing = true;
     voice.dispose();
+    meetingRecorder.dispose();
     super.dispose();
   }
 
@@ -1473,6 +1505,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ? KnowledgePane(
                   key: ValueKey(_knowledgeRevision),
                   api: widget.api,
+                  meetingRecorder: meetingRecorder,
                 )
               : wishes.isEmpty
               ? const Center(
@@ -2155,22 +2188,27 @@ class _ReportSection extends StatelessWidget {
 }
 
 class KnowledgePane extends StatefulWidget {
-  const KnowledgePane({super.key, required this.api});
+  const KnowledgePane({
+    super.key,
+    required this.api,
+    required this.meetingRecorder,
+  });
 
   final ApiClient api;
+  final PersistentMeetingRecorder meetingRecorder;
 
   @override
   State<KnowledgePane> createState() => _KnowledgePaneState();
 }
 
 class _KnowledgePaneState extends State<KnowledgePane> {
-  late final VoiceService meetingVoice = VoiceService(widget.api);
   List<KnowledgeItem> items = [];
   List<Map<String, dynamic>> documents = [];
   bool loading = true;
   bool uploading = false;
   bool meetingRecording = false;
   bool meetingSaving = false;
+  int meetingProcessedChunks = 0;
   DateTime? meetingStartedAt;
   Duration meetingElapsed = Duration.zero;
   Timer? meetingTimer;
@@ -2183,13 +2221,17 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   @override
   void initState() {
     super.initState();
+    meetingRecording = widget.meetingRecorder.isRecording;
+    meetingStartedAt = widget.meetingRecorder.startedAt;
+    if (meetingRecording) {
+      _startMeetingTimer();
+    }
     load();
   }
 
   @override
   void dispose() {
     meetingTimer?.cancel();
-    unawaited(meetingVoice.dispose());
     super.dispose();
   }
 
@@ -2269,7 +2311,11 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         return;
       }
       try {
-        await meetingVoice.start();
+        await widget.meetingRecorder.start(
+          onProgress: (count) {
+            if (mounted) setState(() => meetingProcessedChunks = count);
+          },
+        );
         if (mounted) {
           setState(() {
             meetingRecording = true;
@@ -2277,13 +2323,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
             meetingElapsed = Duration.zero;
             error = null;
           });
-          meetingTimer?.cancel();
-          meetingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-            if (!mounted || meetingStartedAt == null) return;
-            setState(() {
-              meetingElapsed = DateTime.now().difference(meetingStartedAt!);
-            });
-          });
+          _startMeetingTimer();
         }
       } catch (exception) {
         if (mounted) setState(() => error = exception.toString());
@@ -2297,32 +2337,13 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     });
     meetingTimer?.cancel();
     try {
-      final audio = await meetingVoice.stopRecording();
-      String transcript = '';
-      String? transcriptionWarning;
-      try {
-        transcript = await meetingVoice.transcribeLong(audio);
-      } catch (exception) {
-        transcriptionWarning = exception.toString();
-      }
-      final timestamp = DateFormat('yyyyMMdd-HHmmss').format(DateTime.now());
-      await widget.api.uploadDocument(
-        fileName: '会议录音-$timestamp.wav',
-        mimeType: 'audio/wav',
-        bytes: Uint8List.fromList(audio),
-        note: transcript.isEmpty
-            ? '会议/谈话录音。转写暂时失败，请保留原始录音以便后续处理。'
-            : '会议/谈话录音自动转写：\n$transcript',
-      );
+      final result = await widget.meetingRecorder.stop();
+      await _archiveRecording(result);
       await load();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              transcriptionWarning == null ? '录音和转写已保存到资料库' : '录音已保存，本次转写失败',
-            ),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('录音和边录边生成的转写已保存')));
       }
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
@@ -2332,9 +2353,33 @@ class _KnowledgePaneState extends State<KnowledgePane> {
           meetingSaving = false;
           meetingStartedAt = null;
           meetingElapsed = Duration.zero;
+          meetingProcessedChunks = 0;
         });
       }
     }
+  }
+
+  void _startMeetingTimer() {
+    meetingTimer?.cancel();
+    meetingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || meetingStartedAt == null) return;
+      setState(() {
+        meetingElapsed = DateTime.now().difference(meetingStartedAt!);
+      });
+    });
+  }
+
+  Future<void> _archiveRecording(PersistentMeetingResult result) async {
+    final timestamp = DateFormat('yyyyMMdd-HHmmss').format(result.createdAt);
+    await widget.api.uploadDocument(
+      fileName: '会议录音-$timestamp.wav',
+      mimeType: 'audio/wav',
+      bytes: result.wav,
+      note: result.transcript.isEmpty
+          ? '会议/谈话录音。转写暂时失败，原始录音已保留。'
+          : '会议/谈话录音自动转写：\n${result.transcript}',
+    );
+    await widget.meetingRecorder.markUploaded(result.sessionId);
   }
 
   Future<String?> requestUploadNote(String fileName) async {
@@ -2667,7 +2712,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          '${_durationLabel(meetingElapsed)} · 锁屏或切换 App 仍会继续录音',
+                          '${_durationLabel(meetingElapsed)} · 已后台处理 $meetingProcessedChunks 段 · 锁屏仍继续',
                           style: const TextStyle(
                             fontSize: 11,
                             color: Color(0xffb42318),

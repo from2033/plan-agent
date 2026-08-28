@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:assistant/models.dart';
+import 'package:assistant/persistent_meeting_recorder.dart';
 import 'package:assistant/voice_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -108,4 +109,23 @@ void main() {
     expect(ByteData.sublistView(chunks.first).getUint32(40, Endian.little), 50);
     expect(ByteData.sublistView(chunks.last).getUint32(40, Endian.little), 20);
   });
+
+  test(
+    'persistent PCM becomes a valid WAV and splits without losing bytes',
+    () {
+      final pcm = Uint8List.fromList(List<int>.generate(125, (index) => index));
+      final chunks = splitPcm(pcm, chunkSeconds: 1, bytesPerSecond: 50);
+      final rebuilt = chunks.expand((chunk) => chunk).toList();
+      final wav = pcmToWav(pcm);
+
+      expect(chunks.map((chunk) => chunk.length), [50, 50, 25]);
+      expect(rebuilt, pcm);
+      expect(String.fromCharCodes(wav.sublist(0, 4)), 'RIFF');
+      expect(
+        ByteData.sublistView(wav).getUint32(40, Endian.little),
+        pcm.length,
+      );
+      expect(wav.sublist(44), pcm);
+    },
+  );
 }
