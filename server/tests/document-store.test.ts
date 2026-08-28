@@ -12,6 +12,7 @@ process.env.DB_ENCRYPTION_KEY = crypto.randomBytes(32).toString("base64");
 
 const {
   appendDocumentNote,
+  completeDocument,
   findDuplicateDocument,
   readDocumentUpload,
   resolveDocumentEvidence,
@@ -42,6 +43,8 @@ test("录音原文只能由所属账号完整读取", () => {
   const stored = storeDocumentUpload("user-1", "会议.wav", "audio/wav", content);
   assert.deepEqual(readDocumentUpload(stored.id, "user-1")?.content, content);
   assert.equal(readDocumentUpload(stored.id, "user-2"), null);
+  completeDocument(stored.id, "user-1", { title: "会议" });
+  assert.deepEqual(readDocumentUpload(stored.id, "user-1")?.content, content);
 });
 
 test("Mac 本地资料可幂等登记且不会保存原始文件内容", () => {

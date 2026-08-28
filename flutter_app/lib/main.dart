@@ -2233,6 +2233,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   DateTime? meetingStartedAt;
   Duration meetingElapsed = Duration.zero;
   Timer? meetingTimer;
+  Timer? documentRefreshTimer;
   String? error;
   String documentCategory = '全部';
   static const documentChannel = MethodChannel(
@@ -2253,7 +2254,21 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   @override
   void dispose() {
     meetingTimer?.cancel();
+    documentRefreshTimer?.cancel();
     super.dispose();
+  }
+
+  void scheduleDocumentRefresh() {
+    documentRefreshTimer?.cancel();
+    if (!documents.any(
+      (document) =>
+          document['status'] == 'QUEUED' || document['status'] == 'PROCESSING',
+    )) {
+      return;
+    }
+    documentRefreshTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) unawaited(load());
+    });
   }
 
   Future<void> load() async {
@@ -2270,6 +2285,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
           pendingRecordingCount = values[2] as int;
           error = null;
         });
+        scheduleDocumentRefresh();
       }
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
@@ -2535,12 +2551,25 @@ class _KnowledgePaneState extends State<KnowledgePane> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                documentTitle(document),
-                style: const TextStyle(
-                  fontSize: 21,
-                  fontWeight: FontWeight.w800,
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      documentTitle(document),
+                      style: const TextStyle(
+                        fontSize: 21,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
               ),
               const SizedBox(height: 7),
               Text(
@@ -2561,6 +2590,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                 DocumentAudioPlayer(
                   api: widget.api,
                   documentId: document['id'] as String,
+                  byteSize: (document['byteSize'] as num?)?.toInt() ?? 0,
                 ),
               _detailLine('原文件', document['fileName'] as String? ?? '资料'),
               if (warnings.isNotEmpty) _detailLine('识别提示', warnings.join('\n')),

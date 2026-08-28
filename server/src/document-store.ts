@@ -219,14 +219,19 @@ export function listDocuments(userId: string): StoredDocument[] {
 export function readDocumentUpload(id: string, userId: string): { document: StoredDocument; content: Buffer } | null {
   const document = getDocument(id, userId);
   if (!document) return null;
-  const stored = fs.readFileSync(uploadPath(id));
+  const path = uploadPath(id);
+  if (!fs.existsSync(path)) return null;
+  const stored = fs.readFileSync(path);
   return { document, content: decryptBuffer(stored) };
 }
 
 export function completeDocument(id: string, userId: string, result: unknown): void {
+  const document = getDocument(id, userId);
   db.prepare("UPDATE documents SET status='COMPLETE',result_json=?,error=NULL,updated_at=? WHERE id=? AND user_id=?")
     .run(encField(JSON.stringify(result)), new Date().toISOString(), id, userId);
-  fs.rmSync(uploadPath(id), { force: true });
+  if (!document?.mimeType.startsWith("audio/")) {
+    fs.rmSync(uploadPath(id), { force: true });
+  }
 }
 
 export function failDocument(id: string, userId: string, error: string): void {

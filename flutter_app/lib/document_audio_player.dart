@@ -11,10 +11,12 @@ class DocumentAudioPlayer extends StatefulWidget {
     super.key,
     required this.api,
     required this.documentId,
+    required this.byteSize,
   });
 
   final ApiClient api;
   final String documentId;
+  final int byteSize;
 
   @override
   State<DocumentAudioPlayer> createState() => _DocumentAudioPlayerState();
@@ -34,6 +36,11 @@ class _DocumentAudioPlayerState extends State<DocumentAudioPlayer> {
   @override
   void initState() {
     super.initState();
+    if (widget.byteSize > 44) {
+      duration = Duration(
+        milliseconds: ((widget.byteSize - 44) * 1000 / 32000).round(),
+      );
+    }
     subscriptions.add(
       player.positionStream.listen((value) {
         if (mounted) setState(() => position = value);
@@ -56,23 +63,33 @@ class _DocumentAudioPlayerState extends State<DocumentAudioPlayer> {
     );
   }
 
+  Future<void> prepare() async {
+    if (prepared || loading) return;
+    try {
+      setState(() {
+        loading = true;
+        error = null;
+      });
+      final bytes = await widget.api.downloadDocument(widget.documentId);
+      final file = File(
+        '${Directory.systemTemp.path}/daynote-audio-${widget.documentId}.wav',
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      temporaryFile = file;
+      await player.setFilePath(file.path);
+      prepared = true;
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+      rethrow;
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   Future<void> toggle() async {
     if (loading) return;
     try {
-      if (!prepared) {
-        setState(() {
-          loading = true;
-          error = null;
-        });
-        final bytes = await widget.api.downloadDocument(widget.documentId);
-        final file = File(
-          '${Directory.systemTemp.path}/daynote-audio-${widget.documentId}.wav',
-        );
-        await file.writeAsBytes(bytes, flush: true);
-        temporaryFile = file;
-        await player.setFilePath(file.path);
-        prepared = true;
-      }
+      await prepare();
       if (player.playing) {
         await player.pause();
       } else {
