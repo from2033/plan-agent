@@ -113,6 +113,40 @@ test("全球趋势分析输入和结果加密存储且结构受校验", () => {
   assert.deepEqual(getAiJob(job.id, "world-pulse-system")?.result, result);
 });
 
+test("研究主题和报告加密存储且必须有可核对来源", () => {
+  const job = enqueueAiJob("user-1", "research", {
+    reportId: "2b472924-15cc-4676-8d3d-f5f947e574fa",
+    query: "湿疹是怎么回事",
+  }, 70);
+  const inspection = new DatabaseSync(process.env.DB_PATH!);
+  const queued = inspection.prepare("SELECT input_json FROM ai_jobs WHERE id=?")
+    .get(job.id) as unknown as { input_json: string };
+  assert.match(queued.input_json, /^enc1:/);
+  assert.doesNotMatch(queued.input_json, /湿疹/);
+  const claimed = claimAiJob("test-worker");
+  assert.equal(claimed?.job.id, job.id);
+  const result = {
+    title: "湿疹原理与日常调整",
+    topicType: "medical",
+    executiveSummary: "湿疹是一类常见的炎症性皮肤问题。",
+    keyTakeaways: ["与皮肤屏障和免疫反应有关"],
+    sections: [
+      { heading: "原理", content: "皮肤屏障受损可能参与其中。" },
+      { heading: "调整", content: "注意保湿并识别刺激因素。" },
+    ],
+    practicalActions: ["记录可能诱因"],
+    cautions: ["不替代个人诊断"],
+    sources: [
+      { title: "Eczema", publisher: "WHO", url: "https://www.who.int/health-topics/eczema", publishedAt: "" },
+      { title: "Atopic dermatitis", publisher: "NHS", url: "https://www.nhs.uk/conditions/atopic-eczema/", publishedAt: "" },
+    ],
+    researchedAt: "2026-08-28T14:00:00.000Z",
+  };
+  completeAiJob(job.id, claimed!.leaseToken, result);
+  assert.deepEqual(getAiJob(job.id, "user-1")?.result, result);
+  inspection.close();
+});
+
 test.after(() => {
   fs.rmSync(temporaryDir, { recursive: true, force: true });
 });

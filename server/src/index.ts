@@ -44,7 +44,7 @@ import {
   type AssistantClock,
 } from "./entry-date.js";
 import type { Entry } from "./types.js";
-import { knowledgeIntentHint, type IntentHint } from "./intent.js";
+import { knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
 import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import { privacyPageHtml } from "./privacy-page.js";
@@ -69,6 +69,7 @@ import {
   bindDocumentJob,
   appendDocumentNote,
   completeDocument,
+  createResearchDocument,
   deleteUserDocuments,
   discardDocument,
   failDocument,
@@ -383,6 +384,15 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     saveWorldPulseAnalysis(fingerprint, value as WorldPulseAnalysis);
     return value;
   }
+  if (job.kind === "research") {
+    const reportId = String((job.input as { reportId?: unknown })?.reportId || "");
+    const report = getDocument(reportId, job.userId);
+    if (!report || report.storageKind !== "research") {
+      throw new Error("research_report_missing");
+    }
+    completeDocument(reportId, job.userId, value);
+    return value;
+  }
   if (job.kind === "document") {
     const documentId = String((job.input as { documentId?: unknown })?.documentId || "");
     if (!documentId) throw new Error("document_id_missing");
@@ -570,11 +580,13 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
     res.status(409).json({ error: "invalid_or_expired_lease" });
     return;
   }
-  if (leased?.kind === "document") {
+  if (leased?.kind === "document" || leased?.kind === "research") {
     const current = getAiJob(leased.id, leased.userId);
     if (current?.status === "FAILED") {
       failDocument(
-        String((leased.input as { documentId?: unknown })?.documentId || ""),
+        String((leased.input as { documentId?: unknown; reportId?: unknown })?.documentId
+          || (leased.input as { reportId?: unknown })?.reportId
+          || ""),
         leased.userId,
         current.error || "document_processing_failed",
       );
@@ -1005,6 +1017,40 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     return;
   }
   try {
+    const topic = researchTopic(raw);
+    if (topic) {
+      if (isGuestUser(req.userId)) {
+        res.status(403).json({ error: "请先登录后再创建后台研究报告" });
+        return;
+      }
+      if (!codexQueueEnabled()) {
+        res.status(503).json({ error: "后台研究服务尚未就绪" });
+        return;
+      }
+      const document = createResearchDocument(req.userId!, topic);
+      try {
+        const job = enqueueAiJob(req.userId!, "research", {
+          reportId: document.id,
+          query: topic,
+          originalRequest: raw,
+          requestedAt: new Date().toISOString(),
+          locale: "zh-CN",
+          audience: "中国普通用户",
+        }, 70);
+        bindDocumentJob(document.id, req.userId!, job.id);
+        res.status(201).json({
+          kind: "research",
+          reportId: document.id,
+          jobId: job.id,
+          status: "QUEUED",
+          title: `研究报告：${topic}`,
+        });
+      } catch (error) {
+        discardDocument(document.id, req.userId!);
+        throw error;
+      }
+      return;
+    }
     const intentHint = knowledgeIntentHint(raw);
     if (codexWorkerOnline()) {
       const knowledge = knowledgeFromRequest(req);

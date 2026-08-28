@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { knowledgeIntentHint } from "../src/intent.js";
+import { knowledgeIntentHint, researchTopic } from "../src/intent.js";
 
 test("知识库的常见语音误识别仍识别为保存", () => {
   assert.equal(knowledgeIntentHint("记录到芝士库红烧肉一开始不能放盐。"), "save");
@@ -16,4 +16,14 @@ test("个人临时安排不会误存知识库", () => {
   assert.equal(knowledgeIntentHint("我今天不能去公司。"), undefined);
   assert.equal(knowledgeIntentHint("明天不要忘记买菜。"), undefined);
   assert.equal(knowledgeIntentHint("刚才做了红烧肉。"), undefined);
+});
+
+test("显式研究指令提取主题但不拦截个人资料查询", () => {
+  assert.equal(
+    researchTopic("帮我研究下湿疹是怎么回事，原理和怎么调整"),
+    "湿疹是怎么回事，原理和怎么调整",
+  );
+  assert.equal(researchTopic("帮我查一下现在黄金上涨的原因"), "现在黄金上涨的原因");
+  assert.equal(researchTopic("帮我查一下我的资料里的租赁合同"), null);
+  assert.equal(researchTopic("今天吃了什么"), null);
 });

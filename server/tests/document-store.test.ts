@@ -13,6 +13,7 @@ process.env.DB_ENCRYPTION_KEY = crypto.randomBytes(32).toString("base64");
 const {
   appendDocumentNote,
   completeDocument,
+  createResearchDocument,
   findDuplicateDocument,
   readDocumentUpload,
   resolveDocumentEvidence,
@@ -45,6 +46,15 @@ test("录音原文只能由所属账号完整读取", () => {
   assert.equal(readDocumentUpload(stored.id, "user-2"), null);
   completeDocument(stored.id, "user-1", { title: "会议" });
   assert.deepEqual(readDocumentUpload(stored.id, "user-1")?.content, content);
+});
+
+test("后台研究任务以加密报告资料形式保存", () => {
+  const report = createResearchDocument("user-1", "湿疹原理与日常调整");
+  assert.equal(report.storageKind, "research");
+  assert.equal(report.status, "QUEUED");
+  assert.equal(report.mimeType, "application/vnd.daynote.research+json");
+  completeDocument(report.id, "user-1", { title: "湿疹研究报告" });
+  assert.equal(readDocumentUpload(report.id, "user-1"), null);
 });
 
 test("Mac 本地资料可幂等登记且不会保存原始文件内容", () => {

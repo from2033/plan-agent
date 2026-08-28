@@ -55,7 +55,7 @@ export interface StoredDocument {
   result: unknown | null;
   notes: string[];
   error: string | null;
-  storageKind: "uploaded" | "local";
+  storageKind: "uploaded" | "local" | "research";
   createdAt: string;
   updatedAt: string;
 }
@@ -100,7 +100,11 @@ function rowToDocument(row: DocumentRow): StoredDocument {
     result: row.result_json ? JSON.parse(decField(row.result_json)) : null,
     notes: row.notes_json ? JSON.parse(decField(row.notes_json)) : [],
     error: row.error,
-    storageKind: row.storage_kind === "local" ? "local" : "uploaded",
+    storageKind: row.storage_kind === "local"
+      ? "local"
+      : row.storage_kind === "research"
+        ? "research"
+        : "uploaded",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -181,6 +185,25 @@ export function storeDocumentUpload(
       content.length,
       contentHash,
       encField(JSON.stringify(userNote ? [userNote] : [])),
+      now,
+      now,
+    );
+  return getDocument(id, userId)!;
+}
+
+export function createResearchDocument(userId: string, topic: string): StoredDocument {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const title = topic.length > 80 ? `${topic.slice(0, 80)}…` : topic;
+  db.prepare(`INSERT INTO documents
+    (id,user_id,file_name,mime_type,byte_size,status,notes_json,storage_kind,created_at,updated_at)
+    VALUES (?,?,?,?,0,'QUEUED',?,'research',?,?)`)
+    .run(
+      id,
+      userId,
+      encField(`研究报告：${title}`),
+      "application/vnd.daynote.research+json",
+      encField("[]"),
       now,
       now,
     );

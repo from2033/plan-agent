@@ -818,6 +818,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(const SnackBar(content: Text('已存入个人知识库')));
+        } else if (result['kind'] == 'research') {
+          setState(() => _knowledgeRevision += 1);
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('已开始后台研究，完成后可在资料库查看')));
         } else if (result['kind'] == 'ask') {
           final answer = result['answer'] as String?;
           if (answer != null && answer.isNotEmpty) {
@@ -2326,6 +2331,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   Duration meetingElapsed = Duration.zero;
   Timer? meetingTimer;
   Timer? documentRefreshTimer;
+  bool hasLoadedDocuments = false;
   String? error;
   String documentCategory = '全部';
   static const documentChannel = MethodChannel(
@@ -2371,12 +2377,33 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         widget.meetingRecorder.pendingCount(),
       ]);
       if (mounted) {
+        final completedResearchIds = hasLoadedDocuments
+            ? (values[1] as List<Map<String, dynamic>>)
+                  .where(
+                    (document) =>
+                        _isResearch(document) &&
+                        document['status'] == 'COMPLETE' &&
+                        documents.any(
+                          (previous) =>
+                              previous['id'] == document['id'] &&
+                              previous['status'] != 'COMPLETE',
+                        ),
+                  )
+                  .map((document) => document['id'])
+                  .toList()
+            : const <dynamic>[];
         setState(() {
           items = values[0] as List<KnowledgeItem>;
           documents = values[1] as List<Map<String, dynamic>>;
           pendingRecordingCount = values[2] as int;
           error = null;
+          hasLoadedDocuments = true;
         });
+        if (completedResearchIds.isNotEmpty) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('研究报告已完成，可以打开查看')));
+        }
         scheduleDocumentRefresh();
       }
     } catch (e) {
@@ -2569,7 +2596,12 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         '资料';
   }
 
+  bool _isResearch(Map<String, dynamic> document) =>
+      document['mimeType'] == 'application/vnd.daynote.research+json' ||
+      document['storageKind'] == 'research';
+
   String categoryOf(Map<String, dynamic> document) {
+    if (_isResearch(document)) return '研究报告';
     final result = document['result'] as Map<String, dynamic>?;
     final category = result?['category'] as String? ?? '其他';
     final mimeType = document['mimeType'] as String? ?? '';
@@ -2633,7 +2665,215 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     }
   }
 
+  Widget _researchBullet(String text, {Color? color}) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 7),
+          child: Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(
+              color: color ?? const Color(0xffd97706),
+              shape: BoxShape.circle,
+            ),
+          ),
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: SelectableText(text, style: const TextStyle(height: 1.5)),
+        ),
+      ],
+    ),
+  );
+
+  void _showResearchDocument(Map<String, dynamic> document) {
+    final result = document['result'] as Map<String, dynamic>?;
+    final status = document['status'] as String? ?? 'QUEUED';
+    final takeaways = (result?['keyTakeaways'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toList();
+    final sections = (result?['sections'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    final actions = (result?['practicalActions'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toList();
+    final cautions = (result?['cautions'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toList();
+    final sources = (result?['sources'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: .92,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(22, 0, 22, 30),
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.science_outlined, color: Color(0xff7c3aed)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      result?['title'] as String? ?? documentTitle(document),
+                      style: const TextStyle(
+                        fontSize: 21,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              if (status != 'COMPLETE') ...[
+                const SizedBox(height: 50),
+                Center(
+                  child: Column(
+                    children: [
+                      if (status == 'FAILED')
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          size: 42,
+                          color: Color(0xffdc2626),
+                        )
+                      else
+                        const CircularProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text(
+                        status == 'FAILED'
+                            ? '研究暂未完成，请稍后重新发起'
+                            : 'GPT-5.6 Sol 正在搜索、核对和整理资料…',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Color(0xff716b63)),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 8),
+                Text(
+                  '研究完成于 ${result?['researchedAt'] ?? ''}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xff8a8680),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xfffff7ed),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: SelectableText(
+                    result?['executiveSummary'] as String? ?? '',
+                    style: const TextStyle(fontSize: 15, height: 1.6),
+                  ),
+                ),
+                if (takeaways.isNotEmpty) ...[
+                  const SizedBox(height: 22),
+                  const Text(
+                    '先看结论',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 10),
+                  for (final item in takeaways) _researchBullet(item),
+                ],
+                for (final section in sections) ...[
+                  const SizedBox(height: 20),
+                  Text(
+                    section['heading'] as String? ?? '详细分析',
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    section['content'] as String? ?? '',
+                    style: const TextStyle(
+                      height: 1.65,
+                      color: Color(0xff44403c),
+                    ),
+                  ),
+                ],
+                if (actions.isNotEmpty) ...[
+                  const SizedBox(height: 22),
+                  const Text(
+                    '可以怎么做',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 10),
+                  for (final item in actions)
+                    _researchBullet(item, color: const Color(0xff16a34a)),
+                ],
+                if (cautions.isNotEmpty) ...[
+                  const SizedBox(height: 22),
+                  const Text(
+                    '注意与边界',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 10),
+                  for (final item in cautions)
+                    _researchBullet(item, color: const Color(0xffdc2626)),
+                ],
+                if (sources.isNotEmpty) ...[
+                  const SizedBox(height: 22),
+                  Text(
+                    '核对来源（${sources.length}）',
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  for (final source in sources)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.open_in_new_rounded, size: 19),
+                      title: Text(source['title'] as String? ?? '来源'),
+                      subtitle: Text(
+                        [source['publisher'], source['publishedAt']]
+                            .whereType<String>()
+                            .where((value) => value.isNotEmpty)
+                            .join(' · '),
+                      ),
+                      onTap: () {
+                        final uri = Uri.tryParse(
+                          source['url'] as String? ?? '',
+                        );
+                        if (uri != null) {
+                          launchUrl(uri, mode: LaunchMode.externalApplication);
+                        }
+                      },
+                    ),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void showDocument(Map<String, dynamic> document) {
+    if (_isResearch(document)) {
+      _showResearchDocument(document);
+      return;
+    }
     final result = document['result'] as Map<String, dynamic>? ?? const {};
     final people = (result['people'] as List<dynamic>? ?? const [])
         .cast<String>();
@@ -2797,6 +3037,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   Widget build(BuildContext context) {
     final categories = <String>{
       '全部',
+      if (documents.any(_isResearch)) '研究报告',
       '错题',
       '会议录音',
       ...documents
@@ -2831,7 +3072,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          '资料、报告、合同和孩子错题都从这里上传。拍照后说一两句，大模型会自动识别内容、知识点和用途。',
+                          '资料、研究报告、合同和孩子错题都保存在这里。说“帮我研究…”后，报告会在后台完成。',
                           style: TextStyle(
                             color: Color(0xff8f4f0b),
                             height: 1.45,
@@ -3020,9 +3261,13 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                         ),
                         child: Row(
                           children: [
-                            const Icon(
-                              Icons.description_outlined,
-                              color: Color(0xff8b5e34),
+                            Icon(
+                              _isResearch(document)
+                                  ? Icons.science_outlined
+                                  : Icons.description_outlined,
+                              color: _isResearch(document)
+                                  ? const Color(0xff7c3aed)
+                                  : const Color(0xff8b5e34),
                             ),
                             const SizedBox(width: 11),
                             Expanded(

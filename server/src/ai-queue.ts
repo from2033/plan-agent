@@ -7,10 +7,10 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 6;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-08-28.1";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 7;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-08-28.2";
 
-export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse";
+export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse" | "research";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
 
 export interface AiJob {
@@ -139,6 +139,26 @@ const WorldPulseResultSchema = z.object({
   })).min(1).max(8),
 });
 
+const ResearchResultSchema = z.object({
+  title: z.string().min(1).max(200),
+  topicType: z.enum(["medical", "finance", "legal", "policy", "technology", "general"]),
+  executiveSummary: z.string().min(1).max(2_000),
+  keyTakeaways: z.array(z.string().min(1).max(500)).min(1).max(10),
+  sections: z.array(z.object({
+    heading: z.string().min(1).max(100),
+    content: z.string().min(1).max(4_000),
+  })).min(2).max(10),
+  practicalActions: z.array(z.string().min(1).max(500)).max(10),
+  cautions: z.array(z.string().min(1).max(500)).max(10),
+  sources: z.array(z.object({
+    title: z.string().min(1).max(300),
+    publisher: z.string().min(1).max(120),
+    url: z.string().url().max(2_000),
+    publishedAt: z.string().max(40),
+  })).min(2).max(20),
+  researchedAt: z.string().min(1).max(40),
+});
+
 export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "ingest") return IngestResultSchema.parse(value);
   if (kind === "correct") return CorrectResultSchema.parse(value);
@@ -146,6 +166,7 @@ export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "document_question") return DocumentQuestionResultSchema.parse(value);
   if (kind === "document_note") return DocumentNoteResultSchema.parse(value);
   if (kind === "world_pulse") return WorldPulseResultSchema.parse(value);
+  if (kind === "research") return ResearchResultSchema.parse(value);
   return SummaryResultSchema.parse(value);
 }
 
@@ -222,7 +243,7 @@ export function enqueueAiJob(
       id,
       userId,
       kind,
-      kind === "document" || kind === "document_question" || kind === "document_note" || kind === "world_pulse"
+      kind === "document" || kind === "document_question" || kind === "document_note" || kind === "world_pulse" || kind === "research"
         ? encField(JSON.stringify(input))
         : JSON.stringify(input),
       priority,
@@ -320,7 +341,7 @@ export function completeAiJob(
   const currentJob = rowToJob(row);
   const result = finalize ? finalize(currentJob, validated) : validated;
   const now = new Date().toISOString();
-  const storedResult = row.kind === "document" || row.kind === "document_question" || row.kind === "document_note" || row.kind === "world_pulse"
+  const storedResult = row.kind === "document" || row.kind === "document_question" || row.kind === "document_note" || row.kind === "world_pulse" || row.kind === "research"
     ? encField(JSON.stringify(result))
     : JSON.stringify(result);
   db.prepare(`UPDATE ai_jobs SET status='COMPLETE',result_json=?,lease_hash=NULL,lease_until=NULL,
