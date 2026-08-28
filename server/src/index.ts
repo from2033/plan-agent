@@ -39,6 +39,7 @@ import {
   inferReminderTimeFromText,
   inferTimeRangeFromText,
   isFutureObligation,
+  normalizeScheduledDescription,
   reminderTimeAt,
   reminderTimestamp,
   type AssistantClock,
@@ -526,6 +527,9 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
       ? { time: reminderClock || "", timestamp: reminderAt }
       : entryTiming(input.raw, date, timeRange, clock, i, now);
     const scheduledDate = scheduledDateFor(date, reminderAt, timeRange, clock);
+    if (scheduledDate) {
+      entryFields.description = normalizeScheduledDescription(entryFields.description);
+    }
     return {
       id: `ai-${job.id}-${i}`,
       raw: input.raw,
@@ -992,6 +996,12 @@ app.get(`${API}/entries`, (req, res) => {
     ) {
       entry = clearEntryScheduledDate(entry.id, req.userId!) || entry;
     }
+    if (entry.scheduledDate || entry.reminderAt) {
+      entry = {
+        ...entry,
+        description: normalizeScheduledDescription(entry.description),
+      };
+    }
     if (entry.reminderAt || entry.done) return entry;
     const reminderTime = /^\d{2}:\d{2}$/.test(entry.time)
       ? entry.time
@@ -1004,7 +1014,10 @@ app.get(`${API}/entries`, (req, res) => {
       reminderAt = reminderTimestamp(entry.raw, undefined, reminderTime, clock);
     }
     if (!reminderAt || new Date(reminderAt).getTime() <= now) return entry;
-    return repairEntryReminder(entry.id, req.userId!, reminderTime, reminderAt) || entry;
+    const repaired = repairEntryReminder(entry.id, req.userId!, reminderTime, reminderAt);
+    return repaired
+      ? { ...repaired, description: normalizeScheduledDescription(repaired.description) }
+      : entry;
   });
   res.json(entries);
 });
@@ -1131,6 +1144,9 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         : undefined;
       const reminderClock = reminderAt ? reminderTimeAt(reminderAt) : undefined;
       const scheduledDate = scheduledDateFor(date, reminderAt, timeRange, clock);
+      if (scheduledDate) {
+        entryFields.description = normalizeScheduledDescription(entryFields.description);
+      }
       return {
         id: crypto.randomUUID(),
         raw,

@@ -19,7 +19,7 @@ class ReminderService {
           (entry) => {
             'id': entry.id,
             'title': '备忘提醒',
-            'body': entry.description,
+            'body': entry.displayDescription,
             'date': entry.reminderAt!.toUtc().toIso8601String(),
           },
         )

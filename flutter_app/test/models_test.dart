@@ -70,9 +70,24 @@ void main() {
 
     expect(restored.id, original.id);
     expect(restored.type, EntryType.memo);
-    expect(restored.description, '明早吃药');
+    expect(original.displayDescription, '吃药');
+    expect(restored.description, '吃药');
     expect(restored.scheduledDate, '2026-07-22');
     expect(restored.reminderAt?.toUtc(), original.reminderAt?.toUtc());
+  });
+
+  test('scheduled descriptions hide stale relative dates', () {
+    final entry = AssistantEntry.fromJson({
+      'id': 'entry-relative-date',
+      'type': 'memo',
+      'description': '明天带孩子理发',
+      'category': '备忘',
+      'scheduledDate': '2026-08-29',
+      'timestamp': '2026-08-29T04:00:00.000Z',
+    });
+
+    expect(entry.displayDescription, '带孩子理发');
+    expect(entry.toJson()['description'], '带孩子理发');
   });
 
   test('guest knowledge survives a local JSON round trip', () {

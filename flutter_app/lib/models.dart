@@ -33,6 +33,20 @@ class AssistantEntry {
 
   bool get hasTimeRange => timeStart != null && timeEnd != null;
 
+  String get displayDescription {
+    if (scheduledDate == null && reminderAt == null) return description;
+    final normalized = description
+        .trim()
+        .replaceFirst(
+          RegExp(
+            r'^(?:请\s*)?(?:(?:提醒我|记得|别忘(?:了)?)(?:在)?\s*)?(?:大后天|后天|明天|明日|明早|明晚|明晨|今天|今日|今早|今晚|今晨|(?:本|这|下|下下)(?:周|星期|礼拜)(?:[一二三四五六日天])?)\s*[，,、:：-]?\s*',
+          ),
+          '',
+        )
+        .trim();
+    return normalized.isEmpty ? description.trim() : normalized;
+  }
+
   factory AssistantEntry.fromJson(Map<String, dynamic> json) {
     final timeRange = json['timeRange'] as Map<String, dynamic>?;
     return AssistantEntry(
@@ -60,7 +74,7 @@ class AssistantEntry {
   Map<String, dynamic> toJson() => {
     'id': id,
     'type': type.name,
-    'description': description,
+    'description': displayDescription,
     'category': category,
     'timestamp': timestamp.toUtc().toIso8601String(),
     'time': time,

@@ -1040,7 +1040,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除这条记录？'),
-        content: Text(entry.description),
+        content: Text(entry.displayDescription),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1075,7 +1075,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('标记为已完成？'),
-          content: Text(entry.description),
+          content: Text(entry.displayDescription),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -3781,7 +3781,7 @@ class EntryCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  entry.description,
+                  entry.displayDescription,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,

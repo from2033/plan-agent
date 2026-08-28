@@ -400,7 +400,7 @@ class ApiClient {
               (entry) => {
                 'type': entry.type.name,
                 'category': entry.category,
-                'description': entry.description,
+                'description': entry.displayDescription,
                 if (entry.amount != null) 'amount': entry.amount,
                 if (entry.hasTimeRange)
                   'timeRange': {'start': entry.timeStart, 'end': entry.timeEnd},

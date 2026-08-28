@@ -91,6 +91,17 @@ export function hasExplicitDateExpression(raw: string): boolean {
   return /(?:今天|今日|明天|明日|后天|大后天|(?:本|这|下|下下)?(?:周|星期|礼拜)[一二三四五六日天]|20\d{2}[\u5e74/-]\d{1,2}[\u6708/-]\d{1,2}[日号]?|\d{1,2}月\d{1,2}[日号])/.test(raw);
 }
 
+// 日期已经结构化保存后，展示文案不应继续保留会随时间失效的“今天/明天”。
+// 只清理句首日期，避免误伤“准备好明天的材料”这类把相对日期作为宾语的描述。
+export function normalizeScheduledDescription(description: string): string {
+  const original = description.trim();
+  const normalized = original.replace(
+    /^(?:请\s*)?(?:(?:提醒我|记得|别忘(?:了)?)(?:在)?\s*)?(?:大后天|后天|明天|明日|明早|明晚|明晨|今天|今日|今早|今晚|今晨|(?:本|这|下|下下)(?:周|星期|礼拜)(?:[一二三四五六日天])?)\s*[，,、:：-]?\s*/,
+    "",
+  ).trim();
+  return normalized || original;
+}
+
 function normalizeHour(hour: number, period: string | undefined): number {
   if (period === "晚上" || period === "今晚" || period === "夜里") {
     if (hour === 12) return 0;

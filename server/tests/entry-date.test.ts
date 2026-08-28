@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isFutureObligation,
   hasExplicitDateExpression,
+  normalizeScheduledDescription,
   reminderTimeAt,
   reminderTimestamp,
   type AssistantClock,
@@ -68,6 +69,13 @@ test("只接受用户真正说出的日期", () => {
   assert.equal(hasExplicitDateExpression("今天把平安好车主礼包用了"), true);
   assert.equal(hasExplicitDateExpression("下周一交材料"), true);
   assert.equal(hasExplicitDateExpression("9月3日交材料"), true);
+});
+
+test("结构化日期后的展示文案不保留会过期的相对日期", () => {
+  assert.equal(normalizeScheduledDescription("明天带孩子理发"), "带孩子理发");
+  assert.equal(normalizeScheduledDescription("提醒我下周一交材料"), "交材料");
+  assert.equal(normalizeScheduledDescription("今晚12点需要上线"), "12点需要上线");
+  assert.equal(normalizeScheduledDescription("准备好明天的材料"), "准备好明天的材料");
 });
 
 test("有日期没时间的必做事项仍然是待办但不生成闹钟", () => {
