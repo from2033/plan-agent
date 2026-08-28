@@ -567,13 +567,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final List<_PendingVoiceTask> pendingTasks = [];
   int _nextPendingId = 1;
   int _knowledgeRevision = 0;
-  int librarySection = 0;
+  bool showCompletedTodos = false;
   DateTime selectedDate = DateUtils.dateOnly(DateTime.now());
   Future<void>? _voiceStart;
   DateTime? _pressStartedAt;
   bool _voiceReady = false;
   bool _disposing = false;
-  bool deletingAccount = false;
   bool _recoveringMeetingRecordings = false;
   Map<String, dynamic>? worldPulse;
   bool worldPulseLoading = false;
@@ -582,7 +581,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   static const List<(String, IconData)> tabs = [
     ('首页', Icons.mic_none_rounded),
-    ('提醒', Icons.alarm_rounded),
+    ('待办', Icons.checklist_rounded),
     ('资料库', Icons.folder_copy_outlined),
     ('我的', Icons.person_outline_rounded),
   ];
@@ -812,7 +811,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (result['kind'] == 'save') {
           setState(() {
             tab = 2;
-            librarySection = 0;
             _knowledgeRevision += 1;
           });
           ScaffoldMessenger.of(
@@ -867,96 +865,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return transcribing ? '录音上传或语音识别失败，请重新录入' : '信息处理失败，请稍后重试';
   }
 
-  void showHelp() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: const Color(0xfff5f4f0),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: .78,
-        minChildSize: .5,
-        maxChildSize: .94,
-        builder: (context, scrollController) => ListView(
-          controller: scrollController,
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-          children: const [
-            Center(
-              child: SizedBox(
-                width: 38,
-                child: Divider(thickness: 4, color: Color(0xffcfcabf)),
-              ),
-            ),
-            SizedBox(height: 8),
-            Text(
-              '使用帮助',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-            ),
-            SizedBox(height: 6),
-            Text(
-              '你只管自然地说，App 会判断你的意图并完成记录、提醒、保存或查询。',
-              style: TextStyle(color: Color(0xff716b63), fontSize: 14),
-            ),
-            SizedBox(height: 22),
-            _HelpItem(
-              icon: Icons.cloud_done_outlined,
-              title: '访客模式与登录',
-              description:
-                  '不登录也能使用语音记录、分类、提醒、知识库和报表，内容只保存在这台手机。登录后会把已有访客内容自动迁移到账号并保存到云端，换设备也能恢复。',
-            ),
-            _HelpItem(
-              icon: Icons.mic_rounded,
-              title: '怎么开始',
-              description:
-                  '按住底部橙色按钮开始说话，完整说完后再松开。松开后语音会自动转成文字并处理；处理中也可以继续录入下一条。',
-            ),
-            _HelpItem(
-              icon: Icons.auto_awesome_rounded,
-              title: '自动整理记录',
-              description:
-                  'App 会根据内容自动放进行程、账单、备忘或心愿，不需要你先选分类。例如：“明天下午去健身”会成为行程；“午饭花了 38 元”会成为账单；“想去冰岛看极光”会成为心愿。',
-            ),
-            _HelpItem(
-              icon: Icons.alarm_rounded,
-              title: '备忘会自动创建闹钟',
-              description:
-                  '说出要做的事和明确时间，例如“明早八点提醒我吃药”。App 会自动识别为备忘，并在 iPhone 上创建对应时间的系统闹钟；不支持闹钟的系统会改用带声音的通知。首次使用时请允许闹钟或通知权限。',
-            ),
-            _HelpItem(
-              icon: Icons.lightbulb_outline_rounded,
-              title: '保存到个人知识库',
-              description:
-                  '想长期保存方法、经验或资料时，可以说“保存到知识库：番茄炒蛋要先把鸡蛋炒熟盛出”。App 会整理标题和正文，之后可在“知识”页查看或删除。',
-            ),
-            _HelpItem(
-              icon: Icons.question_answer_outlined,
-              title: '直接提问，自动检索全部资料',
-              description:
-                  '通过底部语音按钮直接提问，App 会自动判断并检索个人知识笔记和 Mac 上的家庭资料。例如：“番茄炒蛋怎么做来着？”“这次门诊开了哪些药？”或“租赁合同什么时候到期？”',
-            ),
-            _HelpItem(
-              icon: Icons.calendar_month_outlined,
-              title: '查看日期和报表',
-              description:
-                  '点顶部日期可选择某一天，左右箭头切换前后日期。点右上方趋势图标可查看所选日期的日报，以及所在月份的月报。',
-            ),
-            _HelpItem(
-              icon: Icons.error_outline_rounded,
-              title: '语音没有处理怎么办',
-              description:
-                  '每条语音下方会显示“识别语音中”“信息处理中”等状态。若失败，红色提示会说明具体原因；网络或识别失败时请重新录入，显示“后台处理中”时稍后下拉刷新即可。',
-              isLast: true,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void queueStopVoice() {
     Timer.run(() {
       if (mounted && !_disposing) stopVoice();
@@ -967,72 +875,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await voice.dispose();
     await widget.api.logout();
     widget.onLogout();
-  }
-
-  Future<void> confirmDeleteAccount() async {
-    if (deletingAccount) return;
-    final understood = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('删除账户？'),
-        content: const Text('你的全部记录、知识库、报表和云端账户数据将被永久删除，所有设备也会退出登录。此操作无法撤销。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('继续删除'),
-          ),
-        ],
-      ),
-    );
-    if (understood != true || !mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('最后确认'),
-        content: const Text('确定永久删除账户及全部数据吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('保留账户'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('永久删除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    setState(() {
-      deletingAccount = true;
-      error = null;
-    });
-    try {
-      await widget.api.deleteAccount();
-      try {
-        await reminders.sync(const []);
-      } catch (_) {
-        // The account is already deleted; reminder cleanup must not make the
-        // user think the server operation failed.
-      }
-      if (mounted) widget.onLogout();
-    } catch (exception) {
-      if (mounted) {
-        setState(() {
-          deletingAccount = false;
-          error = exception.toString();
-        });
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(exception.toString())));
-      }
-    }
   }
 
   Future<void> confirmDeleteEntry(AssistantEntry entry) async {
@@ -1148,22 +990,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void openReport() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xfff5f4f0),
-      builder: (context) => FractionallySizedBox(
-        heightFactor: .9,
-        child: ReportPane(
-          api: widget.api,
-          entries: entries,
-          selectedDate: selectedDate,
-        ),
-      ),
-    );
-  }
-
   @override
   void dispose() {
     _disposing = true;
@@ -1203,8 +1029,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildPageHeader() {
-    const titles = ['今天', '提醒', '资料库', '我的'];
-    const subtitles = ['说一句，我来记录和查询', '确认不会忘记的事', '长期保存的资料与知识', '账号、权限与数据'];
+    const titles = ['今天', '待办', '资料库', '我的'];
+    const subtitles = ['说一句，我来记录和查询', '把没做完的事情理清楚', '长期保存的资料与知识', '心愿与账号'];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
       child: Row(
@@ -1241,12 +1067,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               tooltip: '世界趋势与中国政策',
               icon: const Icon(Icons.public_rounded),
-            ),
-          if (tab == 0)
-            IconButton(
-              onPressed: openReport,
-              tooltip: '日报与月报',
-              icon: const Icon(Icons.insights_rounded),
             ),
           IconButton(
             onPressed: tab == 0 ? refreshHome : refresh,
@@ -1406,7 +1226,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             )
           else
-            for (final entry in undatedTodos) ...[
+            for (final entry in undatedTodos.take(3)) ...[
               EntryCard(
                 entry: entry,
                 reminderScheduled: false,
@@ -1415,6 +1235,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 9),
             ],
+          if (undatedTodos.length > 3)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => setState(() => tab = 1),
+                child: Text('还有 ${undatedTodos.length - 3} 项，查看全部'),
+              ),
+            ),
         ],
       ),
     );
@@ -1465,123 +1293,173 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  List<Widget> _todoSection(
+    String title,
+    List<AssistantEntry> values, {
+    Color? titleColor,
+    String? description,
+  }) {
+    if (values.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 18, bottom: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$title  ${values.length}',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: titleColor,
+              ),
+            ),
+            if (description != null) ...[
+              const SizedBox(height: 3),
+              Text(
+                description,
+                style: const TextStyle(fontSize: 11, color: Color(0xff8a8680)),
+              ),
+            ],
+          ],
+        ),
+      ),
+      for (final entry in values) ...[
+        EntryCard(
+          entry: entry,
+          reminderScheduled: scheduledReminderIds.contains(entry.id),
+          onToggleDone: () => toggleEntryDone(entry),
+          onDelete: () => confirmDeleteEntry(entry),
+        ),
+        const SizedBox(height: 9),
+      ],
+    ];
+  }
+
   Widget _buildReminderPage() {
-    final now = DateTime.now();
-    final active =
-        entries
-            .where((entry) => entry.type == EntryType.memo && !entry.done)
-            .toList()
-          ..sort((a, b) {
-            if (a.reminderAt == null && b.reminderAt == null) {
-              return b.timestamp.compareTo(a.timestamp);
-            }
-            if (a.reminderAt == null) return 1;
-            if (b.reminderAt == null) return -1;
-            return a.reminderAt!.compareTo(b.reminderAt!);
-          });
-    final completed = entries
-        .where((entry) => entry.type == EntryType.memo && entry.done)
-        .toList()
-        .reversed
+    final todayKey = _dateKey(DateTime.now());
+    final active = entries
+        .where((entry) => entry.type == EntryType.memo && !entry.done)
         .toList();
+    final overdue =
+        active.where((entry) {
+          final date = _scheduledDateOf(entry);
+          return date != null && date.compareTo(todayKey) < 0;
+        }).toList()..sort(
+          (a, b) =>
+              (_scheduledDateOf(a) ?? '').compareTo(_scheduledDateOf(b) ?? ''),
+        );
+    final today =
+        active.where((entry) => _scheduledDateOf(entry) == todayKey).toList()
+          ..sort(
+            (a, b) => (a.reminderAt ?? a.timestamp).compareTo(
+              b.reminderAt ?? b.timestamp,
+            ),
+          );
+    final upcoming =
+        active.where((entry) {
+          final date = _scheduledDateOf(entry);
+          return date != null && date.compareTo(todayKey) > 0;
+        }).toList()..sort(
+          (a, b) => (a.reminderAt ?? a.timestamp).compareTo(
+            b.reminderAt ?? b.timestamp,
+          ),
+        );
+    final undated =
+        active.where((entry) => _scheduledDateOf(entry) == null).toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final completed =
+        entries
+            .where((entry) => entry.type == EntryType.memo && entry.done)
+            .toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final scheduled = active
         .where((entry) => scheduledReminderIds.contains(entry.id))
         .length;
-    final untimed = active.where((entry) => entry.reminderAt == null).length;
-    final modeLabel = reminderSyncMode == 'alarmkit'
-        ? 'iPhone 系统闹钟'
-        : reminderSyncMode == 'notification'
-        ? '系统通知'
-        : reminderSyncMode == 'denied'
-        ? '系统权限未开启'
-        : '尚无可安排提醒';
+    final hasActive = active.isNotEmpty;
+
     return RefreshIndicator(
       onRefresh: refresh,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
         children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xffffead5),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.verified_rounded,
-                      color: Color(0xffb45f06),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '$scheduled 个提醒已安排',
+          if (scheduled > 0 || reminderSyncMode == 'denied')
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xffffead5),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    reminderSyncMode == 'denied'
+                        ? Icons.notifications_off_outlined
+                        : Icons.alarm_on_rounded,
+                    size: 18,
+                    color: const Color(0xffb45f06),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      reminderSyncMode == 'denied'
+                          ? '系统提醒权限未开启'
+                          : '$scheduled 个系统提醒已安排',
                       style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
+                        color: Color(0xff8f4f0b),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '$modeLabel · $untimed 条无时间待办',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xff8f4f0b),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const Padding(
-            padding: EdgeInsets.only(top: 18, bottom: 8),
-            child: Text(
-              '即将提醒与待办',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-            ),
-          ),
-          if (active.isEmpty)
+          if (!hasActive)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 36),
+              padding: EdgeInsets.symmetric(vertical: 70),
               child: Center(
                 child: Text(
-                  '当前没有未完成的提醒',
+                  '没有未完成的待办',
                   style: TextStyle(color: Color(0xff8a8680)),
                 ),
               ),
-            )
-          else
-            for (final entry in active) ...[
-              EntryCard(
-                entry: entry,
-                reminderScheduled: scheduledReminderIds.contains(entry.id),
-                onToggleDone: () => toggleEntryDone(entry),
-                onDelete: () => confirmDeleteEntry(entry),
-              ),
-              if (entry.reminderAt != null && entry.reminderAt!.isBefore(now))
-                const SizedBox.shrink(),
-              const SizedBox(height: 9),
-            ],
-          if (completed.isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.only(top: 14, bottom: 8),
-              child: Text(
-                '已完成',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-              ),
             ),
-            for (final entry in completed.take(20)) ...[
-              EntryCard(
-                entry: entry,
-                reminderScheduled: false,
-                onToggleDone: () => toggleEntryDone(entry),
-                onDelete: () => confirmDeleteEntry(entry),
+          ..._todoSection(
+            '已过期',
+            overdue,
+            titleColor: const Color(0xffb42318),
+            description: '日期已经过去，但还没有完成',
+          ),
+          ..._todoSection('今天', today),
+          ..._todoSection('即将到来', upcoming),
+          ..._todoSection('没有日期', undated, description: '会一直保留，直到完成或删除'),
+          if (completed.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                '已完成  ${completed.length}',
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 9),
-            ],
+              trailing: Icon(
+                showCompletedTodos
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+              ),
+              onTap: () =>
+                  setState(() => showCompletedTodos = !showCompletedTodos),
+            ),
+            if (showCompletedTodos)
+              for (final entry in completed.take(20)) ...[
+                EntryCard(
+                  entry: entry,
+                  reminderScheduled: false,
+                  onToggleDone: () => toggleEntryDone(entry),
+                  onDelete: () => confirmDeleteEntry(entry),
+                ),
+                const SizedBox(height: 9),
+              ],
           ],
         ],
       ),
@@ -1589,105 +1467,102 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildLibraryPage() {
-    final wishes = entries
-        .where((entry) => entry.type == EntryType.wish)
-        .toList()
-        .reversed
-        .toList();
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-          child: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(
-                value: 0,
-                icon: Icon(Icons.folder_outlined),
-                label: Text('资料'),
+    return KnowledgePane(
+      key: ValueKey(_knowledgeRevision),
+      api: widget.api,
+      meetingRecorder: meetingRecorder,
+    );
+  }
+
+  void showWishList() {
+    final wishes =
+        entries.where((entry) => entry.type == EntryType.wish).toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: .82,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 10, 10),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.star_outline_rounded,
+                      color: Color(0xffb45f06),
+                    ),
+                    const SizedBox(width: 9),
+                    const Expanded(
+                      child: Text(
+                        '愿望清单',
+                        style: TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
               ),
-              ButtonSegment(
-                value: 1,
-                icon: Icon(Icons.star_outline_rounded),
-                label: Text('心愿'),
+              Expanded(
+                child: wishes.isEmpty
+                    ? const Center(
+                        child: Text(
+                          '还没有心愿，可以直接用语音记下',
+                          style: TextStyle(color: Color(0xff8a8680)),
+                        ),
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                        itemCount: wishes.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 9),
+                        itemBuilder: (_, index) => EntryCard(
+                          entry: wishes[index],
+                          reminderScheduled: false,
+                          onDelete: () {
+                            Navigator.pop(sheetContext);
+                            unawaited(confirmDeleteEntry(wishes[index]));
+                          },
+                        ),
+                      ),
               ),
             ],
-            selected: {librarySection},
-            onSelectionChanged: (value) =>
-                setState(() => librarySection = value.first),
           ),
         ),
-        Expanded(
-          child: librarySection == 0
-              ? KnowledgePane(
-                  key: ValueKey(_knowledgeRevision),
-                  api: widget.api,
-                  meetingRecorder: meetingRecorder,
-                )
-              : wishes.isEmpty
-              ? const Center(
-                  child: Text(
-                    '还没有心愿，可以直接用语音记下',
-                    style: TextStyle(color: Color(0xff8a8680)),
-                  ),
-                )
-              : ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: wishes.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 9),
-                  itemBuilder: (_, index) => EntryCard(
-                    entry: wishes[index],
-                    reminderScheduled: false,
-                    onDelete: () => confirmDeleteEntry(wishes[index]),
-                  ),
-                ),
-        ),
-      ],
+      ),
     );
   }
 
   Widget _buildProfilePage() {
+    final wishCount = entries
+        .where((entry) => entry.type == EntryType.wish)
+        .length;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       children: [
         _settingsTile(
-          Icons.help_outline_rounded,
-          '使用帮助',
-          '了解语音录入、提醒和资料库',
-          showHelp,
+          Icons.star_outline_rounded,
+          '愿望清单',
+          wishCount == 0 ? '还没有记录心愿' : '$wishCount 个心愿',
+          showWishList,
         ),
-        _settingsTile(
-          Icons.insights_rounded,
-          '日报与月报',
-          '回顾行程、支出和完成情况',
-          openReport,
-        ),
-        _settingsTile(
-          widget.isGuest
-              ? Icons.cloud_upload_outlined
-              : Icons.cloud_done_outlined,
-          widget.isGuest ? '登录并云端保存' : '已登录云端账号',
-          widget.isGuest ? '登录后可换设备恢复数据' : '数据已按账号隔离保存',
-          widget.isGuest ? widget.onLogin : null,
-          trailing: widget.isGuest
-              ? const Icon(Icons.chevron_right_rounded)
-              : const Icon(Icons.verified_rounded, color: Color(0xff16a34a)),
-        ),
+        if (widget.isGuest)
+          _settingsTile(
+            Icons.cloud_upload_outlined,
+            '登录并云端保存',
+            '登录后可换设备恢复数据',
+            widget.onLogin,
+          ),
         if (!widget.isGuest)
           _settingsTile(Icons.logout_rounded, '退出登录', '仅在你明确需要切换账号时使用', logout),
-        _settingsTile(
-          Icons.alarm_on_rounded,
-          '提醒状态',
-          '${scheduledReminderIds.length} 个系统提醒已安排',
-          () => setState(() => tab = 1),
-        ),
-        if (!widget.isGuest)
-          _settingsTile(
-            Icons.delete_forever_outlined,
-            '删除账户',
-            '永久删除全部云端数据',
-            confirmDeleteAccount,
-            destructive: true,
-          ),
       ],
     );
   }
@@ -1696,31 +1571,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     IconData icon,
     String title,
     String subtitle,
-    VoidCallback? onTap, {
-    bool destructive = false,
-    Widget? trailing,
-  }) {
+    VoidCallback? onTap,
+  ) {
     return Card(
       elevation: 0,
       color: Colors.white,
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
         onTap: onTap,
-        leading: Icon(
-          icon,
-          color: destructive ? Colors.red : const Color(0xffb45f06),
-        ),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            color: destructive ? Colors.red : null,
-          ),
-        ),
+        leading: Icon(icon, color: const Color(0xffb45f06)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         subtitle: Text(subtitle),
-        trailing:
-            trailing ??
-            (onTap == null ? null : const Icon(Icons.chevron_right_rounded)),
+        trailing: onTap == null
+            ? null
+            : const Icon(Icons.chevron_right_rounded),
       ),
     );
   }
@@ -1881,66 +1745,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ],
     ),
   );
-}
-
-class _HelpItem extends StatelessWidget {
-  const _HelpItem({
-    required this.icon,
-    required this.title,
-    required this.description,
-    this.isLast = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String description;
-  final bool isLast;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: isLast ? 0 : 20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xffffead5),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, size: 21, color: const Color(0xffc56b09)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Color(0xff1a1a1e),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: const TextStyle(
-                    color: Color(0xff716b63),
-                    fontSize: 13,
-                    height: 1.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class ReportPane extends StatefulWidget {
