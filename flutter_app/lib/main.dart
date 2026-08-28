@@ -1144,17 +1144,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           final bTime = b.reminderAt ?? b.timestamp;
           return aTime.compareTo(bTime);
         });
-    final undatedTodos =
-        entries
-            .where(
-              (entry) =>
-                  entry.type == EntryType.memo &&
-                  !entry.done &&
-                  entry.reminderAt == null &&
-                  _scheduledDateOf(entry) == null,
-            )
-            .toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final isToday = DateUtils.isSameDay(selectedDate, DateTime.now());
     return RefreshIndicator(
       onRefresh: refreshHome,
@@ -1191,58 +1180,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 9),
             ],
-          Padding(
-            padding: const EdgeInsets.only(top: 16, bottom: 4),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    '待办集合',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => setState(() => tab = 1),
-                  child: const Text('查看全部'),
-                ),
-              ],
-            ),
-          ),
-          const Padding(
-            padding: EdgeInsets.only(bottom: 9),
-            child: Text(
-              '没设日期的事会一直留在这里，直到你完成它。',
-              style: TextStyle(fontSize: 11, color: Color(0xff8a8680)),
-            ),
-          ),
-          if (undatedTodos.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(
-                child: Text(
-                  '没有无日期待办',
-                  style: TextStyle(color: Color(0xff8a8680)),
-                ),
-              ),
-            )
-          else
-            for (final entry in undatedTodos.take(3)) ...[
-              EntryCard(
-                entry: entry,
-                reminderScheduled: false,
-                onToggleDone: () => toggleEntryDone(entry),
-                onDelete: () => confirmDeleteEntry(entry),
-              ),
-              const SizedBox(height: 9),
-            ],
-          if (undatedTodos.length > 3)
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => setState(() => tab = 1),
-                child: Text('还有 ${undatedTodos.length - 3} 项，查看全部'),
-              ),
-            ),
         ],
       ),
     );
