@@ -84,6 +84,7 @@ import {
   listMistakes,
   reviewMistake,
 } from "./mistakes.js";
+import { getWorldPulse } from "./world-pulse.js";
 
 const PORT = Number(process.env.PORT) || 8787;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
@@ -606,6 +607,15 @@ app.post(
 
 // 以下 API 都需要鉴权
 app.use(API, requireAuth);
+
+app.get(`${API}/world-pulse`, async (req, res) => {
+  try {
+    res.json(await getWorldPulse(req.query.refresh === "1"));
+  } catch (error) {
+    console.error("[world pulse] 新闻聚合失败:", error);
+    res.status(502).json({ error: "暂时无法获取全球新闻，请稍后重试" });
+  }
+});
 
 // 当前登录用户（用于前端显示是谁、以及校验 token 是否有效）。
 app.get(`${API}/me`, (req, res) => {

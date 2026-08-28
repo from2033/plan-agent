@@ -190,6 +190,14 @@ class ApiClient {
     return value.cast<Map<String, dynamic>>();
   }
 
+  Future<Map<String, dynamic>> worldPulse({bool force = false}) async {
+    final value = await _request(
+      'GET',
+      force ? '/world-pulse?refresh=1' : '/world-pulse',
+    );
+    return value as Map<String, dynamic>;
+  }
+
   Future<Uint8List> downloadDocument(String id) async {
     if (_isGuest) throw const ApiException('请先登录后再查看原始资料');
     final response = await _send(
