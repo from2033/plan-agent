@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
+import 'document_audio_player.dart';
 import 'models.dart';
 import 'reminder_service.dart';
 import 'voice_service.dart';
@@ -2412,6 +2413,9 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         .cast<String>();
     final notes = (document['notes'] as List<dynamic>? ?? const [])
         .cast<String>();
+    final isAudio = (document['mimeType'] as String? ?? '').startsWith(
+      'audio/',
+    );
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2444,6 +2448,11 @@ class _KnowledgePaneState extends State<KnowledgePane> {
               if (people.isNotEmpty) _detailLine('相关人员', people.join('、')),
               if (keywords.isNotEmpty) _detailLine('关键词', keywords.join('、')),
               if (notes.isNotEmpty) _detailLine('我的说明', notes.join('\n\n')),
+              if (isAudio)
+                DocumentAudioPlayer(
+                  api: widget.api,
+                  documentId: document['id'] as String,
+                ),
               _detailLine('原文件', document['fileName'] as String? ?? '资料'),
               if (warnings.isNotEmpty) _detailLine('识别提示', warnings.join('\n')),
               const SizedBox(height: 18),

@@ -190,6 +190,18 @@ class ApiClient {
     return value.cast<Map<String, dynamic>>();
   }
 
+  Future<Uint8List> downloadDocument(String id) async {
+    if (_isGuest) throw const ApiException('请先登录后再查看原始资料');
+    final response = await _send(
+      'GET',
+      '/documents/${Uri.encodeComponent(id)}/content',
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _decode(response);
+    }
+    return response.bodyBytes;
+  }
+
   Future<Map<String, dynamic>> uploadDocument({
     required String fileName,
     required String mimeType,

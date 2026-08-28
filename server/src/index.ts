@@ -653,6 +653,23 @@ app.get(`${API}/documents`, (req, res) => {
   res.json(listDocuments(req.userId!));
 });
 
+app.get(`${API}/documents/:id/content`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再查看原始资料" });
+    return;
+  }
+  const uploaded = readDocumentUpload(req.params.id, req.userId!);
+  if (!uploaded) {
+    res.status(404).json({ error: "原始文件不存在或不属于当前账号" });
+    return;
+  }
+  res.setHeader("content-type", uploaded.document.mimeType || "application/octet-stream");
+  res.setHeader("content-length", uploaded.content.length);
+  res.setHeader("cache-control", "private, no-store");
+  res.setHeader("x-content-type-options", "nosniff");
+  res.send(uploaded.content);
+});
+
 const MistakeInputSchema = z.object({
   childName: z.string().trim().min(1).max(60),
   subject: z.string().trim().min(1).max(40),

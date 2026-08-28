@@ -13,6 +13,7 @@ process.env.DB_ENCRYPTION_KEY = crypto.randomBytes(32).toString("base64");
 const {
   appendDocumentNote,
   findDuplicateDocument,
+  readDocumentUpload,
   resolveDocumentEvidence,
   registerLocalDocument,
   storeDocumentUpload,
@@ -34,6 +35,13 @@ test("相同账号上传完全相同的文件时能找到已有资料", () => {
     "第一次说明",
     "第二次说明",
   ]);
+});
+
+test("录音原文只能由所属账号完整读取", () => {
+  const content = Buffer.from("fake-wav-audio", "utf8");
+  const stored = storeDocumentUpload("user-1", "会议.wav", "audio/wav", content);
+  assert.deepEqual(readDocumentUpload(stored.id, "user-1")?.content, content);
+  assert.equal(readDocumentUpload(stored.id, "user-2"), null);
 });
 
 test("Mac 本地资料可幂等登记且不会保存原始文件内容", () => {
