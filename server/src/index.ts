@@ -641,6 +641,8 @@ const DOCUMENT_MIME_TYPES = new Set([
   "image/png",
   "image/heic",
   "image/heif",
+  "audio/wav",
+  "audio/x-wav",
 ]);
 
 app.get(`${API}/documents`, (req, res) => {
@@ -781,7 +783,7 @@ app.post(
       return;
     }
     if (!DOCUMENT_MIME_TYPES.has(mimeType)) {
-      res.status(415).json({ error: "第一版支持 PDF、Word、图片和文本文件" });
+      res.status(415).json({ error: "支持 PDF、Word、图片、文本和 WAV 录音" });
       return;
     }
     let storedDocumentId = "";

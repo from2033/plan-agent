@@ -594,6 +594,9 @@ export function extractDocumentText(filePath, fileName, mimeType, temporaryDir) 
     if (mimeType.startsWith("image/") || [".jpg", ".jpeg", ".png", ".heic", ".heif"].includes(extension)) {
       return { text: ocrImage(filePath), warnings };
     }
+    if (mimeType === "audio/wav" || mimeType === "audio/x-wav" || extension === ".wav") {
+      return { text: "", warnings };
+    }
   } catch (error) {
     warnings.push(`文字提取失败：${String(error?.message || error).slice(0, 160)}`);
   }

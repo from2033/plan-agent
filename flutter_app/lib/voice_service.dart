@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:record/record.dart';
 
@@ -57,6 +58,16 @@ class VoiceService {
 
   Future<String> transcribe(List<int> audio) => api.transcribeAudio(audio);
 
+  Future<String> transcribeLong(List<int> audio) async {
+    final chunks = splitWavForTranscription(Uint8List.fromList(audio));
+    final parts = <String>[];
+    for (final chunk in chunks) {
+      final text = (await api.transcribeAudio(chunk)).trim();
+      if (text.isNotEmpty) parts.add(text);
+    }
+    return parts.join('\n');
+  }
+
   Future<void> cancel() async {
     await _recorder.cancel();
     final path = _recordingPath;
@@ -71,4 +82,41 @@ class VoiceService {
     await cancel();
     _recorder.dispose();
   }
+}
+
+List<Uint8List> splitWavForTranscription(
+  Uint8List wav, {
+  int maxSeconds = 50,
+  int bytesPerSecond = 32000,
+}) {
+  if (wav.length <= 44 + maxSeconds * bytesPerSecond) return [wav];
+  final data = ByteData.sublistView(wav);
+  var cursor = 12;
+  var dataSizeOffset = -1;
+  var audioOffset = -1;
+  while (cursor + 8 <= wav.length) {
+    final id = String.fromCharCodes(wav.sublist(cursor, cursor + 4));
+    final size = data.getUint32(cursor + 4, Endian.little);
+    if (id == 'data') {
+      dataSizeOffset = cursor + 4;
+      audioOffset = cursor + 8;
+      break;
+    }
+    cursor += 8 + size + (size.isOdd ? 1 : 0);
+  }
+  if (audioOffset < 0 || dataSizeOffset < 0) return [wav];
+  final chunkSize = maxSeconds * bytesPerSecond;
+  final result = <Uint8List>[];
+  for (var start = audioOffset; start < wav.length; start += chunkSize) {
+    final end = (start + chunkSize).clamp(start, wav.length);
+    final payload = wav.sublist(start, end);
+    final chunk = Uint8List(audioOffset + payload.length);
+    chunk.setRange(0, audioOffset, wav);
+    chunk.setRange(audioOffset, chunk.length, payload);
+    final chunkData = ByteData.sublistView(chunk);
+    chunkData.setUint32(4, chunk.length - 8, Endian.little);
+    chunkData.setUint32(dataSizeOffset, payload.length, Endian.little);
+    result.add(chunk);
+  }
+  return result;
 }

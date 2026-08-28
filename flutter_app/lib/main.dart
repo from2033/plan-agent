@@ -2163,10 +2163,13 @@ class KnowledgePane extends StatefulWidget {
 }
 
 class _KnowledgePaneState extends State<KnowledgePane> {
+  late final VoiceService meetingVoice = VoiceService(widget.api);
   List<KnowledgeItem> items = [];
   List<Map<String, dynamic>> documents = [];
   bool loading = true;
   bool uploading = false;
+  bool meetingRecording = false;
+  bool meetingSaving = false;
   String? error;
   String documentCategory = '全部';
   static const documentChannel = MethodChannel(
@@ -2177,6 +2180,12 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+  void dispose() {
+    unawaited(meetingVoice.dispose());
+    super.dispose();
   }
 
   Future<void> load() async {
@@ -2244,6 +2253,66 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       if (mounted) setState(() => error = exception.toString());
     } finally {
       if (mounted) setState(() => uploading = false);
+    }
+  }
+
+  Future<void> toggleMeetingRecording() async {
+    if (uploading || meetingSaving) return;
+    if (!meetingRecording) {
+      if (widget.api.isGuest) {
+        setState(() => error = '请先登录后再保存录音资料');
+        return;
+      }
+      try {
+        await meetingVoice.start();
+        if (mounted) {
+          setState(() {
+            meetingRecording = true;
+            error = null;
+          });
+        }
+      } catch (exception) {
+        if (mounted) setState(() => error = exception.toString());
+      }
+      return;
+    }
+    setState(() {
+      meetingRecording = false;
+      meetingSaving = true;
+      error = null;
+    });
+    try {
+      final audio = await meetingVoice.stopRecording();
+      String transcript = '';
+      String? transcriptionWarning;
+      try {
+        transcript = await meetingVoice.transcribeLong(audio);
+      } catch (exception) {
+        transcriptionWarning = exception.toString();
+      }
+      final timestamp = DateFormat('yyyyMMdd-HHmmss').format(DateTime.now());
+      await widget.api.uploadDocument(
+        fileName: '会议录音-$timestamp.wav',
+        mimeType: 'audio/wav',
+        bytes: Uint8List.fromList(audio),
+        note: transcript.isEmpty
+            ? '会议/谈话录音。转写暂时失败，请保留原始录音以便后续处理。'
+            : '会议/谈话录音自动转写：\n$transcript',
+      );
+      await load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              transcriptionWarning == null ? '录音和转写已保存到资料库' : '录音已保存，本次转写失败',
+            ),
+          ),
+        );
+      }
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    } finally {
+      if (mounted) setState(() => meetingSaving = false);
     }
   }
 
@@ -2491,17 +2560,84 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: uploading ? null : upload,
-                  icon: uploading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.add_a_photo_outlined),
-                  label: Text(uploading ? '正在识别并保存…' : '拍照 / 上传'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed:
+                            uploading || meetingRecording || meetingSaving
+                            ? null
+                            : upload,
+                        icon: uploading
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.add_a_photo_outlined),
+                        label: Text(uploading ? '正在保存…' : '拍照 / 上传'),
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: uploading || meetingSaving
+                            ? null
+                            : toggleMeetingRecording,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: meetingRecording
+                              ? const Color(0xffdc2626)
+                              : const Color(0xff1a1a1e),
+                        ),
+                        icon: meetingSaving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Icon(
+                                meetingRecording
+                                    ? Icons.stop_rounded
+                                    : Icons.mic_rounded,
+                              ),
+                        label: Text(
+                          meetingSaving
+                              ? '正在转写…'
+                              : meetingRecording
+                              ? '停止并保存'
+                              : '快速录音',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+                if (meetingRecording)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 9),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.fiber_manual_record,
+                          size: 12,
+                          color: Color(0xffdc2626),
+                        ),
+                        SizedBox(width: 5),
+                        Text(
+                          '正在录制会议/谈话，完成后点击停止',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Color(0xffb42318),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 14),
                 if (error != null)
                   Container(

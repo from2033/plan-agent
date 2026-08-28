@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:assistant/models.dart';
+import 'package:assistant/voice_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -81,5 +84,28 @@ void main() {
     expect(restored.id, original.id);
     expect(restored.title, original.title);
     expect(restored.content, original.content);
+  });
+
+  test('long WAV recordings are split into valid transcription chunks', () {
+    final payload = Uint8List(120);
+    final wav = Uint8List(44 + payload.length);
+    wav.setRange(0, 4, 'RIFF'.codeUnits);
+    wav.setRange(8, 12, 'WAVE'.codeUnits);
+    wav.setRange(12, 16, 'fmt '.codeUnits);
+    ByteData.sublistView(wav).setUint32(16, 16, Endian.little);
+    wav.setRange(36, 40, 'data'.codeUnits);
+    ByteData.sublistView(wav).setUint32(40, payload.length, Endian.little);
+    wav.setRange(44, wav.length, payload);
+
+    final chunks = splitWavForTranscription(
+      wav,
+      maxSeconds: 1,
+      bytesPerSecond: 50,
+    );
+
+    expect(chunks.length, 3);
+    expect(String.fromCharCodes(chunks.first.sublist(0, 4)), 'RIFF');
+    expect(ByteData.sublistView(chunks.first).getUint32(40, Endian.little), 50);
+    expect(ByteData.sublistView(chunks.last).getUint32(40, Endian.little), 20);
   });
 }
