@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 
 import 'api_client.dart';
@@ -10,6 +11,9 @@ class VoiceService {
 
   final ApiClient api;
   final AudioRecorder _recorder = AudioRecorder();
+  static const _recordingChannel = MethodChannel(
+    'com.from2033.assistant/recording',
+  );
   String? _recordingPath;
 
   Future<void> start() async {
@@ -21,25 +25,32 @@ class VoiceService {
       throw const ApiException('当前设备不支持 WAV 录音');
     }
 
-    final path =
-        '${Directory.systemTemp.path}/assistant-${DateTime.now().microsecondsSinceEpoch}.wav';
-    _recordingPath = path;
-    await _recorder.start(
-      const RecordConfig(
-        encoder: AudioEncoder.wav,
-        sampleRate: 16000,
-        numChannels: 1,
-        echoCancel: true,
-        noiseSuppress: true,
-      ),
-      path: path,
-    );
+    try {
+      await _recordingChannel.invokeMethod<void>('activate');
+      final path =
+          '${Directory.systemTemp.path}/assistant-${DateTime.now().microsecondsSinceEpoch}.wav';
+      _recordingPath = path;
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+          echoCancel: true,
+          noiseSuppress: true,
+        ),
+        path: path,
+      );
+    } catch (_) {
+      await _deactivateSession();
+      rethrow;
+    }
   }
 
   Future<List<int>> stopRecording() async {
     // 留一小段句尾，再由原生录音器完整封装 WAV。
     await Future<void>.delayed(const Duration(milliseconds: 300));
     final stoppedPath = await _recorder.stop();
+    await _deactivateSession();
     final path = stoppedPath ?? _recordingPath;
     _recordingPath = null;
     if (path == null) throw const ApiException('录音未生成，请重试');
@@ -70,6 +81,7 @@ class VoiceService {
 
   Future<void> cancel() async {
     await _recorder.cancel();
+    await _deactivateSession();
     final path = _recordingPath;
     _recordingPath = null;
     if (path != null) {
@@ -81,6 +93,14 @@ class VoiceService {
   Future<void> dispose() async {
     await cancel();
     _recorder.dispose();
+  }
+
+  Future<void> _deactivateSession() async {
+    try {
+      await _recordingChannel.invokeMethod<void>('deactivate');
+    } catch (_) {
+      // Web/tests or an unavailable native channel do not need cleanup.
+    }
   }
 }
 

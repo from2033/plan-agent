@@ -1,4 +1,5 @@
 import Flutter
+import AVFAudio
 import PhotosUI
 import UIKit
 import UserNotifications
@@ -53,6 +54,36 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
         return
       }
       self?.presentUploadSourcePicker(result: result)
+    }
+    let recordingChannel = FlutterMethodChannel(
+      name: "com.from2033.assistant/recording",
+      binaryMessenger: registrar.messenger()
+    )
+    recordingChannel.setMethodCallHandler { call, result in
+      let session = AVAudioSession.sharedInstance()
+      do {
+        switch call.method {
+        case "activate":
+          try session.setCategory(
+            .record,
+            mode: .measurement,
+            options: [.allowBluetoothHFP]
+          )
+          try session.setActive(true)
+          result(nil)
+        case "deactivate":
+          try session.setActive(false, options: [.notifyOthersOnDeactivation])
+          result(nil)
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      } catch {
+        result(FlutterError(
+          code: "audio_session_failed",
+          message: "无法配置后台录音: \(error.localizedDescription)",
+          details: nil
+        ))
+      }
     }
   }
 

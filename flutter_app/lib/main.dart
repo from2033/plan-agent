@@ -2170,6 +2170,9 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   bool uploading = false;
   bool meetingRecording = false;
   bool meetingSaving = false;
+  DateTime? meetingStartedAt;
+  Duration meetingElapsed = Duration.zero;
+  Timer? meetingTimer;
   String? error;
   String documentCategory = '全部';
   static const documentChannel = MethodChannel(
@@ -2184,6 +2187,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
 
   @override
   void dispose() {
+    meetingTimer?.cancel();
     unawaited(meetingVoice.dispose());
     super.dispose();
   }
@@ -2268,7 +2272,16 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         if (mounted) {
           setState(() {
             meetingRecording = true;
+            meetingStartedAt = DateTime.now();
+            meetingElapsed = Duration.zero;
             error = null;
+          });
+          meetingTimer?.cancel();
+          meetingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+            if (!mounted || meetingStartedAt == null) return;
+            setState(() {
+              meetingElapsed = DateTime.now().difference(meetingStartedAt!);
+            });
           });
         }
       } catch (exception) {
@@ -2281,6 +2294,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       meetingSaving = true;
       error = null;
     });
+    meetingTimer?.cancel();
     try {
       final audio = await meetingVoice.stopRecording();
       String transcript = '';
@@ -2312,7 +2326,13 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
     } finally {
-      if (mounted) setState(() => meetingSaving = false);
+      if (mounted) {
+        setState(() {
+          meetingSaving = false;
+          meetingStartedAt = null;
+          meetingElapsed = Duration.zero;
+        });
+      }
     }
   }
 
@@ -2344,6 +2364,13 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       return '会议录音';
     }
     return category;
+  }
+
+  String _durationLabel(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
   }
 
   Future<void> addNote(Map<String, dynamic> document) async {
@@ -2619,20 +2646,20 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                   ],
                 ),
                 if (meetingRecording)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 9),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 9),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
+                        const Icon(
                           Icons.fiber_manual_record,
                           size: 12,
                           color: Color(0xffdc2626),
                         ),
-                        SizedBox(width: 5),
+                        const SizedBox(width: 5),
                         Text(
-                          '正在录制会议/谈话，完成后点击停止',
-                          style: TextStyle(
+                          '${_durationLabel(meetingElapsed)} · 锁屏或切换 App 仍会继续录音',
+                          style: const TextStyle(
                             fontSize: 11,
                             color: Color(0xffb42318),
                           ),
