@@ -1263,106 +1263,149 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     };
   }
 
+  String _dateKey(DateTime value) => DateFormat('yyyy-MM-dd').format(value);
+
+  String? _scheduledDateOf(AssistantEntry entry) {
+    if (entry.scheduledDate != null) return entry.scheduledDate;
+    if (entry.reminderAt != null) return _dateKey(entry.reminderAt!);
+    // 兼容旧版：“只说日期、没说时间”的事项以当天中午存储。
+    if (entry.type == EntryType.memo &&
+        entry.timestamp.hour == 12 &&
+        entry.timestamp.minute == 0 &&
+        entry.timestamp.second == 0) {
+      return _dateKey(entry.timestamp);
+    }
+    if (entry.type == EntryType.activity &&
+        (entry.hasTimeRange || entry.timestamp.isAfter(DateTime.now()))) {
+      return _dateKey(entry.timestamp);
+    }
+    return null;
+  }
+
+  bool _activityStillRelevant(AssistantEntry entry, DateTime date) {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final target = DateUtils.dateOnly(date);
+    if (target.isAfter(today)) return true;
+    if (target.isBefore(today)) return false;
+    if (entry.timeEnd != null) {
+      final parts = entry.timeEnd!.split(':');
+      if (parts.length == 2) {
+        final end = DateTime(
+          today.year,
+          today.month,
+          today.day,
+          int.tryParse(parts[0]) ?? 0,
+          int.tryParse(parts[1]) ?? 0,
+        );
+        return end.isAfter(DateTime.now());
+      }
+    }
+    // 只有日期、没有时刻的计划，当天全天保留。
+    if (entry.scheduledDate != null && !entry.hasTimeRange) return true;
+    return entry.timestamp.isAfter(DateTime.now());
+  }
+
   Widget _buildHomePage() {
-    final dayEntries = entries
-        .where((entry) => DateUtils.isSameDay(entry.timestamp, selectedDate))
-        .toList()
-        .reversed
-        .toList();
-    final nextReminder =
+    final selectedKey = _dateKey(selectedDate);
+    final dayActions =
+        entries.where((entry) {
+          final scheduledDate = _scheduledDateOf(entry);
+          if (scheduledDate != selectedKey) return false;
+          if (entry.type == EntryType.memo) return !entry.done;
+          return entry.type == EntryType.activity &&
+              _activityStillRelevant(entry, selectedDate);
+        }).toList()..sort((a, b) {
+          final aTime = a.reminderAt ?? a.timestamp;
+          final bTime = b.reminderAt ?? b.timestamp;
+          return aTime.compareTo(bTime);
+        });
+    final undatedTodos =
         entries
             .where(
               (entry) =>
                   entry.type == EntryType.memo &&
                   !entry.done &&
-                  entry.reminderAt != null &&
-                  entry.reminderAt!.isAfter(DateTime.now()),
+                  entry.reminderAt == null &&
+                  _scheduledDateOf(entry) == null,
             )
             .toList()
-          ..sort((a, b) => a.reminderAt!.compareTo(b.reminderAt!));
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final isToday = DateUtils.isSameDay(selectedDate, DateTime.now());
     return RefreshIndicator(
       onRefresh: refreshHome,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
         children: [
-          _buildDateNavigator(dayEntries.length),
-          if (nextReminder.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            InkWell(
-              onTap: () => setState(() => tab = 1),
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                padding: const EdgeInsets.all(15),
-                decoration: BoxDecoration(
-                  color: const Color(0xffffead5),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.alarm_rounded, color: Color(0xffb45f06)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            '下一个提醒',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Color(0xff8f4f0b),
-                            ),
-                          ),
-                          Text(
-                            nextReminder.first.description,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          Text(
-                            DateFormat(
-                              'M月d日 HH:mm',
-                              'zh_CN',
-                            ).format(nextReminder.first.reminderAt!),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Color(0xff8f4f0b),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Icon(
-                      Icons.chevron_right_rounded,
-                      color: Color(0xffb45f06),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          const Padding(
-            padding: EdgeInsets.only(top: 18, bottom: 8),
+          _buildDateNavigator(dayActions.length),
+          Padding(
+            padding: const EdgeInsets.only(top: 18, bottom: 8),
             child: Text(
-              '当天记录',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+              isToday ? '今天要做' : '当天要做',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
             ),
           ),
-          if (dayEntries.isEmpty)
+          if (dayActions.isEmpty)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 34),
+              padding: EdgeInsets.symmetric(vertical: 24),
               child: Center(
                 child: Text(
-                  '还没有记录，按住下方说一句',
+                  '当天没有安排要做的事',
                   style: TextStyle(color: Color(0xff8a8680)),
                 ),
               ),
             )
           else
-            for (final entry in dayEntries) ...[
+            for (final entry in dayActions) ...[
               EntryCard(
                 entry: entry,
                 reminderScheduled: scheduledReminderIds.contains(entry.id),
                 onToggleDone: entry.type == EntryType.memo
                     ? () => toggleEntryDone(entry)
                     : null,
+                onDelete: () => confirmDeleteEntry(entry),
+              ),
+              const SizedBox(height: 9),
+            ],
+          Padding(
+            padding: const EdgeInsets.only(top: 16, bottom: 4),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '待办集合',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => setState(() => tab = 1),
+                  child: const Text('查看全部'),
+                ),
+              ],
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(bottom: 9),
+            child: Text(
+              '没设日期的事会一直留在这里，直到你完成它。',
+              style: TextStyle(fontSize: 11, color: Color(0xff8a8680)),
+            ),
+          ),
+          if (undatedTodos.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                child: Text(
+                  '没有无日期待办',
+                  style: TextStyle(color: Color(0xff8a8680)),
+                ),
+              ),
+            )
+          else
+            for (final entry in undatedTodos) ...[
+              EntryCard(
+                entry: entry,
+                reminderScheduled: false,
+                onToggleDone: () => toggleEntryDone(entry),
                 onDelete: () => confirmDeleteEntry(entry),
               ),
               const SizedBox(height: 9),
@@ -1397,8 +1440,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                   Text(
                     isToday
-                        ? '$count 条记录 · 今天'
-                        : '${selectedDate.year}年 · $count 条记录',
+                        ? '$count 项要做 · 今天'
+                        : '${selectedDate.year}年 · $count 项要做',
                     style: const TextStyle(
                       fontSize: 10,
                       color: Color(0xff8a8680),
@@ -3525,6 +3568,31 @@ class EntryCard extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       color: Color(0xffd97706),
                     ),
+                  ),
+                ],
+                if (entry.scheduledDate != null &&
+                    entry.reminderAt == null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.calendar_today_rounded,
+                        size: 13,
+                        color: Color(0xff8a8680),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        DateFormat(
+                          'M月d日',
+                          'zh_CN',
+                        ).format(DateTime.parse(entry.scheduledDate!)),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xff8a8680),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
                 if (entry.reminderAt != null) ...[

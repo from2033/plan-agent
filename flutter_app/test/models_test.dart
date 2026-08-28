@@ -62,6 +62,7 @@ void main() {
       time: '08:00',
       done: false,
       priority: 'medium',
+      scheduledDate: '2026-07-22',
       reminderAt: DateTime.parse('2026-07-22T00:00:00Z').toLocal(),
     );
 
@@ -70,6 +71,7 @@ void main() {
     expect(restored.id, original.id);
     expect(restored.type, EntryType.memo);
     expect(restored.description, '明早吃药');
+    expect(restored.scheduledDate, '2026-07-22');
     expect(restored.reminderAt?.toUtc(), original.reminderAt?.toUtc());
   });
 

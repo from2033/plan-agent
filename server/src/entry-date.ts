@@ -177,11 +177,14 @@ export function isFutureObligation(
   explicitTime: string | undefined,
   clock: AssistantClock,
 ): boolean {
-  if (!/(?:需要|必须|务必|得要|得去|一定要|别忘)/.test(raw)) return false;
+  const obligation = /(?:需要|必须|务必|得要|得去|一定要|别忘|记得|提醒我)/.test(raw);
+  const explicitlyPending = /(?:待办|待使用|待领取|待兑换|待处理|待办理|待支付|待缴费|待提交|待回复|待确认|未使用|未领取|未兑换|还没使用|还没处理)/.test(raw);
+  if (!obligation && !explicitlyPending) return false;
   const timestamp = reminderTimestamp(raw, explicitDate, explicitTime, clock);
-  if (!timestamp) return false;
-  const current = clockTimestamp(clock);
-  return new Date(timestamp).getTime() > current;
+  if (timestamp) return new Date(timestamp).getTime() > clockTimestamp(clock);
+  const date = explicitDate || inferDateFromText(raw, clock.currentDate);
+  if (date) return validDate(date) && date >= clock.currentDate;
+  return explicitlyPending || (obligation && !/(?:已经|刚刚|完成了|处理了|使用了|领取了)/.test(raw));
 }
 
 export function entryTiming(

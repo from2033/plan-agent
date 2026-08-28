@@ -22,6 +22,7 @@ db.exec(`
     currency    TEXT,
     priority    TEXT,
     done        INTEGER,
+    scheduled_date TEXT,
     reminder_at TEXT,
     timestamp   TEXT NOT NULL,
     user_id     TEXT
@@ -42,6 +43,11 @@ const hasReminderAt = (db.prepare("PRAGMA table_info(entries)").all() as unknown
   .some((c) => c.name === "reminder_at");
 if (!hasReminderAt) {
   db.exec("ALTER TABLE entries ADD COLUMN reminder_at TEXT");
+}
+const hasScheduledDate = (db.prepare("PRAGMA table_info(entries)").all() as unknown as { name: string }[])
+  .some((c) => c.name === "scheduled_date");
+if (!hasScheduledDate) {
+  db.exec("ALTER TABLE entries ADD COLUMN scheduled_date TEXT");
 }
 
 // 知识库表（title/content 加密存储）。
@@ -75,6 +81,7 @@ interface Row {
   currency: string | null;
   priority: string | null;
   done: number | null;
+  scheduled_date: string | null;
   reminder_at: string | null;
   timestamp: string;
 }
@@ -97,6 +104,7 @@ function rowToEntry(r: Row): Entry {
   if (r.currency) entry.currency = r.currency;
   if (r.priority) entry.priority = r.priority as Entry["priority"];
   if (r.done != null) entry.done = r.done === 1;
+  if (r.scheduled_date) entry.scheduledDate = r.scheduled_date;
   if (r.reminder_at) entry.reminderAt = r.reminder_at;
   return entry;
 }
@@ -105,9 +113,9 @@ function rowToEntry(r: Row): Entry {
 const stmtAll = db.prepare("SELECT * FROM entries WHERE user_id = ? ORDER BY timestamp ASC");
 const stmtInsert = db.prepare(`
   INSERT INTO entries
-    (id, type, raw, time, time_start, time_end, description, category, amount, currency, priority, done, reminder_at, timestamp, user_id)
+    (id, type, raw, time, time_start, time_end, description, category, amount, currency, priority, done, scheduled_date, reminder_at, timestamp, user_id)
   VALUES
-    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const stmtSetDone = db.prepare("UPDATE entries SET done = ? WHERE id = ? AND user_id = ?");
 const stmtDelete = db.prepare("DELETE FROM entries WHERE id = ? AND user_id = ?");
@@ -141,6 +149,7 @@ export function insertEntry(entry: Entry, userId: string): Entry {
     entry.currency ?? null,
     entry.priority ?? null,
     entry.done == null ? null : entry.done ? 1 : 0,
+    entry.scheduledDate ?? null,
     entry.reminderAt ?? null,
     entry.timestamp,
     userId,

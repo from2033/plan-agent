@@ -13,6 +13,7 @@ class AssistantEntry {
     this.priority,
     this.timeStart,
     this.timeEnd,
+    this.scheduledDate,
     this.reminderAt,
   });
 
@@ -27,6 +28,7 @@ class AssistantEntry {
   final String? priority;
   final String? timeStart;
   final String? timeEnd;
+  final String? scheduledDate;
   final DateTime? reminderAt;
 
   bool get hasTimeRange => timeStart != null && timeEnd != null;
@@ -48,6 +50,7 @@ class AssistantEntry {
       priority: json['priority'] as String?,
       timeStart: timeRange?['start'] as String?,
       timeEnd: timeRange?['end'] as String?,
+      scheduledDate: json['scheduledDate'] as String?,
       reminderAt: json['reminderAt'] == null
           ? null
           : DateTime.parse(json['reminderAt'] as String).toLocal(),
@@ -65,6 +68,7 @@ class AssistantEntry {
     'done': done,
     if (priority != null) 'priority': priority,
     if (hasTimeRange) 'timeRange': {'start': timeStart, 'end': timeEnd},
+    if (scheduledDate != null) 'scheduledDate': scheduledDate,
     if (reminderAt != null) 'reminderAt': reminderAt!.toUtc().toIso8601String(),
   };
 
@@ -80,6 +84,7 @@ class AssistantEntry {
     priority: priority,
     timeStart: timeStart,
     timeEnd: timeEnd,
+    scheduledDate: scheduledDate,
     reminderAt: reminderAt,
   );
 }

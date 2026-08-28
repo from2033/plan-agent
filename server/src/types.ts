@@ -15,6 +15,7 @@ export interface Entry {
   currency?: string;
   priority?: Priority;
   done?: boolean;
+  scheduledDate?: string; // YYYY-MM-DD，只表示事项归属日期，不代表已设闹钟
   reminderAt?: string; // ISO 8601，备忘到点提醒
   timestamp: string; // ISO 8601
 }

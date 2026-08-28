@@ -6,7 +6,7 @@ import type { ParsedFields } from "./types.js";
 // ─── 正则回退（从前端 src/app/App.tsx 移植） ──────────────────────────────────
 
 const EXPENSE_KEYWORDS = /花了|花|消费了|消费|买了|买|付了|付|充值|转账|打车|吃饭|喝|点了/;
-const MEMO_KEYWORDS = /记得|提醒|备忘|别忘了|记一下|记住|要|待办|TODO|todo/;
+const MEMO_KEYWORDS = /记得|提醒|备忘|别忘了|记一下|记住|要|待办|待使用|待领取|待兑换|待处理|待办理|待支付|待缴费|待提交|待回复|待确认|未使用|未领取|还没使用|TODO|todo/;
 const WISH_KEYWORDS = /找个时间|找时间|有空|抽空|以后想|将来想|总有一天|哪天|有机会|梦想|心愿/;
 const TIME_RANGE = /(\d{1,2})[点:时](?:(\d{1,2})分?)?\s*[到至~～]\s*(\d{1,2})[点:时](?:(\d{1,2})分?)?/;
 const AMOUNT = /([\d.]+)\s*[元块钱rmb￥]/i;
@@ -167,7 +167,7 @@ function buildSystemPrompt(nowStr: string): string {
 
 每条记录判断 type：
 - expense（消费）：涉及花钱、买东西、付款、充值。抽取 amount（数字，单位元）和 currency（统一写 "CNY"）。category 从这些里选最贴切的一个：${EXPENSE_CATS.join("、")}。
-- memo（备忘/提醒）：明确的待办/提醒事项（含"记得/提醒/别忘了/待办"等）。category 固定为 "备忘"。根据语气判断 priority：含"重要/紧急"→high，含"尽快"→medium，否则 low。
+- memo（待办/提醒）：明确还需要处理的事，包括"记得/提醒/别忘了/待办"，以及"优惠券待使用/权益待领取/费用待缴/材料待提交"这类没有日期但容易遗忘的未完成事项。它们不是心愿，也不是长期资料。category 固定为 "备忘"。根据语气判断 priority：含"重要/紧急"→high，含"尽快"→medium，否则 low。
 - wish（心愿/期待）：**没有具体时间**的将来愿望、打算、想做的事（如"找个时间去丽江旅游"、"有空想学钢琴"、"以后想买房"、"总有一天去看极光"）。和 memo 的区别：memo 是近期要落实的待办，wish 是没排期的长期心愿。category 固定为 "心愿"。
 - activity（活动/行程）：日常记录，既包括**已经做过的事**，也包括**有明确时间安排的计划**（如"15:00-16:00去唱歌"）。category 从这些里选最贴切的一个：${ACTIVITY_CATS.join("、")}。有时间段就填 timeRange（start/end 用 "HH:MM" 24 小时制）。
 

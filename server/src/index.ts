@@ -289,7 +289,7 @@ app.post(`${WORKER_API}/local-documents`, requireWorker, (req, res) => {
 
 interface WorkerIngestResult {
   kind: "record" | "save" | "ask";
-  fields?: Array<Omit<Entry, "id" | "raw" | "time" | "timestamp" | "reminderAt"> & {
+  fields?: Array<Omit<Entry, "id" | "raw" | "time" | "timestamp" | "scheduledDate" | "reminderAt"> & {
     date?: string;
     reminderTime?: string;
   }>;
@@ -361,6 +361,17 @@ function shanghaiDate(timestamp: string): string {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(timestamp));
+}
+
+function scheduledDateFor(
+  date: string | undefined,
+  reminderAt: string | undefined,
+  timeRange: { start: string; end: string } | undefined,
+  clock: AssistantClock,
+): string | undefined {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return date;
+  if (reminderAt) return shanghaiDate(reminderAt);
+  return timeRange ? clock.currentDate : undefined;
 }
 
 function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
@@ -501,11 +512,13 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const timing = reminderAt
       ? { time: reminderClock || "", timestamp: reminderAt }
       : entryTiming(input.raw, date, timeRange, clock, i, now);
+    const scheduledDate = scheduledDateFor(date, reminderAt, timeRange, clock);
     return {
       id: `ai-${job.id}-${i}`,
       raw: input.raw,
       ...timing,
       ...entryFields,
+      ...(scheduledDate ? { scheduledDate } : {}),
       ...(reminderAt ? { reminderAt } : {}),
     };
   });
@@ -891,6 +904,7 @@ const ClientImportSchema = z.object({
       end: z.string().regex(/^\d{2}:\d{2}$/),
     }).optional(),
     reminderAt: z.iso.datetime().optional(),
+    scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })).max(5_000).default([]),
   knowledge: z.array(z.object({
     id: z.string().min(1).max(100),
@@ -921,6 +935,7 @@ app.post(`${API}/import`, (req, res) => {
     ...(item.done ? { done: true } : {}),
     ...(item.priority ? { priority: item.priority } : {}),
     ...(item.timeRange ? { timeRange: item.timeRange } : {}),
+    ...(item.scheduledDate ? { scheduledDate: item.scheduledDate } : {}),
     ...(item.reminderAt ? { reminderAt: item.reminderAt } : {}),
   }));
   try {
@@ -1057,6 +1072,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         ? reminderTimestamp(raw, date, reminderTime, clock)
         : undefined;
       const reminderClock = reminderAt ? reminderTimeAt(reminderAt) : undefined;
+      const scheduledDate = scheduledDateFor(date, reminderAt, timeRange, clock);
       return {
         id: crypto.randomUUID(),
         raw,
@@ -1064,6 +1080,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           ? { time: reminderClock || "", timestamp: reminderAt }
           : entryTiming(raw, date, timeRange, clock, i, now)),
         ...entryFields,
+        ...(scheduledDate ? { scheduledDate } : {}),
         ...(reminderAt ? { reminderAt } : {}),
       };
     });
