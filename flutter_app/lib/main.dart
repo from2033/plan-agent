@@ -3037,6 +3037,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   Widget build(BuildContext context) {
     final categories = <String>{
       '全部',
+      if (items.isNotEmpty) '知识笔记',
       if (documents.any(_isResearch)) '研究报告',
       '错题',
       '会议录音',
@@ -3044,11 +3045,18 @@ class _KnowledgePaneState extends State<KnowledgePane> {
           .where((item) => item['status'] == 'COMPLETE')
           .map(categoryOf),
     }.toList();
-    final visibleDocuments = documentCategory == '全部'
+    final showKnowledgeItems =
+        documentCategory == '全部' || documentCategory == '知识笔记';
+    final visibleDocuments = documentCategory == '知识笔记'
+        ? <Map<String, dynamic>>[]
+        : documentCategory == '全部'
         ? documents
         : documents
               .where((item) => categoryOf(item) == documentCategory)
               .toList();
+    final hasVisibleContent =
+        visibleDocuments.isNotEmpty || (showKnowledgeItems && items.isNotEmpty);
+    final totalCount = documents.length + items.length;
     return loading
         ? const Center(child: CircularProgressIndicator())
         : RefreshIndicator(
@@ -3205,7 +3213,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                       style: const TextStyle(color: Color(0xffb42318)),
                     ),
                   ),
-                if (documents.isNotEmpty) ...[
+                if (totalCount > 0) ...[
                   Row(
                     children: [
                       const Expanded(
@@ -3218,7 +3226,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                         ),
                       ),
                       Text(
-                        '${documents.length} 份',
+                        '$totalCount 项',
                         style: const TextStyle(
                           fontSize: 12,
                           color: Color(0xff8a8680),
@@ -3245,6 +3253,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                     ),
                   ),
                   const SizedBox(height: 10),
+                ],
+                if (visibleDocuments.isNotEmpty) ...[
                   for (final document in visibleDocuments)
                     InkWell(
                       onTap: () => showDocument(document),
@@ -3321,7 +3331,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                     ),
                   const SizedBox(height: 12),
                 ],
-                if (items.isNotEmpty) ...[
+                if (showKnowledgeItems && items.isNotEmpty) ...[
                   const Text(
                     '知识笔记',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
@@ -3355,7 +3365,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                       ],
                     ),
                   )
-                else
+                else if (showKnowledgeItems)
                   for (final item in items)
                     Container(
                       margin: const EdgeInsets.only(bottom: 10),
@@ -3410,6 +3420,16 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                         ],
                       ),
                     ),
+                if (totalCount > 0 && !hasVisibleContent)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 70),
+                    child: Center(
+                      child: Text(
+                        '这个分类暂时没有内容',
+                        style: TextStyle(color: Color(0xff8a8680)),
+                      ),
+                    ),
+                  ),
               ],
             ),
           );
