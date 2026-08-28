@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  WORLD_PULSE_SECTION_IDS,
   parseChinaPolicyJson,
   parseChinaPolicyPreviewHtml,
   parseGoogleNewsRss,
 } from "../src/world-pulse.js";
+
+test("趋势栏目包含用户长期关心的程序员、AI 和南京楼市", () => {
+  assert.ok(WORLD_PULSE_SECTION_IDS.includes("china_programmer_jobs"));
+  assert.ok(WORLD_PULSE_SECTION_IDS.includes("ai_development"));
+  assert.ok(WORLD_PULSE_SECTION_IDS.includes("nanjing_housing"));
+  assert.equal(new Set(WORLD_PULSE_SECTION_IDS).size, WORLD_PULSE_SECTION_IDS.length);
+});
 
 test("Google News RSS 保留标题、来源、链接和时间", () => {
   const xml = `<?xml version="1.0"?><rss><channel><item>

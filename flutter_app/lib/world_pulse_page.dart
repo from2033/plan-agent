@@ -68,6 +68,9 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
   IconData iconFor(String id) => switch (id) {
     'gold_impact' => Icons.show_chart_rounded,
     'china_housing' => Icons.apartment_rounded,
+    'nanjing_housing' => Icons.location_city_rounded,
+    'china_programmer_jobs' => Icons.code_rounded,
+    'ai_development' => Icons.psychology_alt_rounded,
     'china_policy' => Icons.account_balance_rounded,
     'china_policy_preview' => Icons.upcoming_rounded,
     _ => Icons.public_rounded,
@@ -76,6 +79,9 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
   Color colorFor(String id) => switch (id) {
     'gold_impact' => const Color(0xffb7791f),
     'china_housing' => const Color(0xff2563eb),
+    'nanjing_housing' => const Color(0xff0891b2),
+    'china_programmer_jobs' => const Color(0xff4f46e5),
+    'ai_development' => const Color(0xff9333ea),
     'china_policy' => const Color(0xffdc2626),
     'china_policy_preview' => const Color(0xff7c3aed),
     _ => const Color(0xff047857),
@@ -152,7 +158,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                   const SizedBox(height: 6),
                   Text(
                     data?['overview'] as String? ??
-                        '只关注黄金、国内楼市、中国政策和国际大事。模型会用普通话总结影响，原始来源放在下面核实。',
+                        '只关注黄金、国内与南京楼市、程序员职场、AI、中国政策和国际大事。模型会用普通话总结影响，原始来源放在下面核实。',
                     style: const TextStyle(
                       color: Color(0xffd1d5db),
                       height: 1.45,

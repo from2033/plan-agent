@@ -73,6 +73,39 @@ const sections: SectionDefinition[] = [
     watchNext: "看核心城市成交能否持续、二手房价格是否企稳，以及政策是否真正改善购买力和预期。",
   },
   {
+    id: "nanjing_housing",
+    title: "南京房价与楼市走势",
+    query: "南京房价 OR 南京楼市 OR 南京二手房 OR 南京新房 OR 南京房地产政策 when:14d",
+    priorityTerms: [
+      "南京", "房价", "二手房", "新房", "成交", "挂牌", "库存", "土拍",
+      "公积金", "购房政策",
+    ],
+    whyItMatters: "南京不同板块、新房和二手房的表现可能差别很大，需要把成交量、挂牌量、价格和地方政策放在一起看。",
+    watchNext: "重点看南京二手房成交与挂牌价格是否连续改善、热门与外围板块是否继续分化，以及本地政策的实际效果。",
+  },
+  {
+    id: "china_programmer_jobs",
+    title: "中国程序员市场与职场",
+    query: "(程序员 OR 软件开发工程师 OR IT招聘) (就业 OR 招聘 OR 薪资 OR 裁员 OR 职场) 中国 when:7d",
+    priorityTerms: [
+      "程序员", "软件开发", "工程师", "招聘", "就业", "岗位", "薪资", "裁员",
+      "校招", "社招", "外包", "技能",
+    ],
+    whyItMatters: "程序员市场变化直接影响岗位数量、技能要求、薪资和职业选择，但个别公司的招聘或裁员不能代表整个行业。",
+    watchNext: "观察真实招聘岗位是否持续增加、哪些技术方向需求更稳定，并区分应届、资深、地域和行业差异。",
+  },
+  {
+    id: "ai_development",
+    title: "AI产业与技术发展",
+    query: "人工智能 OR AI大模型 OR 智能体 OR AI芯片 OR 具身智能 OR 机器人 when:2d",
+    priorityTerms: [
+      "人工智能", "AI", "大模型", "智能体", "芯片", "算力", "机器人", "开源",
+      "应用", "产业",
+    ],
+    whyItMatters: "AI的发展会改变软件工作、企业效率和新的产品机会，需要区分技术演示、产品发布和真正大规模应用。",
+    watchNext: "关注模型能力是否转化为稳定产品、企业是否真正付费使用，以及算力、成本、监管和人才需求的变化。",
+  },
+  {
     id: "international",
     title: "国际上真正重要的变化",
     query: "国际局势 OR 地缘政治 OR 全球经济 OR 国际贸易 OR 能源危机 when:2d",
@@ -84,6 +117,8 @@ const sections: SectionDefinition[] = [
     watchNext: "观察事件是否持续发酵，以及是否开始影响贸易、能源价格、供应链或中国政策。",
   },
 ];
+
+export const WORLD_PULSE_SECTION_IDS = sections.map(section => section.id);
 
 let cached: WorldPulse | null = null;
 let cachedAt = 0;
