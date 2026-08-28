@@ -2517,6 +2517,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   Widget build(BuildContext context) {
     final categories = <String>{
       '全部',
+      '错题',
+      '会议录音',
       ...documents
           .where((item) => item['status'] == 'COMPLETE')
           .map(categoryOf),
