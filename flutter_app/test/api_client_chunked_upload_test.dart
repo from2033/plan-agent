@@ -60,4 +60,33 @@ void main() {
     expect(chunkSizes, [8 * 1024 * 1024, 17]);
     expect(requests.where((value) => value.endsWith('/complete')).length, 1);
   });
+
+  test('家庭共享使用 PUT，取消共享使用 DELETE', () async {
+    final requests = <String>[];
+    final client = MockClient((request) async {
+      requests.add('${request.method} ${request.url.path}');
+      if (request.method == 'PUT') {
+        return http.Response(
+          jsonEncode({'ok': true}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.method == 'DELETE') return http.Response('', 204);
+      throw StateError('unexpected request: ${request.method} ${request.url}');
+    });
+    final api = ApiClient(httpClient: client);
+
+    await api.setKnowledgeFamilyShared('note-1', true);
+    await api.setDocumentFamilyShared('document-1', true);
+    await api.setKnowledgeFamilyShared('note-1', false);
+    await api.setDocumentFamilyShared('document-1', false);
+
+    expect(requests, [
+      'PUT /api/knowledge/note-1/family',
+      'PUT /api/documents/document-1/family',
+      'DELETE /api/knowledge/note-1/family',
+      'DELETE /api/documents/document-1/family',
+    ]);
+  });
 }

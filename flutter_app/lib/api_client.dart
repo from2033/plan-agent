@@ -686,6 +686,7 @@ class ApiClient {
     try {
       return await switch (method) {
         'POST' => _http.post(uri, headers: headers, body: encoded),
+        'PUT' => _http.put(uri, headers: headers, body: encoded),
         'PATCH' => _http.patch(uri, headers: headers, body: encoded),
         'DELETE' => _http.delete(uri, headers: headers),
         _ => _http.get(uri, headers: headers),
