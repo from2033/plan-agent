@@ -13,6 +13,7 @@ process.env.DB_ENCRYPTION_KEY = crypto.randomBytes(32).toString("base64");
 const family = await import("../src/family-sharing.js");
 const database = await import("../src/db.js");
 const documents = await import("../src/document-store.js");
+const access = await import("../src/document-access.js");
 
 test("家庭邀请只由目标账号接受，接受后成为家庭成员", () => {
   const invitation = family.inviteFamilyMember("primary", "Parent@Example.com", "primary");
@@ -58,4 +59,10 @@ test("共享文档在家庭资料库可见，但成员不能取得编辑权限",
     documents.readDocumentUploadForViewer(document.id, "parent@example.com")?.content.toString(),
     "身高和体重记录",
   );
+  const scopes = access.sharedDocumentScopesForViewer("parent@example.com");
+  assert.equal(scopes.length, 1);
+  assert.deepEqual(scopes[0]?.documentIds, [document.id]);
+
+  assert.equal(family.unshareResourceFromFamily("primary", "document", document.id), true);
+  assert.deepEqual(access.sharedDocumentScopesForViewer("parent@example.com"), []);
 });

@@ -36,7 +36,7 @@ const visionOcrScript = path.join(scriptDir, "vision-ocr.swift");
 const documentSearchScript = path.join(scriptDir, "document-search.py");
 const pythonBin = process.env.ASSISTANT_PYTHON_BIN || "/usr/bin/python3";
 const once = process.argv.includes("--once");
-const queueProtocolVersion = 9;
+const queueProtocolVersion = 10;
 const researchModel = process.env.ASSISTANT_RESEARCH_MODEL || "gpt-5.6-sol";
 const researchTimeoutMs = Math.max(120_000, Number(process.env.ASSISTANT_RESEARCH_TIMEOUT_MS || 600_000));
 
@@ -1169,12 +1169,58 @@ export function documentSourcesForAnswer(candidates, modelResult) {
   }));
 }
 
+const documentIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function resolveSharedDocumentSearchScopes(job, destinationRoot = vaultRoot) {
+  if (!Array.isArray(job?.sharedDocumentScopes)) return [];
+  return job.sharedDocumentScopes.slice(0, 20).flatMap(scope => {
+    const spaceId = String(scope?.spaceId || "").trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(spaceId) || spaceId === String(job?.spaceId || "").toLowerCase()) {
+      return [];
+    }
+    const documentIds = new Set((Array.isArray(scope?.documentIds) ? scope.documentIds : [])
+      .filter(value => typeof value === "string" && documentIdPattern.test(value))
+      .slice(0, 200));
+    if (!documentIds.size) return [];
+    return [{ root: path.join(destinationRoot, "知识库", spaceId), documentIds }];
+  });
+}
+
+export function searchAccessibleDocuments(
+  question,
+  job,
+  destinationRoot = vaultRoot,
+  limit = 6,
+  options = {},
+) {
+  const candidates = searchLocalDocuments(
+    question,
+    resolveKnowledgeSpaceRoot(job, destinationRoot),
+    10,
+    options,
+  );
+  for (const scope of resolveSharedDocumentSearchScopes(job, destinationRoot)) {
+    candidates.push(...searchLocalDocuments(question, scope.root, 10, options)
+      .filter(source => scope.documentIds.has(String(source.documentId || ""))));
+  }
+  const seen = new Set();
+  return candidates
+    .sort((left, right) => Number(right.score || 0) - Number(left.score || 0))
+    .filter(source => {
+      const id = String(source.documentId || "");
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .slice(0, Math.max(1, Math.min(10, limit)));
+}
+
 async function processIngestJob(job) {
   const raw = String(job.input?.raw || "").trim();
   if (!raw) return runInference(job);
   const classified = await runInference(job);
   if (classified.result?.kind !== "ask") return classified;
-  const candidates = searchLocalDocuments(raw, resolveKnowledgeSpaceRoot(job), 3);
+  const candidates = searchAccessibleDocuments(raw, job, vaultRoot, 3);
   if (!candidates.length) {
     if (classified.result.answer !== "__QUESTION_CLASSIFIED__") return classified;
     return runInference(job, { model: ollamaLargeModel });
@@ -1207,7 +1253,7 @@ async function processIngestJob(job) {
 async function processDocumentQuestionJob(job) {
   const question = String(job.input?.question || "").trim().slice(0, 1_000);
   if (!question) throw new Error("document_question_missing");
-  const candidates = searchLocalDocuments(question, resolveKnowledgeSpaceRoot(job));
+  const candidates = searchAccessibleDocuments(question, job);
   if (!candidates.length) {
     return {
       result: {

@@ -57,6 +57,7 @@ import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import { privacyPageHtml } from "./privacy-page.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
+import { sharedDocumentScopesForViewer } from "./document-access.js";
 import {
   CODEX_QUEUE_POLICY_VERSION,
   CODEX_QUEUE_PROTOCOL_VERSION,
@@ -280,6 +281,7 @@ app.post(`${WORKER_API}/claim`, requireWorker, (req, res) => {
       id: claimed.job.id,
       kind: claimed.job.kind,
       spaceId: knowledgeSpaceIdForUser(claimed.job.userId),
+      sharedDocumentScopes: sharedDocumentScopesForViewer(claimed.job.userId),
       input: claimed.job.input,
       createdAt: claimed.job.createdAt,
     },

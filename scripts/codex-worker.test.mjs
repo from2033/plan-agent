@@ -14,6 +14,7 @@ import {
   resolveKnowledgeSpaceRoot,
   runInference,
   runOllama,
+  searchAccessibleDocuments,
   searchLocalDocuments,
   writeVaultDocument,
 } from "./codex-worker.mjs";
@@ -288,6 +289,39 @@ test("local document search never crosses account roots", () => {
 
     assert.equal(searchLocalDocuments("舒筋健络油", firstRoot, 6, { vectorSearch: false }).length, 1);
     assert.deepEqual(searchLocalDocuments("舒筋健络油", secondRoot, 6, { vectorSearch: false }), []);
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
+  }
+});
+
+test("family document search includes only explicitly granted document ids", () => {
+  const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "assistant-family-search-test-"));
+  try {
+    const viewerRoot = resolveKnowledgeSpaceRoot({ spaceId: spaceOne }, temporaryDir);
+    const ownerRoot = resolveKnowledgeSpaceRoot({ spaceId: spaceTwo }, temporaryDir);
+    const viewerNotes = path.join(viewerRoot, "资料");
+    const ownerNotes = path.join(ownerRoot, "资料");
+    fs.mkdirSync(viewerNotes, { recursive: true });
+    fs.mkdirSync(ownerNotes, { recursive: true });
+    const ownId = "1b472924-15cc-4676-8d3d-f5f947e574fa";
+    const sharedId = "2b472924-15cc-4676-8d3d-f5f947e574fa";
+    const privateId = "3b472924-15cc-4676-8d3d-f5f947e574fa";
+    fs.writeFileSync(path.join(viewerNotes, "自己的资料.md"), `---\ndocument_id: "${ownId}"\ntitle: "自己的资料"\ncategory: "测试"\n---\n共同检索词 自己资料\n`, "utf8");
+    fs.writeFileSync(path.join(ownerNotes, "共享资料.md"), `---\ndocument_id: "${sharedId}"\ntitle: "共享资料"\ncategory: "测试"\n---\n共同检索词 允许共享\n`, "utf8");
+    fs.writeFileSync(path.join(ownerNotes, "私人资料.md"), `---\ndocument_id: "${privateId}"\ntitle: "私人资料"\ncategory: "测试"\n---\n共同检索词 私人秘密\n`, "utf8");
+
+    const results = searchAccessibleDocuments("共同检索词", {
+      spaceId: spaceOne,
+      sharedDocumentScopes: [{ spaceId: spaceTwo, documentIds: [sharedId] }],
+    }, temporaryDir, 6, { vectorSearch: false });
+    assert.deepEqual(new Set(results.map(item => item.documentId)), new Set([ownId, sharedId]));
+    assert.equal(results.some(item => item.documentId === privateId), false);
+
+    const revoked = searchAccessibleDocuments("共同检索词", {
+      spaceId: spaceOne,
+      sharedDocumentScopes: [],
+    }, temporaryDir, 6, { vectorSearch: false });
+    assert.deepEqual(revoked.map(item => item.documentId), [ownId]);
   } finally {
     fs.rmSync(temporaryDir, { recursive: true, force: true });
   }
