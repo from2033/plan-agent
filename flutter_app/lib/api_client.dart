@@ -627,7 +627,7 @@ class ApiClient {
         ? await () async {
             onQueued?.call();
             final jobId = (json as Map<String, dynamic>)['jobId'] as String;
-            return _waitForJob(jobId);
+            return _waitForJob(jobId, timeoutSeconds: 300);
           }()
         : json as Map<String, dynamic>;
     if (_isGuest) await _persistGuestResult(result);

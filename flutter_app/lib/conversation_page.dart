@@ -65,7 +65,9 @@ class _ConversationPageState extends State<ConversationPage> {
   String currentUser = '';
   bool loading = true;
   bool sending = false;
+  bool pollingPendingMessages = false;
   String? error;
+  Timer? pendingMessageTimer;
 
   @override
   void initState() {
@@ -81,6 +83,7 @@ class _ConversationPageState extends State<ConversationPage> {
 
   @override
   void dispose() {
+    pendingMessageTimer?.cancel();
     input.dispose();
     scroll.dispose();
     super.dispose();
@@ -115,6 +118,7 @@ class _ConversationPageState extends State<ConversationPage> {
         loading = false;
         error = null;
       });
+      _syncPendingMessagePolling();
       if (selected != null) _scrollToBottom();
     } catch (exception) {
       if (!mounted) return;
@@ -143,6 +147,7 @@ class _ConversationPageState extends State<ConversationPage> {
         messages = loaded;
         loading = false;
       });
+      _syncPendingMessagePolling();
       _scrollToBottom();
     } catch (exception) {
       if (mounted) {
@@ -155,6 +160,8 @@ class _ConversationPageState extends State<ConversationPage> {
   }
 
   void closeConversation() {
+    pendingMessageTimer?.cancel();
+    pendingMessageTimer = null;
     setState(() {
       conversation = null;
       messages = const [];
@@ -453,7 +460,31 @@ class _ConversationPageState extends State<ConversationPage> {
     );
     if (!mounted || conversation?.id != selected.id) return;
     setState(() => messages = loaded);
+    _syncPendingMessagePolling();
     _scrollToBottom();
+  }
+
+  void _syncPendingMessagePolling() {
+    final shouldPoll =
+        conversation != null && messages.any((item) => item.isPending);
+    if (!shouldPoll) {
+      pendingMessageTimer?.cancel();
+      pendingMessageTimer = null;
+      return;
+    }
+    pendingMessageTimer ??= Timer.periodic(const Duration(seconds: 3), (
+      _,
+    ) async {
+      if (pollingPendingMessages || !mounted) return;
+      pollingPendingMessages = true;
+      try {
+        await _reloadMessages();
+      } catch (_) {
+        // A temporary refresh failure must not hide a server-side AI task.
+      } finally {
+        pollingPendingMessages = false;
+      }
+    });
   }
 
   @override
@@ -575,7 +606,10 @@ class _ConversationPageState extends State<ConversationPage> {
 
   Widget _buildConversationDetail() {
     final selected = conversation!;
-    final showThinking = sending || widget.externalThinking;
+    final showThinking =
+        sending ||
+        widget.externalThinking ||
+        messages.any((item) => item.isPending);
     return Column(
       children: [
         Container(
