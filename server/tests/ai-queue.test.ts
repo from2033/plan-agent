@@ -127,6 +127,14 @@ test("每日全网巡检结果加密保存并可按类型读取最新任务", ()
   assert.equal(claimed?.job.id, job.id);
   const result = {
     overview: "补充发现一条需要核验的住房政策变化。",
+    radar: [
+      { id: "gold", hasReliableSignal: false, summary: "今天没有足够可靠的新信号。" },
+      { id: "housing", hasReliableSignal: true, summary: "住房金融政策出现需要继续核验的新变化。" },
+      { id: "ai", hasReliableSignal: false, summary: "今天没有足够可靠的新信号。" },
+      { id: "programmer", hasReliableSignal: false, summary: "今天没有足够可靠的新信号。" },
+      { id: "policy", hasReliableSignal: true, summary: "住房政策仍处于公开讨论阶段。" },
+      { id: "international", hasReliableSignal: false, summary: "今天没有足够可靠的新信号。" },
+    ],
     events: [{
       sectionId: "china_policy_preview",
       title: "个人住房贷款期限调整进入公开讨论",

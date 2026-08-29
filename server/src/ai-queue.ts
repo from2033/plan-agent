@@ -141,6 +141,11 @@ const WorldPulseResultSchema = z.object({
 
 const WorldDiscoveryResultSchema = z.object({
   overview: z.string().min(1).max(600),
+  radar: z.array(z.object({
+    id: z.enum(["gold", "housing", "ai", "programmer", "policy", "international"]),
+    hasReliableSignal: z.boolean(),
+    summary: z.string().min(1).max(160),
+  })).max(6).default([]),
   events: z.array(z.object({
     sectionId: z.enum([
       "gold_impact", "china_housing", "nanjing_housing", "china_programmer_jobs",
