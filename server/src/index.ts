@@ -59,6 +59,14 @@ import { privacyPageHtml } from "./privacy-page.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
 import { sharedDocumentScopesForViewer } from "./document-access.js";
 import {
+  beginAiInteraction,
+  completeAiInteraction,
+  deleteConversationAccountData,
+  failAiInteraction,
+  listConversationMessages,
+  listConversations,
+} from "./conversation-store.js";
+import {
   CODEX_QUEUE_POLICY_VERSION,
   CODEX_QUEUE_PROTOCOL_VERSION,
   claimAiJob,
@@ -708,6 +716,7 @@ app.post(`${WORKER_API}/jobs/:id/result`, requireWorker, (req, res) => {
       res.status(409).json({ error: "invalid_or_expired_lease" });
       return;
     }
+    completeAiInteraction(job.userId, job.id, job.kind, job.result);
     res.json({ ok: true, jobId: job.id });
   } catch (error) {
     console.error("[codex-worker result] 校验失败:", error);
@@ -740,6 +749,8 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
       );
     }
   }
+  const current = leased ? getAiJob(leased.id, leased.userId) : null;
+  if (leased && current?.status === "FAILED") failAiInteraction(leased.userId, leased.id);
   res.json({ ok: true });
 });
 
@@ -945,6 +956,7 @@ app.delete(`${API}/account`, (req, res) => {
   try {
     deleteUserDocuments(req.userId!);
     deleteFamilyAccountData(req.userId!);
+    deleteConversationAccountData(req.userId!);
     deleteAccountData(req.userId!);
     res.status(204).end();
   } catch (error) {
@@ -1223,6 +1235,7 @@ app.post(`${API}/mistakes/:id/reviews`, (req, res) => {
 
 const DocumentQuestionSchema = z.object({
   question: z.string().trim().min(1).max(1_000),
+  inputMode: z.enum(["voice", "text"]).optional().default("text"),
 });
 
 app.post(`${API}/documents/questions`, (req, res) => {
@@ -1238,6 +1251,7 @@ app.post(`${API}/documents/questions`, (req, res) => {
   const job = enqueueAiJob(req.userId!, "document_question", {
     question: parsed.data.question,
   }, 95);
+  beginAiInteraction(req.userId!, job.id, parsed.data.question, parsed.data.inputMode);
   res.status(202).json({ jobId: job.id, status: job.status });
 });
 
@@ -1377,6 +1391,31 @@ app.get(`${API}/ai-jobs/:id`, (req, res) => {
   res.json({ status: job.status, result: job.result, error: job.error });
 });
 
+app.get(`${API}/conversations`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.json([]);
+    return;
+  }
+  res.json(listConversations(req.userId!));
+});
+
+app.get(`${API}/conversations/:id/messages`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再查看 AI 对话" });
+    return;
+  }
+  const messages = listConversationMessages(
+    req.params.id,
+    req.userId!,
+    Number(req.query.limit || 100),
+  );
+  if (!messages) {
+    res.status(404).json({ error: "对话不存在" });
+    return;
+  }
+  res.json(messages);
+});
+
 app.get(`${API}/entries`, (req, res) => {
   if (isGuestUser(req.userId)) {
     res.json([]);
@@ -1440,6 +1479,8 @@ app.get(`${API}/entries`, (req, res) => {
 // 统一语音入口：先判意图，再分流为「记录 / 存入知识库 / 查询知识库」。
 app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) => {
   const raw = typeof req.body?.raw === "string" ? req.body.raw.trim() : "";
+  const inputMode = req.body?.inputMode === "text" ? "text" as const : "voice" as const;
+  let synchronousInteractionId: string | null = null;
   if (!raw) {
     res.status(400).json({ error: "raw 不能为空" });
     return;
@@ -1465,6 +1506,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           locale: "zh-CN",
           audience: "中国普通用户",
         }, 70);
+        beginAiInteraction(req.userId!, job.id, raw, inputMode);
         bindDocumentJob(document.id, req.userId!, job.id);
         res.status(201).json({
           kind: "research",
@@ -1488,8 +1530,15 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         context: assistantClock(),
         knowledge,
       });
+      if (!isGuestUser(req.userId)) {
+        beginAiInteraction(req.userId!, job.id, raw, inputMode);
+      }
       res.status(202).json({ kind: "pending", jobId: job.id });
       return;
+    }
+    if (!isGuestUser(req.userId)) {
+      synchronousInteractionId = `sync-${crypto.randomUUID()}`;
+      beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode);
     }
     if (intentHint === "save") {
       const knowledge = fallbackKnowledge(raw);
@@ -1500,7 +1549,11 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
             timestamp: new Date().toISOString(),
           }
         : insertKnowledge(req.userId!, knowledge.title, knowledge.content);
-      res.status(201).json({ kind: "save", item });
+      const response = { kind: "save", item };
+      if (synchronousInteractionId) {
+        completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
+      }
+      res.status(201).json(response);
       return;
     }
     const result = await parseEntry(raw);
@@ -1515,7 +1568,11 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
             timestamp: new Date().toISOString(),
           }
         : insertKnowledge(req.userId!, result.title, result.content);
-      res.status(201).json({ kind: "save", item });
+      const response = { kind: "save", item };
+      if (synchronousInteractionId) {
+        completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
+      }
+      res.status(201).json(response);
       return;
     }
 
@@ -1524,10 +1581,15 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       const notes = knowledgeFromRequest(req);
       const ans = await answerQuestion(notes, result.query);
       if (!ans) {
+        if (synchronousInteractionId) failAiInteraction(req.userId!, synchronousInteractionId);
         res.status(503).json({ kind: "ask", answer: "未配置 AI，无法查询知识库。", sources: [] });
         return;
       }
-      res.json({ kind: "ask", answer: ans.answer, sources: ans.sources });
+      const response = { kind: "ask", answer: ans.answer, sources: ans.sources };
+      if (synchronousInteractionId) {
+        completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
+      }
+      res.json(response);
       return;
     }
 
@@ -1576,8 +1638,13 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     if (!isGuestUser(req.userId)) {
       for (const entry of entries) insertEntry(entry, req.userId!);
     }
-    res.status(201).json({ kind: "record", entries, via: result.via });
+    const response = { kind: "record", entries, via: result.via };
+    if (synchronousInteractionId) {
+      completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
+    }
+    res.status(201).json(response);
   } catch (err) {
+    if (synchronousInteractionId) failAiInteraction(req.userId!, synchronousInteractionId);
     console.error("[POST entries] 失败:", err);
     res.status(500).json({ error: "记录失败" });
   }
