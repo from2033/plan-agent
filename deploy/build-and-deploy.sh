@@ -13,18 +13,38 @@ tag="${IMAGE_TAG:-$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD 2>/dev
 image="$registry/$namespace/$repository:$tag"
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-docker info >/dev/null 2>&1 || { command -v colima >/dev/null && colima start; }
-docker info >/dev/null || { echo "Docker engine is not running" >&2; exit 1; }
-docker buildx version >/dev/null || { echo "docker buildx is required" >&2; exit 1; }
-docker buildx build --platform "$platform" --file "$root_dir/deploy/server.Dockerfile" \
-  --tag "$image" --provenance=false --push "$root_dir"
-
 acr_password() {
   if [[ -n "${ACR_PASSWORD:-}" ]]; then printf '%s' "$ACR_PASSWORD"
   elif command -v security >/dev/null; then security find-generic-password -a "$acr_username" -s "$keychain_service" -w
   else echo "Set ACR_PASSWORD or configure macOS Keychain service $keychain_service" >&2; return 1
   fi
 }
+
+local_docker_available=no
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  local_docker_available=yes
+elif command -v colima >/dev/null 2>&1 && colima start >/dev/null 2>&1 \
+  && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  local_docker_available=yes
+fi
+
+if [[ "$local_docker_available" == yes ]]; then
+  docker buildx version >/dev/null || { echo "docker buildx is required" >&2; exit 1; }
+  docker buildx build --platform "$platform" --file "$root_dir/deploy/server.Dockerfile" \
+    --tag "$image" --provenance=false --push "$root_dir"
+else
+  remote_build_dir="/opt/personal-assistant/builds/$tag"
+  echo "Local Docker is unavailable; building on $server"
+  ssh -i "$ssh_key" "$server" "mkdir -p '$remote_build_dir'"
+  git -C "$root_dir" archive HEAD \
+    | ssh -i "$ssh_key" "$server" "tar -x -C '$remote_build_dir'"
+  acr_password | ssh -i "$ssh_key" "$server" \
+    "docker login --username '$acr_username' --password-stdin '$registry' >/dev/null"
+  ssh -i "$ssh_key" "$server" \
+    "docker build --platform '$platform' --file '$remote_build_dir/deploy/server.Dockerfile' \
+      --tag '$image' '$remote_build_dir' && docker push '$image'"
+fi
+
 acr_password | ssh -i "$ssh_key" "$server" "docker login --username '$acr_username' --password-stdin '$registry'" >/dev/null
 logout_registry() { ssh -i "$ssh_key" "$server" "docker logout '$registry'" >/dev/null 2>&1 || true; }
 trap logout_registry EXIT
