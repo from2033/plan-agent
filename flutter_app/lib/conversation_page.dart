@@ -300,6 +300,7 @@ class _ConversationPageState extends State<ConversationPage> {
   Future<void> shareResource() async {
     final selected = conversation;
     if (selected == null) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     try {
       final documents = await widget.api.documents();
       final knowledge = await widget.api.knowledge();
@@ -338,11 +339,12 @@ class _ConversationPageState extends State<ConversationPage> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                       child: TextField(
-                        autofocus: true,
                         decoration: const InputDecoration(
                           hintText: '搜索资料标题或内容',
                           prefixIcon: Icon(Icons.search_rounded),
                         ),
+                        onTapOutside: (_) =>
+                            FocusManager.instance.primaryFocus?.unfocus(),
                         onChanged: (value) =>
                             setSheetState(() => query = value),
                       ),
@@ -661,6 +663,8 @@ class _ConversationPageState extends State<ConversationPage> {
                   onRefresh: _reloadMessages,
                   child: messages.isEmpty && !showThinking
                       ? ListView(
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
                           children: const [
                             SizedBox(height: 90),
                             Icon(
@@ -677,6 +681,8 @@ class _ConversationPageState extends State<ConversationPage> {
                         )
                       : ListView.builder(
                           controller: scroll,
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
                           padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
                           itemCount: messages.length + (showThinking ? 1 : 0),
                           itemBuilder: (context, index) {
@@ -731,6 +737,8 @@ class _ConversationPageState extends State<ConversationPage> {
                       borderSide: BorderSide.none,
                     ),
                   ),
+                  onTapOutside: (_) =>
+                      FocusManager.instance.primaryFocus?.unfocus(),
                   onSubmitted: (_) => send(),
                 ),
               ),
