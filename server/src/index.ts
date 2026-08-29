@@ -415,12 +415,21 @@ function fallbackKnowledge(raw: string): { title: string; content: string } {
   return { title, content };
 }
 
-function knowledgeFromRequest(req: express.Request): Array<{
+function knowledgeFromRequest(req: express.Request, conversationId = ""): Array<{
   id: string;
   title: string;
   content: string;
   timestamp: string;
 }> {
+  if (conversationId && conversationDocumentAccess(conversationId, req.userId!) !== null) {
+    const resources = listConversationResources(conversationId, req.userId!) || [];
+    return resources
+      .filter(resource => resource.resourceType === "knowledge")
+      .flatMap(resource => {
+        const item = getKnowledgeForViewer(resource.resourceId, req.userId!);
+        return item ? [{ id: item.id, title: item.title, content: item.content, timestamp: item.timestamp }] : [];
+      });
+  }
   if (!isGuestUser(req.userId) || !Array.isArray(req.body?.knowledge)) {
     return listKnowledgeForViewer(req.userId!);
   }
@@ -1664,7 +1673,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     }
     const intentHint = knowledgeIntentHint(raw);
     if (codexWorkerOnline()) {
-      const knowledge = knowledgeFromRequest(req);
+      const knowledge = knowledgeFromRequest(req, conversationId);
       const job = enqueueAiJob(req.userId!, "ingest", {
         raw,
         intentHint,
@@ -1720,7 +1729,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
 
     // 查询知识库
     if (result.kind === "ask") {
-      const notes = knowledgeFromRequest(req);
+      const notes = knowledgeFromRequest(req, conversationId);
       const ans = await answerQuestion(notes, result.query);
       if (!ans) {
         if (synchronousInteractionId) failAiInteraction(req.userId!, synchronousInteractionId);
