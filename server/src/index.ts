@@ -47,6 +47,7 @@ import {
   type AssistantClock,
 } from "./entry-date.js";
 import type { Entry } from "./types.js";
+import { extractQqTasks } from "./qq-task-import.js";
 import { knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
 import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
@@ -108,6 +109,8 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 const BASE_PATH = process.env.BASE_PATH ?? "";
 const STUDY_APP_URL = process.env.STUDY_APP_URL || "https://sutyd.5656ai.com/app/";
 const STUDY_SSO_SECRET = process.env.STUDY_SSO_SECRET || "";
+const QQ_TASK_SYNC_SECRET = process.env.QQ_TASK_SYNC_SECRET || "";
+const QQ_TASK_SYNC_USER = process.env.QQ_TASK_SYNC_USER || process.env.PRIMARY_USER || "我";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -133,6 +136,43 @@ app.get(`${API}/health`, (_req, res) => {
         : false,
     voice: nlsConfigured(),
   });
+});
+
+const qqTaskMessageSchema = z.object({
+  externalId: z.string().min(1).max(200),
+  groupId: z.string().min(1).max(100),
+  groupName: z.string().min(1).max(200),
+  sender: z.string().min(1).max(200),
+  content: z.string().min(1).max(20_000),
+  sentAt: z.string().datetime(),
+});
+
+// QQ 采集服务的内部入口：使用独立共享密钥，不经过个人登录态。
+app.post(`${API}/integrations/qq-tasks`, (req, res) => {
+  if (!QQ_TASK_SYNC_SECRET) {
+    res.status(503).json({ error: "QQ群任务同步尚未配置" });
+    return;
+  }
+  const token = String(req.get("x-integration-token") || "");
+  const expected = Buffer.from(QQ_TASK_SYNC_SECRET);
+  const actual = Buffer.from(token);
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+    res.status(401).json({ error: "同步凭证无效" });
+    return;
+  }
+  const parsed = qqTaskMessageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "消息格式无效" });
+    return;
+  }
+  const candidates = extractQqTasks(parsed.data);
+  const created: Entry[] = [];
+  for (const entry of candidates) {
+    if (getEntry(entry.id, QQ_TASK_SYNC_USER)) continue;
+    insertEntry(entry, QQ_TASK_SYNC_USER);
+    created.push(entry);
+  }
+  res.status(201).json({ created: created.length, skipped: candidates.length - created.length, entries: created });
 });
 
 app.post(`${API}/auth/email/code`, async (req, res) => {
