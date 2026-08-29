@@ -18,7 +18,7 @@ void main() {
       if (request.url.path.endsWith('/documents/uploads')) {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         expect(body['totalBytes'], 8 * 1024 * 1024 + 17);
-        expect((body['userNote'] as String).length, 2000);
+        expect((body['userNote'] as String).length, 2500);
         return http.Response(
           jsonEncode({
             'uploadId': '123e4567-e89b-42d3-a456-426614174000',

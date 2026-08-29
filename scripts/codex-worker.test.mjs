@@ -343,3 +343,33 @@ test("plain text documents are extracted and archived as Obsidian notes", () => 
     fs.rmSync(temporaryDir, { recursive: true, force: true });
   }
 });
+
+test("long meeting transcripts are archived without truncating the searchable text", () => {
+  const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "assistant-meeting-note-test-"));
+  try {
+    const transcript = `班会开始。${"这是完整的分段转写内容。".repeat(500)}`;
+    const archived = writeVaultDocument(
+      { input: { documentId: "3b472924-15cc-4676-8d3d-f5f947e574fa" } },
+      "会议录音.wav",
+      Buffer.from("fake-wav"),
+      "",
+      {
+        title: "班会录音",
+        category: "会议录音",
+        summary: "班会录音及自动转写。",
+        people: [],
+        keywords: ["班会"],
+        documentDate: "2026-08-29",
+      },
+      [],
+      temporaryDir,
+      transcript,
+      `知识库/${spaceOne}`,
+    );
+    const note = fs.readFileSync(path.join(temporaryDir, archived.noteRelative), "utf8");
+    assert.ok(note.includes(transcript));
+    assert.match(note, /## 我的说明/);
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
+  }
+});

@@ -14,17 +14,18 @@ test("长录音分片上传后按原顺序合并", () => {
   try {
     const store = new ChunkedUploadStore(root);
     const content = crypto.randomBytes(DOCUMENT_UPLOAD_CHUNK_SIZE + 1234);
+    const transcript = "班会转写".repeat(800);
     const upload = store.create("user-1", {
       fileName: "班会.wav",
       mimeType: "audio/wav",
-      userNote: "班会自动转写",
+      userNote: transcript,
       totalBytes: content.length,
     });
     store.writeChunk("user-1", upload.id, 1, content.subarray(DOCUMENT_UPLOAD_CHUNK_SIZE));
     store.writeChunk("user-1", upload.id, 0, content.subarray(0, DOCUMENT_UPLOAD_CHUNK_SIZE));
     const assembled = store.assemble("user-1", upload.id);
     assert.deepEqual(assembled.content, content);
-    assert.equal(assembled.metadata.userNote, "班会自动转写");
+    assert.equal(assembled.metadata.userNote, transcript);
     store.remove("user-1", upload.id);
     assert.equal(fs.existsSync(path.join(root, upload.id)), false);
   } finally {

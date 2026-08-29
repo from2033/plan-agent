@@ -1003,7 +1003,11 @@ async function processDocumentJob(job, leaseToken) {
   fs.writeFileSync(temporaryFile, content, { mode: 0o600 });
   try {
     const knowledgeRoot = resolveKnowledgeSpaceRoot(job);
-    const userNote = String(job.input?.userNote || "").trim().slice(0, 2_000);
+    // Meeting recordings already contain a durable, chunk-by-chunk transcript.
+    // Keep that complete text in the archived note; only bound the copy sent to
+    // the summarization model so the searchable source itself is never truncated.
+    const userNote = String(job.input?.userNote || "").trim().slice(0, 100_000);
+    const inferenceUserNote = userNote.slice(0, 24_000);
     const extraction = extractDocumentText(temporaryFile, fileName, mimeType, temporaryDir);
     const fallbackTitle = path.basename(fileName, path.extname(fileName));
     let metadata = {
@@ -1017,14 +1021,14 @@ async function processDocumentJob(job, leaseToken) {
       documentDate: "",
     };
     let provider = "local-fallback";
-    if (extraction.text.trim() || userNote) {
+    if (extraction.text.trim() || inferenceUserNote) {
       const inference = await runInference({
         kind: "document",
         input: {
           fileName,
           mimeType,
           extractedText: extraction.text.slice(0, 24_000),
-          userNote,
+          userNote: inferenceUserNote,
         },
       });
       metadata = inference.result;
