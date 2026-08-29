@@ -256,6 +256,17 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                       fontSize: 11,
                     ),
                   ),
+                  if ((coverage['configuredSources'] as num? ?? 0) > 0) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '三层采集：${coverage['authorityCandidates'] ?? 0} 条官网 · ${coverage['newsCandidates'] ?? 0} 条新闻 · ${coverage['hotspotCandidates'] ?? 0} 条热点${(coverage['failedSources'] as num? ?? 0) > 0 ? ' · ${coverage['failedSources']} 个渠道暂时失败' : ''}',
+                      style: const TextStyle(
+                        color: Color(0xff927243),
+                        fontSize: 11,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),

@@ -5,6 +5,8 @@ export interface WorldNewsItem {
   publishedAt: string;
   context?: string;
   verification?: "official" | "multi_source" | "single_source" | "unverified";
+  sourceTier?: "authority" | "news" | "hotspot";
+  sourceId?: string;
 }
 
 export interface WorldPulseSection {
@@ -66,11 +68,120 @@ interface SectionDefinition {
   watchNext: string;
 }
 
+interface DirectSourceDefinition {
+  id: string;
+  name: string;
+  url: string;
+  format: "feed" | "sitemap" | "html" | "nfra_json";
+  sectionIds: string[];
+  pathPattern?: RegExp;
+}
+
+interface CollectionSourceReport {
+  id: string;
+  name: string;
+  tier: "authority" | "news" | "hotspot";
+  ok: boolean;
+  itemCount: number;
+  error?: string;
+}
+
 const GOOGLE_NEWS_BASE = "https://news.google.com/rss";
 const CHINA_POLICY_URL = "https://www.gov.cn/zhengce/zuixin/ZUIXINZHENGCE.json";
 const CHINA_POLICY_PREVIEW_URL = "https://www.ndrc.gov.cn/hdjl/yjzq/";
 const CACHE_MS = 5 * 60 * 1000;
 const MIN_FORCE_INTERVAL_MS = 60 * 1000;
+
+const directSources: DirectSourceDefinition[] = [
+  {
+    id: "pbc",
+    name: "中国人民银行",
+    url: "https://www.pbc.gov.cn/goutongjiaoliu/113456/2986536/index.html",
+    format: "feed",
+    sectionIds: ["gold_impact", "china_housing"],
+  },
+  {
+    id: "mohurd",
+    name: "住房和城乡建设部",
+    url: "https://www.mohurd.gov.cn/gongkai/zc/wjk/index.html",
+    format: "html",
+    sectionIds: ["china_housing"],
+    pathPattern: /\/gongkai\/zc\/wjk\//,
+  },
+  {
+    id: "nfra",
+    name: "国家金融监督管理总局",
+    url: "https://www.nfra.gov.cn/cbircweb/DocInfo/SelectDocByItemIdAndChild?itemId=915&pageSize=30&pageIndex=1",
+    format: "nfra_json",
+    sectionIds: ["gold_impact", "china_housing"],
+  },
+  {
+    id: "nbs",
+    name: "国家统计局",
+    url: "https://www.stats.gov.cn/sj/zxfb/",
+    format: "html",
+    sectionIds: ["china_housing", "china_programmer_jobs"],
+    pathPattern: /\/sj\/zxfb\/\d{6}\//,
+  },
+  {
+    id: "nanjing",
+    name: "南京市人民政府",
+    url: "https://www.nanjing.gov.cn/njxx/",
+    format: "html",
+    sectionIds: ["nanjing_housing"],
+    pathPattern: /nanjing\.gov\.cn\//,
+  },
+  {
+    id: "fed_press",
+    name: "美联储",
+    url: "https://www.federalreserve.gov/feeds/press_all.xml",
+    format: "feed",
+    sectionIds: ["gold_impact", "international"],
+  },
+  {
+    id: "fed_speeches",
+    name: "美联储官员讲话",
+    url: "https://www.federalreserve.gov/feeds/speeches.xml",
+    format: "feed",
+    sectionIds: ["gold_impact", "international"],
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    url: "https://openai.com/news/rss.xml",
+    format: "feed",
+    sectionIds: ["ai_development"],
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    url: "https://www.anthropic.com/sitemap.xml",
+    format: "sitemap",
+    sectionIds: ["ai_development"],
+    pathPattern: /anthropic\.com\/(news|research)\//,
+  },
+  {
+    id: "deepmind",
+    name: "Google DeepMind",
+    url: "https://deepmind.google/blog/rss.xml",
+    format: "feed",
+    sectionIds: ["ai_development"],
+  },
+  {
+    id: "nvidia_blog",
+    name: "NVIDIA 官方博客",
+    url: "https://blogs.nvidia.com/feed/",
+    format: "feed",
+    sectionIds: ["ai_development"],
+  },
+  {
+    id: "nvidia_news",
+    name: "NVIDIA 新闻中心",
+    url: "https://nvidianews.nvidia.com/releases.xml",
+    format: "feed",
+    sectionIds: ["ai_development"],
+  },
+];
 
 const sections: SectionDefinition[] = [
   {
@@ -237,6 +348,151 @@ export function parseGoogleNewsRss(xml: string): WorldNewsItem[] {
   return items;
 }
 
+function stripHtml(value: string): string {
+  return decodeXml(value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "));
+}
+
+function parsePublishedAt(value: string): string | null {
+  const normalized = value.trim().replace(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/, "$1-$2-$3");
+  const chinaDateTime = normalized.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/);
+  const localDate = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const parsed = new Date(chinaDateTime
+    ? `${chinaDateTime[1]}T${chinaDateTime[2]}+08:00`
+    : localDate
+      ? `${localDate[1]}-${localDate[2].padStart(2, "0")}-${localDate[3].padStart(2, "0")}T00:00:00+08:00`
+      : normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+export function parseSyndicationFeed(xml: string, source: string): WorldNewsItem[] {
+  const blocks = [
+    ...Array.from(xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi), match => match[1]),
+    ...Array.from(xml.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi), match => match[1]),
+  ];
+  return blocks.flatMap((block): WorldNewsItem[] => {
+    const title = stripHtml(tag(block, "title"));
+    const hrefMatch = block.match(/<link[^>]+href=["']([^"']+)["'][^>]*\/?>/i);
+    const url = tag(block, "link") || decodeXml(hrefMatch?.[1] || "");
+    const publishedAt = parsePublishedAt(
+      tag(block, "pubDate") || tag(block, "published") || tag(block, "updated") || tag(block, "dc:date"),
+    );
+    if (!title || !/^https?:\/\//i.test(url) || !publishedAt) return [];
+    return [{
+      title: title.slice(0, 240),
+      source,
+      url,
+      publishedAt,
+      verification: "official",
+      sourceTier: "authority",
+    }];
+  });
+}
+
+export function parseSitemap(xml: string, source: string, pathPattern?: RegExp): WorldNewsItem[] {
+  const items: WorldNewsItem[] = [];
+  for (const match of xml.matchAll(/<url(?:\s[^>]*)?>([\s\S]*?)<\/url>/gi)) {
+    const url = tag(match[1], "loc");
+    const publishedAt = parsePublishedAt(tag(match[1], "lastmod"));
+    if (!url || !publishedAt || (pathPattern && !pathPattern.test(url))) continue;
+    const path = decodeURIComponent(new URL(url).pathname).replace(/\/$/, "");
+    const slug = path.split("/").pop()?.replace(/[-_]+/g, " ").trim() || source;
+    items.push({
+      title: slug.slice(0, 240),
+      source,
+      url,
+      publishedAt,
+      verification: "official",
+      sourceTier: "authority",
+    });
+  }
+  return items;
+}
+
+export function parseOfficialHtmlList(
+  html: string,
+  source: string,
+  baseUrl: string,
+  pathPattern?: RegExp,
+): WorldNewsItem[] {
+  const items: WorldNewsItem[] = [];
+  const anchorPattern = /<a\b([^>]*\bhref=["'][^"']+["'][^>]*)>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(anchorPattern)) {
+    const attrs = match[1];
+    const href = attrs.match(/\bhref=["']([^"']+)["']/i)?.[1] || "";
+    let url: URL;
+    try {
+      url = new URL(decodeXml(href), baseUrl);
+    } catch {
+      continue;
+    }
+    if (!/^https:$/.test(url.protocol) || (pathPattern && !pathPattern.test(url.toString()))) continue;
+    const attrTitle = attrs.match(/\btitle=["']([^"']+)["']/i)?.[1] || "";
+    const title = stripHtml(attrTitle || match[2]);
+    if (title.length < 8 || /^(首页|更多|下一页|上一页|无障碍|English)/i.test(title)) continue;
+    const nearby = html.slice(match.index + match[0].length, match.index + match[0].length + 220);
+    const date = nearby.match(/20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}/)?.[0];
+    const publishedAt = date ? parsePublishedAt(date) : null;
+    if (!publishedAt) continue;
+    items.push({
+      title: title.slice(0, 240),
+      source,
+      url: url.toString(),
+      publishedAt,
+      verification: "official",
+      sourceTier: "authority",
+    });
+  }
+  return items;
+}
+
+export function parseHackerNewsHits(value: unknown): WorldNewsItem[] {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { hits?: unknown }).hits)) return [];
+  return (value as { hits: Array<Record<string, unknown>> }).hits.flatMap((hit): WorldNewsItem[] => {
+    const title = String(hit.title || "").trim();
+    const url = String(hit.url || `https://news.ycombinator.com/item?id=${hit.objectID || ""}`).trim();
+    const publishedAt = parsePublishedAt(String(hit.created_at || ""));
+    const points = Number(hit.points || 0);
+    const comments = Number(hit.num_comments || 0);
+    if (!title || !/^https?:\/\//i.test(url) || !publishedAt || points + comments < 40) return [];
+    return [{
+      title,
+      source: "Hacker News 热点线索",
+      url,
+      publishedAt,
+      context: `${points} points，${comments} 条讨论；仅作为热点线索，需回到一手来源核验`,
+      verification: "unverified",
+      sourceTier: "hotspot",
+      sourceId: "hacker_news",
+    }];
+  });
+}
+
+export function parseNfraJson(value: unknown): WorldNewsItem[] {
+  const rows = (value as { data?: { rows?: unknown } } | null)?.data?.rows;
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((entry): WorldNewsItem[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const docId = String(row.docId || "").trim();
+    const title = String(row.docTitle || row.docSubtitle || "").replace(/\s+/g, "").trim();
+    const publishedAt = parsePublishedAt(String(row.publishDate || ""));
+    if (!docId || !title || !publishedAt) return [];
+    const url = new URL("https://www.nfra.gov.cn/cn/view/pages/ItemDetail.html");
+    url.searchParams.set("docId", docId);
+    url.searchParams.set("itemId", "915");
+    url.searchParams.set("generaltype", String(row.generaltype || "0"));
+    return [{
+      title: title.slice(0, 240),
+      source: "国家金融监督管理总局",
+      url: url.toString(),
+      publishedAt,
+      verification: "official",
+      sourceTier: "authority",
+      sourceId: "nfra",
+    }];
+  });
+}
+
 export function parseChinaPolicyJson(value: unknown): WorldNewsItem[] {
   if (!Array.isArray(value)) return [];
   const priorityTerms = [
@@ -253,7 +509,15 @@ export function parseChinaPolicyJson(value: unknown): WorldNewsItem[] {
       const date = String(item.DOCRELPUBTIME || "").trim();
       const published = new Date(`${date}T00:00:00+08:00`);
       if (!title || !/^https:\/\/www\.gov\.cn\//.test(url) || Number.isNaN(published.getTime())) return [];
-      return [{ title, source: "中国政府网", url, publishedAt: published.toISOString() }];
+      return [{
+        title,
+        source: "中国政府网",
+        url,
+        publishedAt: published.toISOString(),
+        verification: "official",
+        sourceTier: "authority",
+        sourceId: "gov_cn",
+      }];
     })
     .map((item, index) => ({ item, index }))
     .sort((left, right) => {
@@ -280,6 +544,9 @@ export function parseChinaPolicyPreviewHtml(html: string): WorldNewsItem[] {
       source: "国家发展改革委",
       url,
       publishedAt: published.toISOString(),
+      verification: "official",
+      sourceTier: "authority",
+      sourceId: "ndrc_preview",
     });
   }
   return items.slice(0, 6);
@@ -311,7 +578,83 @@ async function fetchNewsQuery(query: string): Promise<WorldNewsItem[]> {
     signal: AbortSignal.timeout(12_000),
   });
   if (!response.ok) throw new Error(`news_feed_${response.status}`);
-  return parseGoogleNewsRss(await response.text());
+  return parseGoogleNewsRss(await response.text()).map(item => ({
+    ...item,
+    verification: "single_source",
+    sourceTier: "news",
+  }));
+}
+
+async function fetchDirectSource(definition: DirectSourceDefinition): Promise<WorldNewsItem[]> {
+  let body = "";
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(definition.url, {
+        headers: {
+          "accept": "application/rss+xml, application/atom+xml, application/xml, text/html;q=0.9, */*;q=0.7",
+          "accept-encoding": "gzip, deflate, br",
+          "user-agent": "Mozilla/5.0 (compatible; Daynote/1.0; personal trend reader)",
+        },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`direct_source_${definition.id}_${response.status}`);
+      body = await response.text();
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!body) throw lastError || new Error(`direct_source_${definition.id}_empty`);
+  const parsed = definition.format === "feed"
+    ? parseSyndicationFeed(body, definition.name)
+    : definition.format === "sitemap"
+      ? parseSitemap(body, definition.name, definition.pathPattern)
+      : definition.format === "nfra_json"
+        ? parseNfraJson(JSON.parse(body))
+      : parseOfficialHtmlList(body, definition.name, definition.url, definition.pathPattern);
+  return parsed.map(item => ({ ...item, sourceId: definition.id }));
+}
+
+function isDirectItemRelevant(item: WorldNewsItem, definition: SectionDefinition): boolean {
+  if (definition.id === "ai_development" || definition.id === "international") return true;
+  if (definition.id === "gold_impact") {
+    return /美联储|利率|通胀|货币|金融|经济|债券|美元|gold|federal reserve|inflation|monetary|rate/i.test(item.title);
+  }
+  if (definition.id === "china_housing" || definition.id === "nanjing_housing") {
+    return /房|住房|房地产|房贷|房价|公积金|楼市|住宅|不动产|租赁/.test(item.title);
+  }
+  if (definition.id === "china_programmer_jobs") {
+    return /就业|招聘|工资|软件|信息技术|人工智能|数字经济|计算机|互联网/.test(item.title);
+  }
+  return definition.priorityTerms.some(term => item.title.toLowerCase().includes(term.toLowerCase()));
+}
+
+async function fetchHackerNewsHotspots(): Promise<WorldNewsItem[]> {
+  const queries = ["Anthropic", "OpenAI", "AI agents", "NVIDIA AI"];
+  const since = Math.floor((Date.now() - 7 * 86_400_000) / 1000);
+  const results = await Promise.allSettled(queries.map(async query => {
+    const url = new URL("https://hn.algolia.com/api/v1/search_by_date");
+    url.searchParams.set("tags", "story");
+    url.searchParams.set("query", query);
+    url.searchParams.set("numericFilters", `created_at_i>${since}`);
+    url.searchParams.set("hitsPerPage", "12");
+    const response = await fetch(url, {
+      headers: { "user-agent": "Daynote/1.0 personal-hotspot-reader" },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) throw new Error(`hacker_news_${response.status}`);
+    return parseHackerNewsHits(await response.json());
+  }));
+  const seen = new Set<string>();
+  return results.flatMap(result => result.status === "fulfilled" ? result.value : [])
+    .filter(item => {
+      const key = item.url.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 8);
 }
 
 async function fetchSection(definition: SectionDefinition): Promise<WorldPulseSection> {
@@ -496,21 +839,66 @@ export function worldPulseDiscoveryInput(pulse: WorldPulse, dayKey: string): unk
 }
 
 export async function buildWorldPulseDiscoveryInput(pulse: WorldPulse, dayKey: string): Promise<unknown> {
+  const directResults = await Promise.allSettled(directSources.map(fetchDirectSource));
+  const directReports: CollectionSourceReport[] = directResults.map((result, index) => ({
+    id: directSources[index].id,
+    name: directSources[index].name,
+    tier: "authority",
+    ok: result.status === "fulfilled",
+    itemCount: result.status === "fulfilled" ? result.value.length : 0,
+    ...(result.status === "rejected" ? { error: String(result.reason).slice(0, 160) } : {}),
+  }));
+  const directBySection = new Map<string, WorldNewsItem[]>();
+  directResults.forEach((result, index) => {
+    if (result.status !== "fulfilled") return;
+    for (const sectionId of directSources[index].sectionIds) {
+      directBySection.set(sectionId, [...(directBySection.get(sectionId) || []), ...result.value]);
+    }
+  });
+
+  const hotspotResult = await Promise.allSettled([fetchHackerNewsHotspots()]);
+  const hotspotItems = hotspotResult[0].status === "fulfilled" ? hotspotResult[0].value : [];
+  const hotspotReports: CollectionSourceReport[] = [{
+    id: "hacker_news",
+    name: "Hacker News 热点线索",
+    tier: "hotspot",
+    ok: hotspotResult[0].status === "fulfilled",
+    itemCount: hotspotItems.length,
+    ...(hotspotResult[0].status === "rejected"
+      ? { error: String(hotspotResult[0].reason).slice(0, 160) }
+      : {}),
+  }];
+
+  const searchReports: CollectionSourceReport[] = [];
   const grouped = await Promise.all(sections.map(async definition => {
     const queries = definition.discoveryQueries?.length
       ? definition.discoveryQueries
       : [definition.query || ""];
     const results = await Promise.allSettled(queries.map(fetchNewsQuery));
+    results.forEach((result, index) => searchReports.push({
+      id: `google_news_${definition.id}_${index + 1}`,
+      name: `${definition.title}·宽泛搜索${index + 1}`,
+      tier: "news",
+      ok: result.status === "fulfilled",
+      itemCount: result.status === "fulfilled" ? result.value.length : 0,
+      ...(result.status === "rejected" ? { error: String(result.reason).slice(0, 160) } : {}),
+    }));
     const seen = new Set<string>();
     const cutoff = Date.parse(pulse.updatedAt) - (definition.discoveryMaxAgeDays || 7) * 86_400_000;
-    const candidates = results.flatMap(result => result.status === "fulfilled" ? result.value.slice(0, 4) : [])
+    const direct = (directBySection.get(definition.id) || [])
+      .filter(item => Date.parse(item.publishedAt) >= cutoff)
+      .filter(item => isDirectItemRelevant(item, definition))
+      .sort((left, right) => Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
+    const hotspots = definition.id === "ai_development" ? hotspotItems : [];
+    const searched = results.flatMap(result => result.status === "fulfilled" ? result.value.slice(0, 5) : []);
+    const candidates = [...direct.slice(0, 5), ...searched.slice(0, 6), ...hotspots.slice(0, 2)]
       .filter(item => {
-        const key = item.title.replace(/\s+/g, "").toLowerCase();
+        const key = item.title.replace(/[\s\p{P}\p{S}]+/gu, "").toLowerCase();
         if (!key || seen.has(key) || Date.parse(item.publishedAt) < cutoff) return false;
         seen.add(key);
         return true;
       })
-      .slice(0, 8);
+      .slice(0, 12);
     return { sectionId: definition.id, title: definition.title, candidates };
   }));
   const policyCandidates = pulse.sections
@@ -521,17 +909,41 @@ export async function buildWorldPulseDiscoveryInput(pulse: WorldPulse, dayKey: s
       candidates: section.items.filter(item => section.id === "china_policy_preview"
         || Date.parse(item.publishedAt) >= Date.parse(pulse.updatedAt) - 7 * 86_400_000),
     }));
+  const policyReports: CollectionSourceReport[] = [
+    { id: "gov_cn", name: "中国政府网", tier: "authority", ok: true, itemCount: pulse.sections.find(section => section.id === "china_policy")?.items.length || 0 },
+    { id: "ndrc_preview", name: "国家发展改革委征求意见", tier: "authority", ok: true, itemCount: pulse.sections.find(section => section.id === "china_policy_preview")?.items.length || 0 },
+  ];
   let sourceIndex = 0;
   const candidateGroups = [...grouped, ...policyCandidates].map(group => ({
     ...group,
     candidates: group.candidates.map(candidate => ({ ...candidate, sourceIndex: sourceIndex++ })),
   }));
+  const sourceReports = [...directReports, ...policyReports, ...searchReports, ...hotspotReports];
   return {
     dayKey,
     currentTime: pulse.updatedAt,
     locale: "zh-CN",
     audience: "居住在中国南京的普通用户",
     selectionGoal: "从候选中选出今天真正值得普通人知道的变化，优先直接影响生活、资产、工作与未来趋势的事件",
+    collectionStrategy: {
+      tiers: [
+        "authority：固定官网与一手发布，优先作为事实依据",
+        "news：每个领域多组中英文宽泛搜索，用于发现主流报道与突发变化",
+        "hotspot：高传播讨论只作为线索，必须回到一手或可靠媒体核验",
+      ],
+      sourceReports,
+      totals: {
+        configured: sourceReports.length,
+        succeeded: sourceReports.filter(source => source.ok).length,
+        failed: sourceReports.filter(source => !source.ok).length,
+        authorityCandidates: candidateGroups.flatMap(group => group.candidates)
+          .filter(item => item.sourceTier === "authority").length,
+        newsCandidates: candidateGroups.flatMap(group => group.candidates)
+          .filter(item => item.sourceTier === "news").length,
+        hotspotCandidates: candidateGroups.flatMap(group => group.candidates)
+          .filter(item => item.sourceTier === "hotspot").length,
+      },
+    },
     candidateGroups,
   };
 }

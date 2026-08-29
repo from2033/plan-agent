@@ -424,6 +424,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const candidates = (job.input as {
       candidateGroups?: Array<{ candidates?: Array<{
         sourceIndex?: unknown; title?: unknown; source?: unknown; url?: unknown; publishedAt?: unknown;
+        sourceTier?: unknown;
       }> }>;
     }).candidateGroups?.flatMap(group => group.candidates || []) || [];
     const sourcesByIndex = new Map(candidates.map(source => [Number(source.sourceIndex), source]));
@@ -446,8 +447,8 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
         if (!sources.length) return [];
         const { sourceIndexes: _, ...safeEvent } = event;
         const publishers = new Set(sources.map(source => source.publisher));
-        const hasPrimarySource = sources.some(source =>
-          /中国政府网|人民银行|金融监管总局|国家发展改革委|人力资源和社会保障部|统计局|外交部|财政部|住房和城乡建设部|Anthropic|OpenAI|Google|NVIDIA|英伟达/i.test(source.publisher));
+        const hasPrimarySource = event.sourceIndexes.some(sourceIndex =>
+          sourcesByIndex.get(sourceIndex)?.sourceTier === "authority");
         const verification = hasPrimarySource
           ? "official" as const
           : publishers.size >= 2 ? "multi_source" as const : "single_source" as const;
@@ -752,6 +753,16 @@ app.get(`${API}/world-pulse`, async (req, res) => {
           }>;
         } | undefined)?.candidateGroups
       : undefined) || [];
+    const collectionTotals = completedDiscoveryDay === briefing?.dayKey
+      ? (completedDiscoveryJob?.input as {
+          collectionStrategy?: {
+            totals?: {
+              configured?: unknown; succeeded?: unknown; failed?: unknown;
+              authorityCandidates?: unknown; newsCandidates?: unknown; hotspotCandidates?: unknown;
+            };
+          };
+        } | undefined)?.collectionStrategy?.totals
+      : undefined;
     const candidateCount = completedGroups.reduce(
       (total, group) => total + (group.candidates?.length || 0),
       0,
@@ -773,6 +784,12 @@ app.get(`${API}/world-pulse`, async (req, res) => {
           sections: completedGroups.length,
           candidates: candidateCount,
           sources: sourceCount,
+          configuredSources: Number(collectionTotals?.configured || 0),
+          succeededSources: Number(collectionTotals?.succeeded || 0),
+          failedSources: Number(collectionTotals?.failed || 0),
+          authorityCandidates: Number(collectionTotals?.authorityCandidates || 0),
+          newsCandidates: Number(collectionTotals?.newsCandidates || 0),
+          hotspotCandidates: Number(collectionTotals?.hotspotCandidates || 0),
         },
       } : undefined,
       discoverySchedule: "每天 06:30",
