@@ -168,6 +168,12 @@ class ApiClient {
     return json['user'] as String;
   }
 
+  Future<Uri> studyLaunchUrl() async {
+    final json =
+        await _request('POST', '/study/launch') as Map<String, dynamic>;
+    return Uri.parse(json['url'] as String);
+  }
+
   Future<List<AssistantEntry>> entries() async {
     if (_isGuest) return _guestStore.entries();
     final value = await _request('GET', '/entries') as List<dynamic>;

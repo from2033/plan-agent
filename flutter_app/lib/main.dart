@@ -1547,6 +1547,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       children: [
         _settingsTile(
+          Icons.forum_outlined,
+          'QQ群消息',
+          '查看各群今日消息，汇总资料并打印',
+          openStudyCenter,
+        ),
+        _settingsTile(
           Icons.star_outline_rounded,
           '愿望清单',
           wishCount == 0 ? '还没有记录心愿' : '$wishCount 个心愿',
@@ -1563,6 +1569,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _settingsTile(Icons.logout_rounded, '退出登录', '仅在你明确需要切换账号时使用', logout),
       ],
     );
+  }
+
+  Future<void> openStudyCenter() async {
+    try {
+      final uri = await widget.api.studyLaunchUrl();
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened) throw const ApiException('无法打开QQ群消息中心');
+    } catch (error) {
+      if (!mounted) return;
+      final message = error is ApiException ? error.message : 'QQ群消息中心暂时无法打开';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   Widget _settingsTile(

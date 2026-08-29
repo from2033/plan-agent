@@ -106,6 +106,8 @@ const PORT = Number(process.env.PORT) || 8787;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 // 前端在哪个路径前缀下提供（与 vite base 一致）。
 const BASE_PATH = process.env.BASE_PATH ?? "";
+const STUDY_APP_URL = process.env.STUDY_APP_URL || "https://sutyd.5656ai.com/app/";
+const STUDY_SSO_SECRET = process.env.STUDY_SSO_SECRET || "";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -808,6 +810,31 @@ app.get(`${API}/me`, (req, res) => {
     user: isGuestUser(req.userId) ? "访客" : req.userId,
     guest: isGuestUser(req.userId),
   });
+});
+
+// Create a short-lived, one-time-style launch ticket for the QQ group center.
+// The account id itself is never placed in the URL.
+app.post(`${API}/study/launch`, (req, res) => {
+  if (!STUDY_SSO_SECRET) {
+    res.status(503).json({ error: "QQ群消息中心尚未配置" });
+    return;
+  }
+  const subject = crypto
+    .createHash("sha256")
+    .update(req.userId!)
+    .digest("hex")
+    .slice(0, 32);
+  const payload = Buffer.from(JSON.stringify({
+    sub: subject,
+    exp: Math.floor(Date.now() / 1000) + 120,
+  })).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", STUDY_SSO_SECRET)
+    .update(payload)
+    .digest("hex");
+  const url = new URL(STUDY_APP_URL);
+  url.searchParams.set("sso", `${payload}.${signature}`);
+  res.json({ url: url.toString() });
 });
 
 // App Store account-deletion requirement: deletion is initiated in-app and is
