@@ -18,6 +18,7 @@ import {
   updateEntry,
   repairEntryReminder,
   clearEntryScheduledDate,
+  setEntryScheduledDate,
   listKnowledge,
   insertKnowledge,
   deleteKnowledge,
@@ -36,6 +37,7 @@ import {
   assistantClock,
   entryTiming,
   hasExplicitDateExpression,
+  hasFutureRelativeDateExpression,
   inferReminderTimeFromText,
   inferTimeRangeFromText,
   isFutureObligation,
@@ -1120,6 +1122,18 @@ app.get(`${API}/entries`, (req, res) => {
   const clock = assistantClock();
   const now = new Date(`${clock.currentDate}T${clock.currentTime}:00+08:00`).getTime();
   const entries = listEntries(req.userId!).map((entry) => {
+    if (
+      entry.type === "activity" &&
+      !entry.scheduledDate &&
+      !entry.reminderAt &&
+      hasFutureRelativeDateExpression(entry.raw)
+    ) {
+      entry = setEntryScheduledDate(
+        entry.id,
+        shanghaiDate(entry.timestamp),
+        req.userId!,
+      ) || entry;
+    }
     if (
       entry.type === "memo" &&
       entry.scheduledDate &&

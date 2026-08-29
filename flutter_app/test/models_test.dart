@@ -90,6 +90,27 @@ void main() {
     expect(entry.toJson()['description'], '带孩子理发');
   });
 
+  test('scheduled activities remain todo items until completed', () {
+    final scheduled = AssistantEntry.fromJson({
+      'id': 'scheduled-activity',
+      'type': 'activity',
+      'description': '带孩子理发',
+      'category': '日常',
+      'scheduledDate': '2026-08-29',
+      'timestamp': '2026-08-29T04:00:00.000Z',
+    });
+    final recorded = AssistantEntry.fromJson({
+      'id': 'recorded-activity',
+      'type': 'activity',
+      'description': '进行了学习',
+      'category': '学习',
+      'timestamp': '2026-08-29T01:00:00.000Z',
+    });
+
+    expect(scheduled.isTodoItem, isTrue);
+    expect(recorded.isTodoItem, isFalse);
+  });
+
   test('guest knowledge survives a local JSON round trip', () {
     const original = KnowledgeItem(
       id: 'guest-note-1',

@@ -1298,7 +1298,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildReminderPage() {
     final todayKey = _dateKey(DateTime.now());
     final active = entries
-        .where((entry) => entry.type == EntryType.memo && !entry.done)
+        .where((entry) => entry.isTodoItem && !entry.done)
         .toList();
     final overdue =
         active.where((entry) {
@@ -1328,9 +1328,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         active.where((entry) => _scheduledDateOf(entry) == null).toList()
           ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final completed =
-        entries
-            .where((entry) => entry.type == EntryType.memo && entry.done)
-            .toList()
+        entries.where((entry) => entry.isTodoItem && entry.done).toList()
           ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final scheduled = active
         .where((entry) => scheduledReminderIds.contains(entry.id))

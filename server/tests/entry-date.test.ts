@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   isFutureObligation,
   hasExplicitDateExpression,
+  hasFutureRelativeDateExpression,
   normalizeScheduledDescription,
   reminderTimeAt,
   reminderTimestamp,
@@ -69,6 +70,13 @@ test("只接受用户真正说出的日期", () => {
   assert.equal(hasExplicitDateExpression("今天把平安好车主礼包用了"), true);
   assert.equal(hasExplicitDateExpression("下周一交材料"), true);
   assert.equal(hasExplicitDateExpression("9月3日交材料"), true);
+});
+
+test("旧版活动修复只接受面向未来的相对日期", () => {
+  assert.equal(hasFutureRelativeDateExpression("明天带孩子理发"), true);
+  assert.equal(hasFutureRelativeDateExpression("下周一交材料"), true);
+  assert.equal(hasFutureRelativeDateExpression("今天请朋友吃饭"), false);
+  assert.equal(hasFutureRelativeDateExpression("今天进行了学习"), false);
 });
 
 test("结构化日期后的展示文案不保留会过期的相对日期", () => {

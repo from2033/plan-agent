@@ -91,6 +91,12 @@ export function hasExplicitDateExpression(raw: string): boolean {
   return /(?:今天|今日|明天|明日|后天|大后天|(?:本|这|下|下下)?(?:周|星期|礼拜)[一二三四五六日天]|20\d{2}[\u5e74/-]\d{1,2}[\u6708/-]\d{1,2}[日号]?|\d{1,2}月\d{1,2}[日号])/.test(raw);
 }
 
+// 旧版会把未来活动的目标日期只编码在 timestamp 中，没有保存 scheduledDate。
+// 仅识别明确面向未来的相对日期，避免把“今天学习了”这类已发生记录修成待办。
+export function hasFutureRelativeDateExpression(raw: string): boolean {
+  return /(?:明天|明日|后天|大后天|(?:下|下下)(?:周|星期|礼拜)(?:[一二三四五六日天])?)/.test(raw);
+}
+
 // 日期已经结构化保存后，展示文案不应继续保留会随时间失效的“今天/明天”。
 // 只清理句首日期，避免误伤“准备好明天的材料”这类把相对日期作为宾语的描述。
 export function normalizeScheduledDescription(description: string): string {

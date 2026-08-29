@@ -33,6 +33,11 @@ class AssistantEntry {
 
   bool get hasTimeRange => timeStart != null && timeEnd != null;
 
+  bool get isTodoItem =>
+      type == EntryType.memo ||
+      (type == EntryType.activity &&
+          (scheduledDate != null || reminderAt != null));
+
   String get displayDescription {
     if (scheduledDate == null && reminderAt == null) return description;
     final normalized = description
