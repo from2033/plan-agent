@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
 import type { Entry, ParsedFields, KnowledgeItem } from "./types.js";
 import { encField, encOpt, decField, decOpt } from "./crypto-field.js";
+import { areFamilyMembers, sharedResourceOwner, sharedResourcesForViewer } from "./family-sharing.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 
@@ -144,6 +145,17 @@ export function listEntries(userId: string): Entry[] {
   return (stmtAll.all(userId) as unknown as Row[]).map(rowToEntry);
 }
 
+// QQ 群同步任务属于家庭共享事项。其他账号只合并该分类，不读取同步账号的私人记录。
+export function listEntriesForViewer(userId: string, qqTaskUserId: string): Entry[] {
+  const ownEntries = listEntries(userId);
+  if (userId === qqTaskUserId) return ownEntries;
+  if (!areFamilyMembers(userId, qqTaskUserId)) return ownEntries;
+  const sharedQqTasks = listEntries(qqTaskUserId)
+    .filter((entry) => entry.category === "QQ群任务");
+  return [...ownEntries, ...sharedQqTasks]
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
 export function insertEntry(entry: Entry, userId: string): Entry {
   stmtInsert.run(
     entry.id,
@@ -171,6 +183,21 @@ export function setDone(id: string, done: boolean, userId: string): Entry | null
   if (Number(res.changes) === 0) return null;
   const row = stmtGet.get(id, userId) as unknown as Row | undefined;
   return row ? rowToEntry(row) : null;
+}
+
+// 家庭账号可以共同勾选群任务；其他账号的普通待办仍不可见、不可修改。
+export function setDoneForViewer(
+  id: string,
+  done: boolean,
+  userId: string,
+  qqTaskUserId: string,
+): Entry | null {
+  const ownEntry = getEntry(id, userId);
+  if (ownEntry) return setDone(id, done, userId);
+  if (userId === qqTaskUserId || !areFamilyMembers(userId, qqTaskUserId)) return null;
+  const sharedEntry = getEntry(id, qqTaskUserId);
+  if (!sharedEntry || sharedEntry.category !== "QQ群任务") return null;
+  return setDone(id, done, qqTaskUserId);
 }
 
 export function clearEntryScheduledDate(id: string, userId: string): Entry | null {
@@ -237,6 +264,7 @@ interface KnowledgeRow {
   title: string;
   content: string;
   timestamp: string;
+  user_id?: string;
 }
 
 function rowToKnowledge(r: KnowledgeRow): KnowledgeItem {
@@ -258,6 +286,59 @@ const stmtKnDelete = db.prepare("DELETE FROM knowledge WHERE id = ? AND user_id 
 
 export function listKnowledge(userId: string): KnowledgeItem[] {
   return (stmtKnAll.all(userId) as unknown as KnowledgeRow[]).map(rowToKnowledge);
+}
+
+export type VisibleKnowledgeItem = KnowledgeItem & {
+  ownerUserId: string;
+  sharedWithFamily: boolean;
+  canEdit: boolean;
+};
+
+export function listKnowledgeForViewer(userId: string): VisibleKnowledgeItem[] {
+  const shared = sharedResourcesForViewer(userId, "knowledge");
+  const sharedById = new Map(shared.map((item) => [item.resourceId, item.ownerUserId]));
+  const own = (stmtKnAll.all(userId) as unknown as KnowledgeRow[]).map((row) => ({
+    ...rowToKnowledge(row),
+    ownerUserId: userId,
+    sharedWithFamily: sharedById.get(row.id) === userId,
+    canEdit: true,
+  }));
+  const visibleShared = shared
+    .filter((item) => item.ownerUserId !== userId)
+    .flatMap((item) => {
+      const row = db.prepare(`SELECT id,title,content,timestamp,user_id FROM knowledge
+        WHERE id=? AND user_id=?`).get(item.resourceId, item.ownerUserId) as KnowledgeRow | undefined;
+      return row ? [{
+        ...rowToKnowledge(row),
+        ownerUserId: item.ownerUserId,
+        sharedWithFamily: true,
+        canEdit: false,
+      }] : [];
+    });
+  return [...own, ...visibleShared].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+}
+
+export function getKnowledgeForViewer(id: string, userId: string): VisibleKnowledgeItem | null {
+  const own = db.prepare("SELECT id,title,content,timestamp FROM knowledge WHERE id=? AND user_id=?")
+    .get(id, userId) as KnowledgeRow | undefined;
+  if (own) {
+    return {
+      ...rowToKnowledge(own),
+      ownerUserId: userId,
+      sharedWithFamily: sharedResourceOwner(userId, "knowledge", id) === userId,
+      canEdit: true,
+    };
+  }
+  const owner = sharedResourceOwner(userId, "knowledge", id);
+  if (!owner) return null;
+  const row = db.prepare("SELECT id,title,content,timestamp FROM knowledge WHERE id=? AND user_id=?")
+    .get(id, owner) as KnowledgeRow | undefined;
+  return row ? {
+    ...rowToKnowledge(row),
+    ownerUserId: owner,
+    sharedWithFamily: true,
+    canEdit: false,
+  } : null;
 }
 
 export function insertKnowledge(

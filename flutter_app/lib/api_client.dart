@@ -268,6 +268,45 @@ class ApiClient {
     return value.cast<Map<String, dynamic>>();
   }
 
+  Future<Map<String, dynamic>> family() async {
+    if (_isGuest) return {'family': null, 'invitations': <dynamic>[]};
+    return await _request('GET', '/family') as Map<String, dynamic>;
+  }
+
+  Future<void> inviteFamilyMember(String account) async {
+    await _request(
+      'POST',
+      '/family/invitations',
+      body: {'account': account.trim()},
+    );
+  }
+
+  Future<Map<String, dynamic>> respondToFamilyInvitation(
+    String id, {
+    required bool accept,
+  }) async {
+    return await _request(
+          'POST',
+          '/family/invitations/${Uri.encodeComponent(id)}/respond',
+          body: {'accept': accept},
+        )
+        as Map<String, dynamic>;
+  }
+
+  Future<void> setKnowledgeFamilyShared(String id, bool shared) async {
+    await _request(
+      shared ? 'PUT' : 'DELETE',
+      '/knowledge/${Uri.encodeComponent(id)}/family',
+    );
+  }
+
+  Future<void> setDocumentFamilyShared(String id, bool shared) async {
+    await _request(
+      shared ? 'PUT' : 'DELETE',
+      '/documents/${Uri.encodeComponent(id)}/family',
+    );
+  }
+
   Future<Map<String, dynamic>> worldPulse({bool force = false}) async {
     final value = await _request(
       'GET',

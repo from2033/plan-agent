@@ -8,11 +8,13 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
-import { requireAuth, resolveUserId } from "./auth.js";
+import { PRIMARY_USER, requireAuth, resolveUserId } from "./auth.js";
 import {
   listEntries,
+  listEntriesForViewer,
   insertEntry,
   setDone,
+  setDoneForViewer,
   deleteEntry,
   getEntry,
   updateEntry,
@@ -21,6 +23,7 @@ import {
   clearEntryReminder,
   setEntryScheduledDate,
   listKnowledge,
+  listKnowledgeForViewer,
   insertKnowledge,
   deleteKnowledge,
   importClientData,
@@ -82,12 +85,23 @@ import {
   failDocument,
   findDuplicateDocument,
   getDocument,
+  getDocumentForViewer,
   listDocuments,
+  listDocumentsForViewer,
   readDocumentUpload,
+  readDocumentUploadForViewer,
   registerLocalDocument,
   resolveDocumentEvidence,
   storeDocumentUpload,
 } from "./document-store.js";
+import {
+  deleteFamilyAccountData,
+  getFamilyState,
+  inviteFamilyMember,
+  respondToFamilyInvitation,
+  shareResourceWithFamily,
+  unshareResourceFromFamily,
+} from "./family-sharing.js";
 import {
   chunkedUploadStore,
   MAX_CHUNKED_DOCUMENT_SIZE,
@@ -379,7 +393,7 @@ function knowledgeFromRequest(req: express.Request): Array<{
   timestamp: string;
 }> {
   if (!isGuestUser(req.userId) || !Array.isArray(req.body?.knowledge)) {
-    return listKnowledge(req.userId!);
+    return listKnowledgeForViewer(req.userId!);
   }
   return req.body.knowledge.slice(0, 100).flatMap((value: unknown) => {
     if (!value || typeof value !== "object") return [];
@@ -857,6 +871,43 @@ app.get(`${API}/me`, (req, res) => {
   });
 });
 
+app.get(`${API}/family`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.json({ family: null, invitations: [] });
+    return;
+  }
+  res.json(getFamilyState(req.userId!, PRIMARY_USER));
+});
+
+const FamilyInviteSchema = z.object({ account: z.string().trim().min(1).max(200) });
+app.post(`${API}/family/invitations`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再邀请家庭成员" });
+    return;
+  }
+  const parsed = FamilyInviteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "请输入对方的登录邮箱或账号" });
+    return;
+  }
+  const invitation = inviteFamilyMember(req.userId!, parsed.data.account, PRIMARY_USER);
+  if (!invitation) {
+    res.status(409).json({ error: "无法邀请该账号，可能已加入家庭或邀请对象不正确" });
+    return;
+  }
+  res.status(201).json(invitation);
+});
+
+const FamilyResponseSchema = z.object({ accept: z.boolean() });
+app.post(`${API}/family/invitations/:id/respond`, (req, res) => {
+  const parsed = FamilyResponseSchema.safeParse(req.body);
+  if (!parsed.success || !respondToFamilyInvitation(req.params.id, req.userId!, parsed.data.accept)) {
+    res.status(404).json({ error: "家庭邀请不存在或已处理" });
+    return;
+  }
+  res.json(getFamilyState(req.userId!, PRIMARY_USER));
+});
+
 // Create a short-lived, one-time-style launch ticket for the QQ group center.
 // The account id itself is never placed in the URL.
 app.post(`${API}/study/launch`, (req, res) => {
@@ -891,6 +942,7 @@ app.delete(`${API}/account`, (req, res) => {
   }
   try {
     deleteUserDocuments(req.userId!);
+    deleteFamilyAccountData(req.userId!);
     deleteAccountData(req.userId!);
     res.status(204).end();
   } catch (error) {
@@ -1048,7 +1100,7 @@ app.get(`${API}/documents`, (req, res) => {
     res.json([]);
     return;
   }
-  res.json(listDocuments(req.userId!));
+  res.json(listDocumentsForViewer(req.userId!));
 });
 
 app.get(`${API}/documents/:id/content`, (req, res) => {
@@ -1056,7 +1108,7 @@ app.get(`${API}/documents/:id/content`, (req, res) => {
     res.status(403).json({ error: "请先登录后再查看原始资料" });
     return;
   }
-  const uploaded = readDocumentUpload(req.params.id, req.userId!);
+  const uploaded = readDocumentUploadForViewer(req.params.id, req.userId!);
   if (!uploaded) {
     res.status(404).json({ error: "原始文件不存在或不属于当前账号" });
     return;
@@ -1078,7 +1130,29 @@ app.delete(`${API}/documents/:id`, (req, res) => {
     res.status(404).json({ error: "资料不存在或不属于当前账号" });
     return;
   }
+  unshareResourceFromFamily(req.userId!, "document", document.id);
   discardDocument(document.id, req.userId!);
+  res.status(204).end();
+});
+
+app.put(`${API}/documents/:id/family`, (req, res) => {
+  const document = getDocument(req.params.id, req.userId!);
+  if (!document) {
+    res.status(404).json({ error: "资料不存在" });
+    return;
+  }
+  if (!shareResourceWithFamily(req.userId!, "document", document.id)) {
+    res.status(409).json({ error: "请先加入家庭，再共享资料" });
+    return;
+  }
+  res.json(getDocumentForViewer(document.id, req.userId!));
+});
+
+app.delete(`${API}/documents/:id/family`, (req, res) => {
+  if (!unshareResourceFromFamily(req.userId!, "document", req.params.id)) {
+    res.status(404).json({ error: "这份资料尚未共享" });
+    return;
+  }
   res.status(204).end();
 });
 
@@ -1308,7 +1382,13 @@ app.get(`${API}/entries`, (req, res) => {
   }
   const clock = assistantClock();
   const now = new Date(`${clock.currentDate}T${clock.currentTime}:00+08:00`).getTime();
-  const entries = listEntries(req.userId!).map((entry) => {
+  const entries = listEntriesForViewer(req.userId!, QQ_TASK_SYNC_USER).map((entry) => {
+    // 共享 QQ 群任务不参与当前账号的日期/闹钟修复，避免跨账号写错所有者。
+    if (entry.category === "QQ群任务") {
+      return entry.scheduledDate || entry.reminderAt
+        ? { ...entry, description: normalizeScheduledDescription(entry.description) }
+        : entry;
+    }
     if (
       entry.type === "activity" &&
       !entry.scheduledDate &&
@@ -1334,13 +1414,6 @@ app.get(`${API}/entries`, (req, res) => {
         ...entry,
         description: normalizeScheduledDescription(entry.description),
       };
-    }
-    // QQ 群自动提取的任务只进入待办，不允许旧版修复逻辑补成系统闹钟。
-    if (entry.category === "QQ群任务") {
-      if (entry.reminderAt) {
-        entry = clearEntryReminder(entry.id, req.userId!) || entry;
-      }
-      return entry;
     }
     if (entry.reminderAt || entry.done) return entry;
     const reminderTime = /^\d{2}:\d{2}$/.test(entry.time)
@@ -1510,13 +1583,35 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
 
 // 知识库：列出 / 删除
 app.get(`${API}/knowledge`, (req, res) => {
-  res.json(listKnowledge(req.userId!));
+  res.json(listKnowledgeForViewer(req.userId!));
 });
 
 app.delete(`${API}/knowledge/:id`, (req, res) => {
+  unshareResourceFromFamily(req.userId!, "knowledge", req.params.id);
   const ok = deleteKnowledge(req.params.id, req.userId!);
   if (!ok) {
     res.status(404).json({ error: "知识不存在" });
+    return;
+  }
+  res.status(204).end();
+});
+
+app.put(`${API}/knowledge/:id/family`, (req, res) => {
+  const own = listKnowledge(req.userId!).find((item) => item.id === req.params.id);
+  if (!own) {
+    res.status(404).json({ error: "知识不存在" });
+    return;
+  }
+  if (!shareResourceWithFamily(req.userId!, "knowledge", own.id)) {
+    res.status(409).json({ error: "请先加入家庭，再共享资料" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
+app.delete(`${API}/knowledge/:id/family`, (req, res) => {
+  if (!unshareResourceFromFamily(req.userId!, "knowledge", req.params.id)) {
+    res.status(404).json({ error: "这条知识尚未共享" });
     return;
   }
   res.status(204).end();
@@ -1616,7 +1711,12 @@ app.patch(`${API}/entries/:id`, (req, res) => {
     res.status(400).json({ error: "done 必须是布尔值" });
     return;
   }
-  const updated = setDone(req.params.id, req.body.done, req.userId!);
+  const updated = setDoneForViewer(
+    req.params.id,
+    req.body.done,
+    req.userId!,
+    QQ_TASK_SYNC_USER,
+  );
   if (!updated) {
     res.status(404).json({ error: "记录不存在" });
     return;

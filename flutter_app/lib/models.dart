@@ -147,21 +147,33 @@ class KnowledgeItem {
     required this.id,
     required this.title,
     required this.content,
+    this.ownerUserId = '',
+    this.sharedWithFamily = false,
+    this.canEdit = true,
   });
 
   final String id;
   final String title;
   final String content;
+  final String ownerUserId;
+  final bool sharedWithFamily;
+  final bool canEdit;
 
   factory KnowledgeItem.fromJson(Map<String, dynamic> json) => KnowledgeItem(
     id: json['id'] as String,
     title: json['title'] as String,
     content: json['content'] as String,
+    ownerUserId: json['ownerUserId'] as String? ?? '',
+    sharedWithFamily: json['sharedWithFamily'] as bool? ?? false,
+    canEdit: json['canEdit'] as bool? ?? true,
   );
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'title': title,
     'content': content,
+    if (ownerUserId.isNotEmpty) 'ownerUserId': ownerUserId,
+    'sharedWithFamily': sharedWithFamily,
+    'canEdit': canEdit,
   };
 }

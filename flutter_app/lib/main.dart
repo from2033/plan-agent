@@ -1582,6 +1582,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           wishCount == 0 ? '还没有记录心愿' : '$wishCount 个心愿',
           showWishList,
         ),
+        if (!widget.isGuest)
+          _settingsTile(
+            Icons.family_restroom_rounded,
+            '家庭成员',
+            '邀请家人，共享孩子待办与资料',
+            openFamilyMembers,
+          ),
         if (widget.isGuest)
           _settingsTile(
             Icons.cloud_upload_outlined,
@@ -1601,6 +1608,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         builder: (_) => QqGroupCenterPage(api: widget.api),
       ),
     );
+  }
+
+  Future<void> openFamilyMembers() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FamilyMembersPage(api: widget.api),
+      ),
+    );
+    if (mounted) await refresh();
   }
 
   Widget _settingsTile(
@@ -2143,6 +2159,221 @@ class _ReportSection extends StatelessWidget {
   }
 }
 
+class FamilyMembersPage extends StatefulWidget {
+  const FamilyMembersPage({super.key, required this.api});
+
+  final ApiClient api;
+
+  @override
+  State<FamilyMembersPage> createState() => _FamilyMembersPageState();
+}
+
+class _FamilyMembersPageState extends State<FamilyMembersPage> {
+  Map<String, dynamic>? state;
+  bool loading = true;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    try {
+      final value = await widget.api.family();
+      if (mounted) {
+        setState(() {
+          state = value;
+          error = null;
+        });
+      }
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<void> invite() async {
+    final controller = TextEditingController();
+    final account = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('邀请家庭成员'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.emailAddress,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: '对方登录邮箱或账号',
+            hintText: 'name@example.com',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('发送邀请'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (account == null || account.isEmpty || !mounted) return;
+    try {
+      await widget.api.inviteFamilyMember(account);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('家庭邀请已发送')));
+      }
+      await load();
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    }
+  }
+
+  Future<void> respond(String id, bool accept) async {
+    try {
+      await widget.api.respondToFamilyInvitation(id, accept: accept);
+      await load();
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final family = state?['family'] as Map<String, dynamic>?;
+    final invitations = (state?['invitations'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>();
+    final members = (family?['members'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>();
+    return Scaffold(
+      appBar: AppBar(title: const Text('家庭成员')),
+      floatingActionButton: family == null
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: invite,
+              icon: const Icon(Icons.person_add_alt_1_rounded),
+              label: const Text('邀请家人'),
+            ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: load,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  if (error != null) ...[
+                    Text(
+                      error!,
+                      style: const TextStyle(color: Color(0xffb42318)),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (invitations.isNotEmpty) ...[
+                    const Text(
+                      '待处理邀请',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    for (final invitation in invitations)
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.mark_email_unread_outlined),
+                          title: Text(
+                            invitation['familyName'] as String? ?? '家庭',
+                          ),
+                          subtitle: Text(
+                            '${invitation['invitedBy'] ?? ''} 邀请你加入',
+                          ),
+                          trailing: Wrap(
+                            children: [
+                              TextButton(
+                                onPressed: () =>
+                                    respond(invitation['id'] as String, false),
+                                child: const Text('拒绝'),
+                              ),
+                              FilledButton(
+                                onPressed: () =>
+                                    respond(invitation['id'] as String, true),
+                                child: const Text('接受'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 18),
+                  ],
+                  if (family == null)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 80),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.family_restroom_rounded,
+                            size: 54,
+                            color: Color(0xffaaa59c),
+                          ),
+                          SizedBox(height: 14),
+                          Text(
+                            '还没有加入家庭',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          SizedBox(height: 6),
+                          Text(
+                            '请让家庭成员使用你的登录邮箱发送邀请',
+                            style: TextStyle(color: Color(0xff8a8680)),
+                          ),
+                        ],
+                      ),
+                    )
+                  else ...[
+                    Text(
+                      family['name'] as String? ?? '我的家庭',
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    const Text(
+                      '加入后可以查看家庭群待办，以及明确设为家庭可见的资料。',
+                      style: TextStyle(color: Color(0xff8a8680), height: 1.45),
+                    ),
+                    const SizedBox(height: 16),
+                    for (final member in members)
+                      Card(
+                        child: ListTile(
+                          leading: const CircleAvatar(
+                            child: Icon(Icons.person_outline_rounded),
+                          ),
+                          title: Text(member['userId'] as String? ?? '家庭成员'),
+                          subtitle: Text(
+                            member['role'] == 'owner' ? '家庭管理员' : '家庭成员',
+                          ),
+                        ),
+                      ),
+                  ],
+                  const SizedBox(height: 80),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
 class KnowledgePane extends StatefulWidget {
   const KnowledgePane({
     super.key,
@@ -2603,6 +2834,26 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                       ),
                     ),
                   ),
+                  if (document['canEdit'] != false)
+                    IconButton(
+                      tooltip: document['sharedWithFamily'] == true
+                          ? '停止家庭共享'
+                          : '设为家庭可见',
+                      onPressed: () {
+                        Navigator.pop(context);
+                        unawaited(toggleDocumentFamilyShare(document));
+                      },
+                      icon: Icon(
+                        document['sharedWithFamily'] == true
+                            ? Icons.family_restroom_rounded
+                            : Icons.family_restroom_outlined,
+                      ),
+                    )
+                  else if (document['sharedWithFamily'] == true)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 6),
+                      child: Icon(Icons.family_restroom_rounded),
+                    ),
                   IconButton(
                     tooltip: '关闭',
                     onPressed: () => Navigator.pop(context),
@@ -2812,10 +3063,40 @@ class _KnowledgePaneState extends State<KnowledgePane> {
               _detailLine('原文件', document['fileName'] as String? ?? '资料'),
               if (warnings.isNotEmpty) _detailLine('识别提示', warnings.join('\n')),
               const SizedBox(height: 18),
+              if (document['canEdit'] != false) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      unawaited(toggleDocumentFamilyShare(document));
+                    },
+                    icon: Icon(
+                      document['sharedWithFamily'] == true
+                          ? Icons.family_restroom_rounded
+                          : Icons.family_restroom_outlined,
+                    ),
+                    label: Text(
+                      document['sharedWithFamily'] == true
+                          ? '停止家庭共享'
+                          : '设为家庭可见',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ] else ...[
+                const Chip(
+                  avatar: Icon(Icons.family_restroom_rounded, size: 17),
+                  label: Text('家庭共享资料'),
+                ),
+                const SizedBox(height: 10),
+              ],
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: document['status'] == 'COMPLETE'
+                  onPressed:
+                      document['status'] == 'COMPLETE' &&
+                          document['canEdit'] != false
                       ? () {
                           Navigator.pop(context);
                           addNote(document);
@@ -2825,7 +3106,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                   label: const Text('补充说明（支持语音）'),
                 ),
               ),
-              if (isAudio) ...[
+              if (isAudio && document['canEdit'] != false) ...[
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
@@ -2872,6 +3153,24 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         ),
       ),
     );
+  }
+
+  Future<void> toggleDocumentFamilyShare(Map<String, dynamic> document) async {
+    final shared = document['sharedWithFamily'] == true;
+    try {
+      await widget.api.setDocumentFamilyShared(
+        document['id'] as String,
+        !shared,
+      );
+      await load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(shared ? '已停止家庭共享' : '家庭成员现在可以看到这份资料')),
+        );
+      }
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    }
   }
 
   Future<void> deleteMeetingRecording(Map<String, dynamic> document) async {
@@ -2964,6 +3263,25 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     }
   }
 
+  Future<void> toggleKnowledgeFamilyShare(KnowledgeItem item) async {
+    try {
+      await widget.api.setKnowledgeFamilyShared(
+        item.id,
+        !item.sharedWithFamily,
+      );
+      await load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(item.sharedWithFamily ? '已停止家庭共享' : '家庭成员现在可以看到这条记录'),
+          ),
+        );
+      }
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    }
+  }
+
   void showKnowledgeItem(KnowledgeItem item) {
     showModalBottomSheet<void>(
       context: context,
@@ -3007,16 +3325,31 @@ class _KnowledgePaneState extends State<KnowledgePane> {
               const SizedBox(height: 22),
               Row(
                 children: [
-                  const Chip(label: Text('笔记')),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: () {
-                      Navigator.pop(sheetContext);
-                      unawaited(remove(item));
-                    },
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    label: const Text('删除'),
+                  Chip(
+                    avatar: item.sharedWithFamily
+                        ? const Icon(Icons.family_restroom_rounded, size: 17)
+                        : null,
+                    label: Text(item.sharedWithFamily ? '家庭笔记' : '笔记'),
                   ),
+                  const Spacer(),
+                  if (item.canEdit) ...[
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        unawaited(toggleKnowledgeFamilyShare(item));
+                      },
+                      icon: const Icon(Icons.family_restroom_outlined),
+                      label: Text(item.sharedWithFamily ? '取消共享' : '家庭可见'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(sheetContext);
+                        unawaited(remove(item));
+                      },
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      label: const Text('删除'),
+                    ),
+                  ],
                 ],
               ),
             ],

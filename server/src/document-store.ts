@@ -4,6 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { decField, decryptBuffer, encField, encryptBuffer } from "./crypto-field.js";
+import { sharedResourceOwner, sharedResourcesForViewer } from "./family-sharing.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 const UPLOAD_DIR = process.env.DOCUMENT_UPLOAD_DIR
@@ -58,9 +59,13 @@ export interface StoredDocument {
   storageKind: "uploaded" | "local" | "research";
   createdAt: string;
   updatedAt: string;
+  ownerUserId: string;
+  sharedWithFamily: boolean;
+  canEdit: boolean;
 }
 
 interface DocumentRow {
+  user_id: string;
   id: string;
   file_name: string;
   mime_type: string;
@@ -89,7 +94,10 @@ export function findDuplicateDocument(userId: string, content: Buffer): StoredDo
   return row ? rowToDocument(row) : null;
 }
 
-function rowToDocument(row: DocumentRow): StoredDocument {
+function rowToDocument(
+  row: DocumentRow,
+  metadata?: { sharedWithFamily?: boolean; canEdit?: boolean },
+): StoredDocument {
   return {
     id: row.id,
     fileName: decField(row.file_name),
@@ -107,6 +115,9 @@ function rowToDocument(row: DocumentRow): StoredDocument {
         : "uploaded",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ownerUserId: row.user_id,
+    sharedWithFamily: metadata?.sharedWithFamily || false,
+    canEdit: metadata?.canEdit ?? true,
   };
 }
 
@@ -221,22 +232,59 @@ export function getDocument(id: string, userId: string): StoredDocument | null {
   return row ? rowToDocument(row) : null;
 }
 
+export function getDocumentForViewer(id: string, userId: string): StoredDocument | null {
+  const own = db.prepare("SELECT * FROM documents WHERE id=? AND user_id=?")
+    .get(id, userId) as unknown as DocumentRow | undefined;
+  if (own) {
+    return rowToDocument(own, {
+      sharedWithFamily: sharedResourceOwner(userId, "document", id) === userId,
+      canEdit: true,
+    });
+  }
+  const owner = sharedResourceOwner(userId, "document", id);
+  if (!owner) return null;
+  const row = db.prepare("SELECT * FROM documents WHERE id=? AND user_id=?")
+    .get(id, owner) as unknown as DocumentRow | undefined;
+  return row ? rowToDocument(row, { sharedWithFamily: true, canEdit: false }) : null;
+}
+
 export function resolveDocumentEvidence(
   userId: string,
   documentId: string,
   relatedDocumentIds: string[],
 ): { document: StoredDocument; sourceKind: "uploaded" | "derived" } | null {
-  const direct = getDocument(documentId, userId);
+  const direct = getDocumentForViewer(documentId, userId);
   if (direct) return { document: direct, sourceKind: "uploaded" };
   if (!relatedDocumentIds.length) return null;
-  const related = [...new Set(relatedDocumentIds)].map(id => getDocument(id, userId));
+  const related = [...new Set(relatedDocumentIds)].map(id => getDocumentForViewer(id, userId));
   if (related.some(document => !document)) return null;
   return { document: related[0]!, sourceKind: "derived" };
 }
 
 export function listDocuments(userId: string): StoredDocument[] {
   return (db.prepare("SELECT * FROM documents WHERE user_id=? ORDER BY created_at DESC LIMIT 200")
-    .all(userId) as unknown as DocumentRow[]).map(rowToDocument);
+    .all(userId) as unknown as DocumentRow[]).map((row) => rowToDocument(row));
+}
+
+export function listDocumentsForViewer(userId: string): StoredDocument[] {
+  const shared = sharedResourcesForViewer(userId, "document");
+  const sharedById = new Map(shared.map((item) => [item.resourceId, item.ownerUserId]));
+  const own = (db.prepare("SELECT * FROM documents WHERE user_id=? ORDER BY created_at DESC LIMIT 200")
+    .all(userId) as unknown as DocumentRow[])
+    .map((row) => rowToDocument(row, {
+      sharedWithFamily: sharedById.get(row.id) === userId,
+      canEdit: true,
+    }));
+  const visibleShared = shared
+    .filter((item) => item.ownerUserId !== userId)
+    .flatMap((item) => {
+      const row = db.prepare("SELECT * FROM documents WHERE id=? AND user_id=?")
+        .get(item.resourceId, item.ownerUserId) as unknown as DocumentRow | undefined;
+      return row ? [rowToDocument(row, { sharedWithFamily: true, canEdit: false })] : [];
+    });
+  return [...own, ...visibleShared]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 200);
 }
 
 export function readDocumentUpload(id: string, userId: string): { document: StoredDocument; content: Buffer } | null {
@@ -246,6 +294,17 @@ export function readDocumentUpload(id: string, userId: string): { document: Stor
   if (!fs.existsSync(path)) return null;
   const stored = fs.readFileSync(path);
   return { document, content: decryptBuffer(stored) };
+}
+
+export function readDocumentUploadForViewer(
+  id: string,
+  userId: string,
+): { document: StoredDocument; content: Buffer } | null {
+  const document = getDocumentForViewer(id, userId);
+  if (!document) return null;
+  const storedPath = uploadPath(id);
+  if (!fs.existsSync(storedPath)) return null;
+  return { document, content: decryptBuffer(fs.readFileSync(storedPath)) };
 }
 
 export function completeDocument(id: string, userId: string, result: unknown): void {

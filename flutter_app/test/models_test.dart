@@ -125,6 +125,21 @@ void main() {
     expect(restored.content, original.content);
   });
 
+  test('shared family knowledge is read only for another member', () {
+    final item = KnowledgeItem.fromJson({
+      'id': 'shared-note-1',
+      'title': '孩子体检',
+      'content': '年度体检记录',
+      'ownerUserId': 'primary',
+      'sharedWithFamily': true,
+      'canEdit': false,
+    });
+
+    expect(item.sharedWithFamily, isTrue);
+    expect(item.canEdit, isFalse);
+    expect(item.ownerUserId, 'primary');
+  });
+
   test('long WAV recordings are split into valid transcription chunks', () {
     final payload = Uint8List(120);
     final wav = Uint8List(44 + payload.length);
