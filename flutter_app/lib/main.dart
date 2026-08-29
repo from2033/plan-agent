@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
+import 'conversation_page.dart';
 import 'document_audio_player.dart';
 import 'models.dart';
 import 'persistent_meeting_recorder.dart';
@@ -571,6 +572,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final List<_PendingVoiceTask> pendingTasks = [];
   int _nextPendingId = 1;
   int _knowledgeRevision = 0;
+  int _conversationRevision = 0;
   int _startMeetingRecordingRequest = 0;
   bool showCompletedTodos = false;
   DateTime selectedDate = DateUtils.dateOnly(DateTime.now());
@@ -587,6 +589,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const List<(String, IconData)> tabs = [
     ('首页', Icons.mic_none_rounded),
     ('待办', Icons.checklist_rounded),
+    ('对话', Icons.forum_outlined),
     ('资料库', Icons.folder_copy_outlined),
     ('我的', Icons.person_outline_rounded),
   ];
@@ -622,7 +625,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _requestMeetingRecording() {
     if (!mounted) return;
     setState(() {
-      tab = 2;
+      tab = 3;
       _startMeetingRecordingRequest += 1;
     });
   }
@@ -866,10 +869,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           .timeout(const Duration(seconds: 95));
       await refresh();
       if (mounted && !_disposing) {
-        setState(() => pendingTasks.removeWhere((item) => item.id == task.id));
+        setState(() {
+          pendingTasks.removeWhere((item) => item.id == task.id);
+          _conversationRevision += 1;
+        });
         if (result['kind'] == 'save') {
           setState(() {
-            tab = 2;
+            tab = 3;
             _knowledgeRevision += 1;
           });
           ScaffoldMessenger.of(
@@ -883,15 +889,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         } else if (result['kind'] == 'ask') {
           final answer = result['answer'] as String?;
           if (answer != null && answer.isNotEmpty) {
-            final sources = (result['sources'] as List<dynamic>? ?? const [])
-                .whereType<Map>()
-                .map((source) => Map<String, dynamic>.from(source))
-                .toList();
-            showDialog<void>(
-              context: context,
-              builder: (context) =>
-                  _KnowledgeAnswerDialog(answer: answer, sources: sources),
-            );
+            setState(() => tab = 2);
           }
         }
       }
@@ -902,7 +900,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await Future<void>.delayed(const Duration(seconds: 15));
       await refresh();
       if (mounted && !_disposing) {
-        setState(() => pendingTasks.removeWhere((item) => item.id == task.id));
+        setState(() {
+          pendingTasks.removeWhere((item) => item.id == task.id);
+          _conversationRevision += 1;
+        });
       }
     } catch (exception) {
       if (mounted && !_disposing) {
@@ -1091,7 +1092,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             if (widget.isGuest) _buildGuestBanner(),
             if (error != null) _buildErrorBanner(),
             Expanded(child: _buildCurrentPage()),
-            if (tab == 0) _buildPendingTasks(),
+            if (tab == 0 || tab == 2) _buildPendingTasks(),
             if (tab == 0) _buildVoiceInput(),
           ],
         ),
@@ -1110,8 +1111,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildPageHeader() {
-    const titles = ['今天', '待办', '资料库', '我的'];
-    const subtitles = ['说一句，我来记录和查询', '把没做完的事情理清楚', '长期保存的资料与知识', '心愿与账号'];
+    const titles = ['今天', '待办', '对话', '资料库', '我的'];
+    const subtitles = [
+      '说一句，我来记录和查询',
+      '把没做完的事情理清楚',
+      '每次提问和回答都会保留',
+      '长期保存的资料与知识',
+      '心愿与账号',
+    ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
       child: Row(
@@ -1150,7 +1157,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               icon: const Icon(Icons.public_rounded),
             ),
           IconButton(
-            onPressed: tab == 0 ? refreshHome : refresh,
+            onPressed: tab == 0
+                ? refreshHome
+                : tab == 2
+                ? () => setState(() => _conversationRevision += 1)
+                : refresh,
             tooltip: '刷新',
             icon: const Icon(Icons.refresh_rounded),
           ),
@@ -1164,7 +1175,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return switch (tab) {
       0 => _buildHomePage(),
       1 => _buildReminderPage(),
-      2 => _buildLibraryPage(),
+      2 => _buildConversationPage(),
+      3 => _buildLibraryPage(),
       _ => _buildProfilePage(),
     };
   }
@@ -1479,6 +1491,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildConversationPage() {
+    return ConversationPage(
+      api: widget.api,
+      isGuest: widget.isGuest,
+      revision: _conversationRevision,
+      recording: recording,
+      recognizing: recognizing,
+      onVoiceStart: () => unawaited(startVoice()),
+      onVoiceStop: queueStopVoice,
+      onResult: (result) async {
+        await refresh();
+        if (!mounted) return;
+        setState(() {
+          _conversationRevision += 1;
+          if (result['kind'] == 'save' || result['kind'] == 'research') {
+            _knowledgeRevision += 1;
+          }
+        });
+      },
     );
   }
 
@@ -3765,167 +3799,6 @@ class _KnowledgePaneState extends State<KnowledgePane> {
               ],
             ),
           );
-  }
-}
-
-class _KnowledgeAnswerDialog extends StatelessWidget {
-  const _KnowledgeAnswerDialog({required this.answer, required this.sources});
-
-  final String answer;
-  final List<Map<String, dynamic>> sources;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Row(
-        children: [
-          Icon(Icons.auto_awesome_rounded, size: 21),
-          SizedBox(width: 8),
-          Text('知识库回答'),
-        ],
-      ),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SelectableText(
-                answer,
-                style: const TextStyle(fontSize: 16, height: 1.6),
-              ),
-              if (sources.isNotEmpty) ...[
-                const SizedBox(height: 18),
-                const Divider(height: 1),
-                const SizedBox(height: 14),
-                Text(
-                  '依据资料（${sources.length}）',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 10),
-                for (var index = 0; index < sources.length; index++) ...[
-                  _AnswerSourceCard(index: index + 1, source: sources[index]),
-                  if (index != sources.length - 1) const SizedBox(height: 10),
-                ],
-              ],
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('知道了'),
-        ),
-      ],
-    );
-  }
-}
-
-class _AnswerSourceCard extends StatelessWidget {
-  const _AnswerSourceCard({required this.index, required this.source});
-
-  final int index;
-  final Map<String, dynamic> source;
-
-  @override
-  Widget build(BuildContext context) {
-    final sourceType = source['sourceType'] as String? ?? 'knowledge';
-    final mimeType = source['mimeType'] as String? ?? '';
-    final isDocument = sourceType == 'document';
-    final isDerived = source['sourceKind'] == 'derived';
-    final isImage = isDocument && mimeType.startsWith('image/');
-    final title = (source['title'] as String? ?? '资料').trim();
-    final excerpt = (source['content'] as String? ?? '').trim();
-    final category = (source['category'] as String? ?? '').trim();
-    final evidenceLabel = isDerived
-        ? '整理记录摘录'
-        : isImage
-        ? '图片识别文字'
-        : isDocument
-        ? '原文摘录'
-        : '知识库原文';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xfffffbeb),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xfffde68a)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                isImage
-                    ? Icons.image_outlined
-                    : isDocument
-                    ? Icons.description_outlined
-                    : Icons.notes_rounded,
-                size: 19,
-                color: const Color(0xffb45309),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '$index. $title',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    height: 1.35,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (category.isNotEmpty) ...[
-            const SizedBox(height: 5),
-            Text(
-              category,
-              style: const TextStyle(fontSize: 12, color: Color(0xff78716c)),
-            ),
-          ],
-          if (excerpt.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              evidenceLabel,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Color(0xff92400e),
-              ),
-            ),
-            const SizedBox(height: 4),
-            SelectableText(
-              excerpt,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.5,
-                color: Color(0xff44403c),
-              ),
-            ),
-          ],
-          if (isImage) ...[
-            const SizedBox(height: 8),
-            const Text(
-              '原图保存在家庭 Mac 中，以上内容由图片识别生成，请结合原图核对。',
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.4,
-                color: Color(0xff78716c),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
   }
 }
 

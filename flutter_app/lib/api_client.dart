@@ -262,6 +262,33 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<AiConversation>> conversations() async {
+    if (_isGuest) return const [];
+    final value = await _request('GET', '/conversations') as List<dynamic>;
+    return value
+        .map((item) => AiConversation.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<AiConversationMessage>> conversationMessages(
+    String conversationId, {
+    int limit = 100,
+  }) async {
+    if (_isGuest) return const [];
+    final value =
+        await _request(
+              'GET',
+              '/conversations/${Uri.encodeComponent(conversationId)}/messages?limit=$limit',
+            )
+            as List<dynamic>;
+    return value
+        .map(
+          (item) =>
+              AiConversationMessage.fromJson(item as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
   Future<List<Map<String, dynamic>>> documents() async {
     if (_isGuest) return const [];
     final value = await _request('GET', '/documents') as List<dynamic>;
@@ -517,8 +544,12 @@ class ApiClient {
   Future<Map<String, dynamic>> ingest(
     String raw, {
     void Function()? onQueued,
+    String inputMode = 'voice',
   }) async {
-    final body = <String, dynamic>{'raw': raw};
+    final body = <String, dynamic>{
+      'raw': raw,
+      'inputMode': inputMode == 'text' ? 'text' : 'voice',
+    };
     if (_isGuest) {
       body['knowledge'] = (await _guestStore.knowledge())
           .map((item) => item.toJson())

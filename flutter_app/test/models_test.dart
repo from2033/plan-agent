@@ -140,6 +140,28 @@ void main() {
     expect(item.ownerUserId, 'primary');
   });
 
+  test('AI conversation messages retain status and cited sources', () {
+    final message = AiConversationMessage.fromJson({
+      'id': 'message-1',
+      'conversationId': 'conversation-1',
+      'senderType': 'assistant',
+      'kind': 'answer',
+      'content': '家长会主要讲了开学适应。',
+      'status': 'complete',
+      'metadata': {
+        'sources': [
+          {'id': 'document-1', 'title': '秋季开学家长会'},
+        ],
+      },
+      'createdAt': '2026-08-29T13:00:00.000Z',
+    });
+
+    expect(message.isMine, isFalse);
+    expect(message.isPending, isFalse);
+    expect(message.content, contains('开学适应'));
+    expect((message.metadata['sources'] as List).length, 1);
+  });
+
   test('long WAV recordings are split into valid transcription chunks', () {
     final payload = Uint8List(120);
     final wav = Uint8List(44 + payload.length);

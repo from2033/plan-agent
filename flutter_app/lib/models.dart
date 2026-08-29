@@ -177,3 +177,67 @@ class KnowledgeItem {
     'canEdit': canEdit,
   };
 }
+
+class AiConversation {
+  const AiConversation({
+    required this.id,
+    required this.type,
+    required this.title,
+    required this.memberCount,
+    required this.updatedAt,
+  });
+
+  final String id;
+  final String type;
+  final String title;
+  final int memberCount;
+  final DateTime updatedAt;
+
+  factory AiConversation.fromJson(Map<String, dynamic> json) => AiConversation(
+    id: json['id'] as String,
+    type: json['type'] as String? ?? 'direct_ai',
+    title: json['title'] as String? ?? '我与 AI',
+    memberCount: (json['memberCount'] as num?)?.toInt() ?? 1,
+    updatedAt: DateTime.parse(json['updatedAt'] as String).toLocal(),
+  );
+}
+
+class AiConversationMessage {
+  const AiConversationMessage({
+    required this.id,
+    required this.conversationId,
+    required this.senderType,
+    required this.kind,
+    required this.content,
+    required this.status,
+    required this.metadata,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String conversationId;
+  final String senderType;
+  final String kind;
+  final String content;
+  final String status;
+  final Map<String, dynamic> metadata;
+  final DateTime createdAt;
+
+  bool get isMine => senderType == 'user';
+  bool get isPending => status == 'pending';
+  bool get failed => status == 'failed';
+
+  factory AiConversationMessage.fromJson(Map<String, dynamic> json) =>
+      AiConversationMessage(
+        id: json['id'] as String,
+        conversationId: json['conversationId'] as String,
+        senderType: json['senderType'] as String? ?? 'assistant',
+        kind: json['kind'] as String? ?? 'text',
+        content: json['content'] as String? ?? '',
+        status: json['status'] as String? ?? 'complete',
+        metadata: Map<String, dynamic>.from(
+          json['metadata'] as Map? ?? const <String, dynamic>{},
+        ),
+        createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+      );
+}
