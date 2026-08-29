@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { decField, decryptBuffer, encField, encryptBuffer } from "./crypto-field.js";
 import { sharedResourceOwner, sharedResourcesForViewer } from "./family-sharing.js";
+import { sharedConversationResourcesForViewer } from "./conversation-store.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 const UPLOAD_DIR = process.env.DOCUMENT_UPLOAD_DIR
@@ -241,7 +242,9 @@ export function getDocumentForViewer(id: string, userId: string): StoredDocument
       canEdit: true,
     });
   }
-  const owner = sharedResourceOwner(userId, "document", id);
+  const owner = sharedResourceOwner(userId, "document", id)
+    || sharedConversationResourcesForViewer(userId, "document")
+      .find(item => item.resourceId === id)?.ownerUserId || null;
   if (!owner) return null;
   const row = db.prepare("SELECT * FROM documents WHERE id=? AND user_id=?")
     .get(id, owner) as unknown as DocumentRow | undefined;
@@ -267,7 +270,9 @@ export function listDocuments(userId: string): StoredDocument[] {
 }
 
 export function listDocumentsForViewer(userId: string): StoredDocument[] {
-  const shared = sharedResourcesForViewer(userId, "document");
+  const shared = [...sharedResourcesForViewer(userId, "document"),
+    ...sharedConversationResourcesForViewer(userId, "document")]
+    .filter((item, index, items) => items.findIndex(candidate => candidate.resourceId === item.resourceId) === index);
   const sharedById = new Map(shared.map((item) => [item.resourceId, item.ownerUserId]));
   const own = (db.prepare("SELECT * FROM documents WHERE user_id=? ORDER BY created_at DESC LIMIT 200")
     .all(userId) as unknown as DocumentRow[])

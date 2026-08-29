@@ -46,6 +46,28 @@ db.exec(`
     WHERE job_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_conversation_messages_feed
     ON conversation_messages(conversation_id, created_at, id);
+  CREATE TABLE IF NOT EXISTS conversation_invitations (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    recipient_user_id TEXT NOT NULL,
+    invited_by TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    responded_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_conversation_invitations_recipient
+    ON conversation_invitations(recipient_user_id, status, created_at);
+  CREATE TABLE IF NOT EXISTS conversation_resources (
+    conversation_id TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    owner_user_id TEXT NOT NULL,
+    added_by TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, resource_type, resource_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_conversation_resources_conversation
+    ON conversation_resources(conversation_id, resource_type, added_at);
 `);
 
 export type ConversationType = "direct_ai" | "family_group" | "topic";
@@ -64,6 +86,29 @@ export interface ConversationSummary {
     status: ConversationMessageStatus;
     createdAt: string;
   };
+}
+
+export interface ConversationInvitation {
+  id: string;
+  conversationId: string;
+  conversationTitle: string;
+  invitedBy: string;
+  createdAt: string;
+}
+
+export interface ConversationMember {
+  userId: string;
+  role: "owner" | "member";
+  joinedAt: string;
+}
+
+export interface ConversationResourceGrant {
+  conversationId: string;
+  resourceType: "knowledge" | "document";
+  resourceId: string;
+  ownerUserId: string;
+  addedBy: string;
+  addedAt: string;
 }
 
 export interface ConversationMessage {
@@ -166,6 +211,184 @@ function canViewConversation(conversationId: string, userId: string): boolean {
     .get(conversationId, normalizeUserId(userId)));
 }
 
+function conversationRole(conversationId: string, userId: string): "owner" | "member" | null {
+  const row = db.prepare(`SELECT member_role FROM conversation_members
+    WHERE conversation_id=? AND user_id=? LIMIT 1`)
+    .get(conversationId, normalizeUserId(userId)) as { member_role: "owner" | "member" } | undefined;
+  return row?.member_role || null;
+}
+
+export function createConversation(userId: string, title = "新对话"): string {
+  const owner = normalizeUserId(userId);
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const safeTitle = title.trim().slice(0, 80) || "新对话";
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`INSERT INTO conversations
+      (id,conversation_type,title,owner_user_id,family_space_id,created_at,updated_at)
+      VALUES (?,'topic',?,?,NULL,?,?)`).run(id, safeTitle, owner, now, now);
+    db.prepare(`INSERT INTO conversation_members
+      (conversation_id,user_id,member_role,joined_at) VALUES (?,?,'owner',?)`)
+      .run(id, owner, now);
+    db.exec("COMMIT");
+    return id;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function listConversationMembers(
+  conversationId: string,
+  userId: string,
+): ConversationMember[] | null {
+  if (!canViewConversation(conversationId, userId)) return null;
+  const rows = db.prepare(`SELECT user_id,member_role,joined_at FROM conversation_members
+    WHERE conversation_id=? ORDER BY CASE member_role WHEN 'owner' THEN 0 ELSE 1 END,joined_at`)
+    .all(conversationId) as unknown as Array<{
+      user_id: string; member_role: "owner" | "member"; joined_at: string;
+    }>;
+  return rows.map(row => ({ userId: row.user_id, role: row.member_role, joinedAt: row.joined_at }));
+}
+
+export function inviteConversationMember(
+  conversationId: string,
+  inviterUserId: string,
+  recipientUserId: string,
+): ConversationInvitation | null {
+  const inviter = normalizeUserId(inviterUserId);
+  const recipient = normalizeUserId(recipientUserId);
+  if (conversationRole(conversationId, inviter) !== "owner" || !recipient || recipient === inviter) return null;
+  const conversation = db.prepare(`SELECT title,conversation_type FROM conversations WHERE id=?`)
+    .get(conversationId) as { title: string; conversation_type: ConversationType } | undefined;
+  if (!conversation || conversation.conversation_type === "direct_ai") return null;
+  if (canViewConversation(conversationId, recipient)) return null;
+  const existing = db.prepare(`SELECT id,created_at FROM conversation_invitations
+    WHERE conversation_id=? AND recipient_user_id=? AND status='pending' LIMIT 1`)
+    .get(conversationId, recipient) as { id: string; created_at: string } | undefined;
+  const id = existing?.id || crypto.randomUUID();
+  const now = existing?.created_at || new Date().toISOString();
+  if (!existing) {
+    db.prepare(`INSERT INTO conversation_invitations
+      (id,conversation_id,recipient_user_id,invited_by,status,created_at)
+      VALUES (?,?,?,?, 'pending',?)`).run(id, conversationId, recipient, inviter, now);
+  }
+  return { id, conversationId, conversationTitle: conversation.title, invitedBy: inviter, createdAt: now };
+}
+
+export function listConversationInvitations(userId: string): ConversationInvitation[] {
+  const rows = db.prepare(`SELECT i.id,i.conversation_id,c.title,i.invited_by,i.created_at
+    FROM conversation_invitations i JOIN conversations c ON c.id=i.conversation_id
+    WHERE i.recipient_user_id=? AND i.status='pending' ORDER BY i.created_at DESC`)
+    .all(normalizeUserId(userId)) as unknown as Array<{
+      id: string; conversation_id: string; title: string; invited_by: string; created_at: string;
+    }>;
+  return rows.map(row => ({
+    id: row.id,
+    conversationId: row.conversation_id,
+    conversationTitle: row.title,
+    invitedBy: row.invited_by,
+    createdAt: row.created_at,
+  }));
+}
+
+export function respondToConversationInvitation(
+  invitationId: string,
+  userId: string,
+  accept: boolean,
+): string | null {
+  const recipient = normalizeUserId(userId);
+  const invitation = db.prepare(`SELECT conversation_id FROM conversation_invitations
+    WHERE id=? AND recipient_user_id=? AND status='pending'`)
+    .get(invitationId, recipient) as { conversation_id: string } | undefined;
+  if (!invitation) return null;
+  const now = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`UPDATE conversation_invitations SET status=?,responded_at=? WHERE id=?`)
+      .run(accept ? "accepted" : "declined", now, invitationId);
+    if (accept) {
+      db.prepare(`INSERT OR IGNORE INTO conversation_members
+        (conversation_id,user_id,member_role,joined_at) VALUES (?,?,'member',?)`)
+        .run(invitation.conversation_id, recipient, now);
+      db.prepare(`UPDATE conversations SET conversation_type='family_group',updated_at=? WHERE id=?`)
+        .run(now, invitation.conversation_id);
+      db.prepare(`INSERT INTO conversation_messages
+        (id,conversation_id,sender_type,sender_user_id,message_kind,content,status,job_id,metadata_json,created_at,updated_at)
+        VALUES (?,?,'system',NULL,'status',?,'complete',NULL,?,?,?)`)
+        .run(crypto.randomUUID(), invitation.conversation_id, encField(`${recipient} 已加入对话`),
+          encField("{}"), now, now);
+    }
+    db.exec("COMMIT");
+    return invitation.conversation_id;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function addConversationResource(
+  conversationId: string,
+  userId: string,
+  resourceType: "knowledge" | "document",
+  resourceId: string,
+  ownerUserId: string,
+): boolean {
+  const member = normalizeUserId(userId);
+  if (!canViewConversation(conversationId, member)) return false;
+  db.prepare(`INSERT OR IGNORE INTO conversation_resources
+    (conversation_id,resource_type,resource_id,owner_user_id,added_by,added_at)
+    VALUES (?,?,?,?,?,?)`).run(conversationId, resourceType, resourceId,
+      normalizeUserId(ownerUserId), member, new Date().toISOString());
+  return true;
+}
+
+export function listConversationResources(
+  conversationId: string,
+  userId: string,
+): ConversationResourceGrant[] | null {
+  if (!canViewConversation(conversationId, userId)) return null;
+  const rows = db.prepare(`SELECT * FROM conversation_resources
+    WHERE conversation_id=? ORDER BY added_at DESC`).all(conversationId) as unknown as Array<{
+      conversation_id: string; resource_type: "knowledge" | "document"; resource_id: string;
+      owner_user_id: string; added_by: string; added_at: string;
+    }>;
+  return rows.map(row => ({
+    conversationId: row.conversation_id,
+    resourceType: row.resource_type,
+    resourceId: row.resource_id,
+    ownerUserId: row.owner_user_id,
+    addedBy: row.added_by,
+    addedAt: row.added_at,
+  }));
+}
+
+export function sharedConversationResourcesForViewer(
+  userId: string,
+  resourceType: "knowledge" | "document",
+): Array<{ resourceId: string; ownerUserId: string }> {
+  const rows = db.prepare(`SELECT DISTINCT r.resource_id,r.owner_user_id
+    FROM conversation_resources r JOIN conversation_members m ON m.conversation_id=r.conversation_id
+    WHERE m.user_id=? AND r.resource_type=?`)
+    .all(normalizeUserId(userId), resourceType) as unknown as Array<{
+      resource_id: string; owner_user_id: string;
+    }>;
+  return rows.map(row => ({ resourceId: row.resource_id, ownerUserId: row.owner_user_id }));
+}
+
+export function conversationDocumentGrants(
+  conversationId: string,
+  userId: string,
+): Array<{ resourceId: string; ownerUserId: string }> | null {
+  const members = listConversationMembers(conversationId, userId);
+  if (!members) return null;
+  if (members.length <= 1) return null;
+  return (listConversationResources(conversationId, userId) || [])
+    .filter(resource => resource.resourceType === "document")
+    .map(resource => ({ resourceId: resource.resourceId, ownerUserId: resource.ownerUserId }));
+}
+
 function nextConversationTimestamp(conversationId: string, after = ""): string {
   const row = db.prepare("SELECT updated_at FROM conversations WHERE id=?")
     .get(conversationId) as { updated_at: string } | undefined;
@@ -181,9 +404,11 @@ export function beginAiInteraction(
   jobId: string,
   content: string,
   inputMode: "voice" | "text" = "voice",
+  requestedConversationId?: string,
 ): string {
   const owner = normalizeUserId(userId);
-  const conversationId = ensureDirectAiConversation(owner);
+  const conversationId = requestedConversationId || ensureDirectAiConversation(owner);
+  if (!canViewConversation(conversationId, owner)) throw new Error("conversation_forbidden");
   const now = nextConversationTimestamp(conversationId);
   const id = `user-${jobId}`;
   db.prepare(`INSERT OR IGNORE INTO conversation_messages
@@ -395,10 +620,16 @@ export function deleteConversationAccountData(userId: string): void {
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const conversation of owned) {
+      db.prepare("DELETE FROM conversation_invitations WHERE conversation_id=?").run(conversation.id);
+      db.prepare("DELETE FROM conversation_resources WHERE conversation_id=?").run(conversation.id);
       db.prepare("DELETE FROM conversation_messages WHERE conversation_id=?").run(conversation.id);
       db.prepare("DELETE FROM conversation_members WHERE conversation_id=?").run(conversation.id);
       db.prepare("DELETE FROM conversations WHERE id=?").run(conversation.id);
     }
+    db.prepare("DELETE FROM conversation_invitations WHERE recipient_user_id=? OR invited_by=?")
+      .run(owner, owner);
+    db.prepare("DELETE FROM conversation_resources WHERE owner_user_id=? OR added_by=?")
+      .run(owner, owner);
     db.prepare("DELETE FROM conversation_members WHERE user_id=?").run(owner);
     db.exec("COMMIT");
   } catch (error) {

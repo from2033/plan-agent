@@ -24,6 +24,7 @@ import {
   setEntryScheduledDate,
   listKnowledge,
   listKnowledgeForViewer,
+  getKnowledgeForViewer,
   insertKnowledge,
   deleteKnowledge,
   importClientData,
@@ -57,14 +58,21 @@ import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import { privacyPageHtml } from "./privacy-page.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
-import { sharedDocumentScopesForViewer } from "./document-access.js";
+import { conversationDocumentAccess, sharedDocumentScopesForViewer } from "./document-access.js";
 import {
+  addConversationResource,
   beginAiInteraction,
   completeAiInteraction,
+  createConversation,
   deleteConversationAccountData,
   failAiInteraction,
+  inviteConversationMember,
+  listConversationInvitations,
+  listConversationMembers,
   listConversationMessages,
+  listConversationResources,
   listConversations,
+  respondToConversationInvitation,
 } from "./conversation-store.js";
 import {
   CODEX_QUEUE_POLICY_VERSION,
@@ -280,6 +288,12 @@ app.post(`${WORKER_API}/claim`, requireWorker, (req, res) => {
     res.status(204).end();
     return;
   }
+  const requestedConversationId = String(
+    (claimed.job.input as { conversationId?: unknown })?.conversationId || "",
+  );
+  const conversationAccess = requestedConversationId
+    ? conversationDocumentAccess(requestedConversationId, claimed.job.userId)
+    : null;
   res.json({
     protocolVersion: CODEX_QUEUE_PROTOCOL_VERSION,
     policyVersion: CODEX_QUEUE_POLICY_VERSION,
@@ -289,7 +303,12 @@ app.post(`${WORKER_API}/claim`, requireWorker, (req, res) => {
       id: claimed.job.id,
       kind: claimed.job.kind,
       spaceId: knowledgeSpaceIdForUser(claimed.job.userId),
-      sharedDocumentScopes: sharedDocumentScopesForViewer(claimed.job.userId),
+      ...(conversationAccess
+        ? {
+            primaryDocumentIds: conversationAccess.primaryDocumentIds,
+            sharedDocumentScopes: conversationAccess.sharedDocumentScopes,
+          }
+        : { sharedDocumentScopes: sharedDocumentScopesForViewer(claimed.job.userId) }),
       input: claimed.job.input,
       createdAt: claimed.job.createdAt,
     },
@@ -1236,6 +1255,7 @@ app.post(`${API}/mistakes/:id/reviews`, (req, res) => {
 const DocumentQuestionSchema = z.object({
   question: z.string().trim().min(1).max(1_000),
   inputMode: z.enum(["voice", "text"]).optional().default("text"),
+  conversationId: z.string().uuid().optional(),
 });
 
 app.post(`${API}/documents/questions`, (req, res) => {
@@ -1250,8 +1270,15 @@ app.post(`${API}/documents/questions`, (req, res) => {
   }
   const job = enqueueAiJob(req.userId!, "document_question", {
     question: parsed.data.question,
+    ...(parsed.data.conversationId ? { conversationId: parsed.data.conversationId } : {}),
   }, 95);
-  beginAiInteraction(req.userId!, job.id, parsed.data.question, parsed.data.inputMode);
+  beginAiInteraction(
+    req.userId!,
+    job.id,
+    parsed.data.question,
+    parsed.data.inputMode,
+    parsed.data.conversationId,
+  );
   res.status(202).json({ jobId: job.id, status: job.status });
 });
 
@@ -1399,6 +1426,116 @@ app.get(`${API}/conversations`, (req, res) => {
   res.json(listConversations(req.userId!));
 });
 
+const CreateConversationSchema = z.object({
+  title: z.string().trim().max(80).optional().default("新对话"),
+});
+
+app.post(`${API}/conversations`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再新建对话" });
+    return;
+  }
+  const parsed = CreateConversationSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "对话名称无效" });
+    return;
+  }
+  const id = createConversation(req.userId!, parsed.data.title);
+  res.status(201).json({ id });
+});
+
+app.get(`${API}/conversation-invitations`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.json([]);
+    return;
+  }
+  res.json(listConversationInvitations(req.userId!));
+});
+
+const ConversationInvitationResponseSchema = z.object({ accept: z.boolean() });
+app.post(`${API}/conversation-invitations/:id/respond`, (req, res) => {
+  const parsed = ConversationInvitationResponseSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "邀请处理方式无效" });
+    return;
+  }
+  const conversationId = respondToConversationInvitation(
+    req.params.id,
+    req.userId!,
+    parsed.data.accept,
+  );
+  if (!conversationId) {
+    res.status(404).json({ error: "邀请不存在或已经处理" });
+    return;
+  }
+  res.json({ conversationId, accepted: parsed.data.accept });
+});
+
+app.get(`${API}/conversations/:id/members`, (req, res) => {
+  const members = listConversationMembers(req.params.id, req.userId!);
+  if (!members) {
+    res.status(404).json({ error: "对话不存在" });
+    return;
+  }
+  res.json(members);
+});
+
+const InviteConversationMemberSchema = z.object({
+  account: z.string().trim().min(1).max(320),
+});
+app.post(`${API}/conversations/:id/invitations`, (req, res) => {
+  const parsed = InviteConversationMemberSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "请输入要邀请的账号" });
+    return;
+  }
+  const invitation = inviteConversationMember(
+    req.params.id,
+    req.userId!,
+    parsed.data.account,
+  );
+  if (!invitation) {
+    res.status(409).json({ error: "无法邀请：仅群主可邀请，且私人默认对话不能直接公开" });
+    return;
+  }
+  res.status(201).json(invitation);
+});
+
+app.get(`${API}/conversations/:id/resources`, (req, res) => {
+  const resources = listConversationResources(req.params.id, req.userId!);
+  if (!resources) {
+    res.status(404).json({ error: "对话不存在" });
+    return;
+  }
+  res.json(resources);
+});
+
+app.put(`${API}/conversations/:id/resources/:type/:resourceId`, (req, res) => {
+  const resourceType = req.params.type;
+  if (resourceType !== "document" && resourceType !== "knowledge") {
+    res.status(400).json({ error: "资料类型无效" });
+    return;
+  }
+  const resource = resourceType === "document"
+    ? getDocument(req.params.resourceId, req.userId!)
+    : getKnowledgeForViewer(req.params.resourceId, req.userId!);
+  if (!resource || ("canEdit" in resource && resource.canEdit === false)) {
+    res.status(404).json({ error: "只能把自己拥有的资料加入群聊" });
+    return;
+  }
+  if (!addConversationResource(
+    req.params.id,
+    req.userId!,
+    resourceType,
+    req.params.resourceId,
+    req.userId!,
+  )) {
+    res.status(404).json({ error: "对话不存在" });
+    return;
+  }
+  res.status(201).json({ ok: true });
+});
+
 app.get(`${API}/conversations/:id/messages`, (req, res) => {
   if (isGuestUser(req.userId)) {
     res.status(403).json({ error: "请先登录后再查看 AI 对话" });
@@ -1480,6 +1617,9 @@ app.get(`${API}/entries`, (req, res) => {
 app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) => {
   const raw = typeof req.body?.raw === "string" ? req.body.raw.trim() : "";
   const inputMode = req.body?.inputMode === "text" ? "text" as const : "voice" as const;
+  const conversationId = typeof req.body?.conversationId === "string"
+    ? req.body.conversationId.trim().slice(0, 100)
+    : "";
   let synchronousInteractionId: string | null = null;
   if (!raw) {
     res.status(400).json({ error: "raw 不能为空" });
@@ -1505,8 +1645,9 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           requestedAt: new Date().toISOString(),
           locale: "zh-CN",
           audience: "中国普通用户",
+          ...(conversationId ? { conversationId } : {}),
         }, 70);
-        beginAiInteraction(req.userId!, job.id, raw, inputMode);
+        beginAiInteraction(req.userId!, job.id, raw, inputMode, conversationId || undefined);
         bindDocumentJob(document.id, req.userId!, job.id);
         res.status(201).json({
           kind: "research",
@@ -1529,16 +1670,17 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         intentHint,
         context: assistantClock(),
         knowledge,
+        ...(conversationId ? { conversationId } : {}),
       });
       if (!isGuestUser(req.userId)) {
-        beginAiInteraction(req.userId!, job.id, raw, inputMode);
+        beginAiInteraction(req.userId!, job.id, raw, inputMode, conversationId || undefined);
       }
       res.status(202).json({ kind: "pending", jobId: job.id });
       return;
     }
     if (!isGuestUser(req.userId)) {
       synchronousInteractionId = `sync-${crypto.randomUUID()}`;
-      beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode);
+      beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode, conversationId || undefined);
     }
     if (intentHint === "save") {
       const knowledge = fallbackKnowledge(raw);

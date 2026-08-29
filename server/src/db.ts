@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import type { Entry, ParsedFields, KnowledgeItem } from "./types.js";
 import { encField, encOpt, decField, decOpt } from "./crypto-field.js";
 import { areFamilyMembers, sharedResourceOwner, sharedResourcesForViewer } from "./family-sharing.js";
+import { sharedConversationResourcesForViewer } from "./conversation-store.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 
@@ -295,7 +296,9 @@ export type VisibleKnowledgeItem = KnowledgeItem & {
 };
 
 export function listKnowledgeForViewer(userId: string): VisibleKnowledgeItem[] {
-  const shared = sharedResourcesForViewer(userId, "knowledge");
+  const shared = [...sharedResourcesForViewer(userId, "knowledge"),
+    ...sharedConversationResourcesForViewer(userId, "knowledge")]
+    .filter((item, index, items) => items.findIndex(candidate => candidate.resourceId === item.resourceId) === index);
   const sharedById = new Map(shared.map((item) => [item.resourceId, item.ownerUserId]));
   const own = (stmtKnAll.all(userId) as unknown as KnowledgeRow[]).map((row) => ({
     ...rowToKnowledge(row),
@@ -329,7 +332,9 @@ export function getKnowledgeForViewer(id: string, userId: string): VisibleKnowle
       canEdit: true,
     };
   }
-  const owner = sharedResourceOwner(userId, "knowledge", id);
+  const owner = sharedResourceOwner(userId, "knowledge", id)
+    || sharedConversationResourcesForViewer(userId, "knowledge")
+      .find(item => item.resourceId === id)?.ownerUserId || null;
   if (!owner) return null;
   const row = db.prepare("SELECT id,title,content,timestamp FROM knowledge WHERE id=? AND user_id=?")
     .get(id, owner) as KnowledgeRow | undefined;

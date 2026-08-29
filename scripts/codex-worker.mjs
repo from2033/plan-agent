@@ -36,7 +36,7 @@ const visionOcrScript = path.join(scriptDir, "vision-ocr.swift");
 const documentSearchScript = path.join(scriptDir, "document-search.py");
 const pythonBin = process.env.ASSISTANT_PYTHON_BIN || "/usr/bin/python3";
 const once = process.argv.includes("--once");
-const queueProtocolVersion = 10;
+const queueProtocolVersion = 11;
 const researchModel = process.env.ASSISTANT_RESEARCH_MODEL || "gpt-5.6-sol";
 const researchTimeoutMs = Math.max(120_000, Number(process.env.ASSISTANT_RESEARCH_TIMEOUT_MS || 600_000));
 
@@ -1262,12 +1262,19 @@ export function searchAccessibleDocuments(
   options = {},
 ) {
   const ownRoot = resolveKnowledgeSpaceRoot(job, destinationRoot);
+  const primaryDocumentIds = Array.isArray(job?.primaryDocumentIds)
+    ? new Set(job.primaryDocumentIds
+      .filter(value => typeof value === "string" && documentIdPattern.test(value))
+      .slice(0, 200))
+    : null;
   const candidates = searchLocalDocuments(
     question,
     ownRoot,
     10,
     options,
-  ).map(source => enrichDocumentSearchResult(source, ownRoot));
+  ).filter(source => primaryDocumentIds === null
+    || primaryDocumentIds.has(String(source.documentId || "")))
+    .map(source => enrichDocumentSearchResult(source, ownRoot));
   for (const scope of resolveSharedDocumentSearchScopes(job, destinationRoot)) {
     candidates.push(...searchLocalDocuments(question, scope.root, 10, options)
       .filter(source => scope.documentIds.has(String(source.documentId || "")))

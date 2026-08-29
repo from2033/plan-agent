@@ -318,6 +318,13 @@ test("family document search includes only explicitly granted document ids", () 
     assert.deepEqual(new Set(results.map(item => item.documentId)), new Set([ownId, sharedId]));
     assert.equal(results.some(item => item.documentId === privateId), false);
 
+    const groupResults = searchAccessibleDocuments("共同检索词", {
+      spaceId: spaceOne,
+      primaryDocumentIds: [],
+      sharedDocumentScopes: [{ spaceId: spaceTwo, documentIds: [sharedId] }],
+    }, temporaryDir, 6, { vectorSearch: false });
+    assert.deepEqual(groupResults.map(item => item.documentId), [sharedId]);
+
     const recentResults = searchAccessibleDocuments("今天最新的共同检索词", {
       spaceId: spaceOne,
       input: { context: { currentDate: "2026-08-29" } },

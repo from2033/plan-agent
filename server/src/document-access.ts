@@ -1,5 +1,6 @@
 import { sharedResourcesForViewer } from "./family-sharing.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
+import { conversationDocumentGrants } from "./conversation-store.js";
 
 export interface SharedDocumentScope {
   spaceId: string;
@@ -21,4 +22,30 @@ export function sharedDocumentScopesForViewer(userId: string): SharedDocumentSco
     spaceId: knowledgeSpaceIdForUser(ownerUserId),
     documentIds: [...documentIds].slice(0, 200),
   }));
+}
+
+export function conversationDocumentAccess(
+  conversationId: string,
+  userId: string,
+): { primaryDocumentIds: string[]; sharedDocumentScopes: SharedDocumentScope[] } | null {
+  const grants = conversationDocumentGrants(conversationId, userId);
+  if (grants === null) return null;
+  const normalizedUser = userId.includes("@") ? userId.toLowerCase() : userId;
+  const primaryDocumentIds = grants
+    .filter(grant => grant.ownerUserId === normalizedUser)
+    .map(grant => grant.resourceId);
+  const byOwner = new Map<string, Set<string>>();
+  for (const grant of grants) {
+    if (grant.ownerUserId === normalizedUser) continue;
+    const ids = byOwner.get(grant.ownerUserId) || new Set<string>();
+    ids.add(grant.resourceId);
+    byOwner.set(grant.ownerUserId, ids);
+  }
+  return {
+    primaryDocumentIds: [...new Set(primaryDocumentIds)].slice(0, 200),
+    sharedDocumentScopes: [...byOwner.entries()].slice(0, 20).map(([ownerUserId, documentIds]) => ({
+      spaceId: knowledgeSpaceIdForUser(ownerUserId),
+      documentIds: [...documentIds].slice(0, 200),
+    })),
+  };
 }

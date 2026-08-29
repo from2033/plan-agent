@@ -65,3 +65,42 @@ test("记录和保存动作也留下 AI 回执，失败任务保留失败状态"
   assert.equal(messages.at(-2)?.content, "已记录：报名");
   assert.equal(messages.at(-1)?.status, "failed");
 });
+
+test("专题对话可邀请成员，接受后共享群消息和指定资料", () => {
+  const owner = "owner@example.com";
+  const member = "member@example.com";
+  const conversationId = conversations.createConversation(owner, "孩子入学");
+  const invitation = conversations.inviteConversationMember(conversationId, owner, member);
+  assert.ok(invitation);
+  assert.equal(conversations.listConversationMessages(conversationId, member), null);
+  assert.equal(conversations.listConversationInvitations(member).length, 1);
+  assert.equal(
+    conversations.respondToConversationInvitation(invitation!.id, member, true),
+    conversationId,
+  );
+  assert.equal(conversations.listConversationMembers(conversationId, member)?.length, 2);
+
+  const documentId = crypto.randomUUID();
+  assert.equal(conversations.addConversationResource(
+    conversationId,
+    owner,
+    "document",
+    documentId,
+    owner,
+  ), true);
+  assert.deepEqual(
+    conversations.sharedConversationResourcesForViewer(member, "document"),
+    [{ resourceId: documentId, ownerUserId: owner }],
+  );
+
+  const jobId = crypto.randomUUID();
+  conversations.beginAiInteraction(member, jobId, "学校几点报到？", "text", conversationId);
+  conversations.completeAiInteraction(member, jobId, "ingest", {
+    kind: "ask",
+    answer: "上午八点报到。",
+    sources: [],
+  });
+  const messages = conversations.listConversationMessages(conversationId, owner)!;
+  assert.equal(messages.at(-2)?.senderUserId, member);
+  assert.equal(messages.at(-1)?.content, "上午八点报到。");
+});
