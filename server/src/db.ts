@@ -124,6 +124,9 @@ const stmtClearScheduledDate = db.prepare(
 const stmtSetScheduledDate = db.prepare(
   "UPDATE entries SET scheduled_date = ? WHERE id = ? AND user_id = ?",
 );
+const stmtClearReminder = db.prepare(
+  "UPDATE entries SET reminder_at = NULL WHERE id = ? AND user_id = ?",
+);
 const stmtDelete = db.prepare("DELETE FROM entries WHERE id = ? AND user_id = ?");
 const stmtGet = db.prepare("SELECT * FROM entries WHERE id = ? AND user_id = ?");
 const stmtRepairReminder = db.prepare(`UPDATE entries SET
@@ -178,6 +181,12 @@ export function clearEntryScheduledDate(id: string, userId: string): Entry | nul
 
 export function setEntryScheduledDate(id: string, scheduledDate: string, userId: string): Entry | null {
   const res = stmtSetScheduledDate.run(scheduledDate, id, userId);
+  if (Number(res.changes) === 0) return null;
+  return getEntry(id, userId);
+}
+
+export function clearEntryReminder(id: string, userId: string): Entry | null {
+  const res = stmtClearReminder.run(id, userId);
   if (Number(res.changes) === 0) return null;
   return getEntry(id, userId);
 }

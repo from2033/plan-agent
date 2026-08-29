@@ -18,6 +18,7 @@ import {
   updateEntry,
   repairEntryReminder,
   clearEntryScheduledDate,
+  clearEntryReminder,
   setEntryScheduledDate,
   listKnowledge,
   insertKnowledge,
@@ -1228,6 +1229,13 @@ app.get(`${API}/entries`, (req, res) => {
         ...entry,
         description: normalizeScheduledDescription(entry.description),
       };
+    }
+    // QQ 群自动提取的任务只进入待办，不允许旧版修复逻辑补成系统闹钟。
+    if (entry.category === "QQ群任务") {
+      if (entry.reminderAt) {
+        entry = clearEntryReminder(entry.id, req.userId!) || entry;
+      }
+      return entry;
     }
     if (entry.reminderAt || entry.done) return entry;
     const reminderTime = /^\d{2}:\d{2}$/.test(entry.time)
