@@ -441,10 +441,11 @@ class _ConversationPageState extends State<ConversationPage> {
         text,
         inputMode: 'text',
         conversationId: selected.id,
+        waitForCompletion: false,
         onQueued: () => unawaited(_reloadMessages()),
       );
       await _reloadMessages();
-      await widget.onResult(result);
+      if (result['kind'] != 'pending') await widget.onResult(result);
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
       await _reloadMessages();
@@ -456,6 +457,7 @@ class _ConversationPageState extends State<ConversationPage> {
   Future<void> _reloadMessages() async {
     final selected = conversation;
     if (selected == null) return;
+    final hadPending = messages.any((item) => item.isPending);
     final loaded = await widget.api.conversationMessages(
       selected.id,
       limit: 150,
@@ -464,6 +466,9 @@ class _ConversationPageState extends State<ConversationPage> {
     setState(() => messages = loaded);
     _syncPendingMessagePolling();
     _scrollToBottom();
+    if (hadPending && !loaded.any((item) => item.isPending)) {
+      unawaited(widget.onResult(const {'kind': 'conversation_complete'}));
+    }
   }
 
   void _syncPendingMessagePolling() {

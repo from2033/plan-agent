@@ -609,6 +609,7 @@ class ApiClient {
     void Function()? onQueued,
     String inputMode = 'voice',
     String? conversationId,
+    bool waitForCompletion = true,
   }) async {
     final body = <String, dynamic>{
       'raw': raw,
@@ -623,12 +624,10 @@ class ApiClient {
     }
     final response = await _send('POST', '/entries', body: body);
     final json = _decode(response);
-    final result = response.statusCode == 202
-        ? await () async {
-            onQueued?.call();
-            final jobId = (json as Map<String, dynamic>)['jobId'] as String;
-            return _waitForJob(jobId, timeoutSeconds: 300);
-          }()
+    final queued = response.statusCode == 202;
+    if (queued) onQueued?.call();
+    final result = queued && waitForCompletion
+        ? await _waitForJob((json as Map<String, dynamic>)['jobId'] as String)
         : json as Map<String, dynamic>;
     if (_isGuest) await _persistGuestResult(result);
     return result;
