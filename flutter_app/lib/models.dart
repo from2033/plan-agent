@@ -207,6 +207,7 @@ class AiConversationMessage {
     required this.id,
     required this.conversationId,
     required this.senderType,
+    required this.senderUserId,
     required this.kind,
     required this.content,
     required this.status,
@@ -217,13 +218,15 @@ class AiConversationMessage {
   final String id;
   final String conversationId;
   final String senderType;
+  final String? senderUserId;
   final String kind;
   final String content;
   final String status;
   final Map<String, dynamic> metadata;
   final DateTime createdAt;
 
-  bool get isMine => senderType == 'user';
+  bool isMineFor(String userId) =>
+      senderType == 'user' && senderUserId == userId;
   bool get isPending => status == 'pending';
   bool get failed => status == 'failed';
 
@@ -232,6 +235,7 @@ class AiConversationMessage {
         id: json['id'] as String,
         conversationId: json['conversationId'] as String,
         senderType: json['senderType'] as String? ?? 'assistant',
+        senderUserId: json['senderUserId'] as String?,
         kind: json['kind'] as String? ?? 'text',
         content: json['content'] as String? ?? '',
         status: json['status'] as String? ?? 'complete',
@@ -239,5 +243,27 @@ class AiConversationMessage {
           json['metadata'] as Map? ?? const <String, dynamic>{},
         ),
         createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+      );
+}
+
+class ConversationInvitation {
+  const ConversationInvitation({
+    required this.id,
+    required this.conversationId,
+    required this.conversationTitle,
+    required this.invitedBy,
+  });
+
+  final String id;
+  final String conversationId;
+  final String conversationTitle;
+  final String invitedBy;
+
+  factory ConversationInvitation.fromJson(Map<String, dynamic> json) =>
+      ConversationInvitation(
+        id: json['id'] as String,
+        conversationId: json['conversationId'] as String,
+        conversationTitle: json['conversationTitle'] as String? ?? '群聊',
+        invitedBy: json['invitedBy'] as String? ?? '',
       );
 }

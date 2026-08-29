@@ -270,6 +270,69 @@ class ApiClient {
         .toList();
   }
 
+  Future<String> createConversation(String title) async {
+    final value =
+        await _request('POST', '/conversations', body: {'title': title.trim()})
+            as Map<String, dynamic>;
+    return value['id'] as String;
+  }
+
+  Future<List<ConversationInvitation>> conversationInvitations() async {
+    if (_isGuest) return const [];
+    final value =
+        await _request('GET', '/conversation-invitations') as List<dynamic>;
+    return value
+        .map(
+          (item) =>
+              ConversationInvitation.fromJson(item as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
+  Future<String?> respondToConversationInvitation(
+    String id, {
+    required bool accept,
+  }) async {
+    final value =
+        await _request(
+              'POST',
+              '/conversation-invitations/${Uri.encodeComponent(id)}/respond',
+              body: {'accept': accept},
+            )
+            as Map<String, dynamic>;
+    return value['conversationId'] as String?;
+  }
+
+  Future<List<Map<String, dynamic>>> conversationMembers(String id) async {
+    final value =
+        await _request(
+              'GET',
+              '/conversations/${Uri.encodeComponent(id)}/members',
+            )
+            as List<dynamic>;
+    return value.cast<Map<String, dynamic>>();
+  }
+
+  Future<void> inviteConversationMember(String id, String account) async {
+    await _request(
+      'POST',
+      '/conversations/${Uri.encodeComponent(id)}/invitations',
+      body: {'account': account.trim()},
+    );
+  }
+
+  Future<void> addConversationResource(
+    String conversationId,
+    String resourceType,
+    String resourceId,
+  ) async {
+    await _request(
+      'PUT',
+      '/conversations/${Uri.encodeComponent(conversationId)}/resources/'
+          '${Uri.encodeComponent(resourceType)}/${Uri.encodeComponent(resourceId)}',
+    );
+  }
+
   Future<List<AiConversationMessage>> conversationMessages(
     String conversationId, {
     int limit = 100,
@@ -545,10 +608,13 @@ class ApiClient {
     String raw, {
     void Function()? onQueued,
     String inputMode = 'voice',
+    String? conversationId,
   }) async {
     final body = <String, dynamic>{
       'raw': raw,
       'inputMode': inputMode == 'text' ? 'text' : 'voice',
+      if (conversationId != null && conversationId.isNotEmpty)
+        'conversationId': conversationId,
     };
     if (_isGuest) {
       body['knowledge'] = (await _guestStore.knowledge())

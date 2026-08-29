@@ -156,7 +156,7 @@ void main() {
       'createdAt': '2026-08-29T13:00:00.000Z',
     });
 
-    expect(message.isMine, isFalse);
+    expect(message.isMineFor('current@example.com'), isFalse);
     expect(message.isPending, isFalse);
     expect(message.content, contains('开学适应'));
     expect((message.metadata['sources'] as List).length, 1);

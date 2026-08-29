@@ -526,10 +526,15 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 class _PendingVoiceTask {
-  _PendingVoiceTask({required this.id, required this.text});
+  _PendingVoiceTask({
+    required this.id,
+    required this.text,
+    this.conversationId,
+  });
 
   final int id;
   String text;
+  final String? conversationId;
   String status = '等待处理';
   String? errorMessage;
 
@@ -573,6 +578,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _nextPendingId = 1;
   int _knowledgeRevision = 0;
   int _conversationRevision = 0;
+  String? _activeConversationId;
   int _startMeetingRecordingRequest = 0;
   bool showCompletedTodos = false;
   DateTime selectedDate = DateUtils.dateOnly(DateTime.now());
@@ -788,7 +794,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       backgroundProcessing = true;
       final audio = await voice.stopRecording();
       if (!mounted || _disposing) return;
-      final task = _PendingVoiceTask(id: _nextPendingId++, text: '刚刚的语音');
+      final task = _PendingVoiceTask(
+        id: _nextPendingId++,
+        text: '刚刚的语音',
+        conversationId: _activeConversationId,
+      );
       task.status = '识别语音中';
       setState(() {
         pendingTasks.insert(0, task);
@@ -858,6 +868,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final result = await widget.api
           .ingest(
             task.text,
+            conversationId: task.conversationId,
             onQueued: () {
               if (mounted && !_disposing) {
                 setState(() => task.status = '信息处理中');
@@ -1503,6 +1514,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       recognizing: recognizing,
       onVoiceStart: () => unawaited(startVoice()),
       onVoiceStop: queueStopVoice,
+      onConversationChanged: (id) => _activeConversationId = id,
+      externalThinking: pendingTasks.any(
+        (task) => !task.failed && task.conversationId == _activeConversationId,
+      ),
       onResult: (result) async {
         await refresh();
         if (!mounted) return;
