@@ -21,6 +21,7 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
   private var documentPickerResult: FlutterResult?
   private var capturedCameraImages: [UIImage] = []
   private var recordingProcessingTask: UIBackgroundTaskIdentifier = .invalid
+  private var recordingProcessingReferences = 0
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -95,15 +96,28 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
   }
 
   private func beginRecordingProcessingTask() {
-    endRecordingProcessingTask()
+    recordingProcessingReferences += 1
+    guard recordingProcessingTask == .invalid else { return }
     recordingProcessingTask = UIApplication.shared.beginBackgroundTask(
       withName: "Finish recording upload"
     ) { [weak self] in
-      self?.endRecordingProcessingTask()
+      self?.expireRecordingProcessingTask()
     }
   }
 
   private func endRecordingProcessingTask() {
+    guard recordingProcessingReferences > 0 else { return }
+    recordingProcessingReferences -= 1
+    guard recordingProcessingReferences == 0 else { return }
+    finishRecordingProcessingTask()
+  }
+
+  private func expireRecordingProcessingTask() {
+    recordingProcessingReferences = 0
+    finishRecordingProcessingTask()
+  }
+
+  private func finishRecordingProcessingTask() {
     guard recordingProcessingTask != .invalid else { return }
     UIApplication.shared.endBackgroundTask(recordingProcessingTask)
     recordingProcessingTask = .invalid

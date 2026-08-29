@@ -733,6 +733,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       recognizing = true;
     });
     var queued = false;
+    var backgroundProcessing = false;
     try {
       await _voiceStart;
       if (!_voiceReady) return;
@@ -743,6 +744,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await voice.cancel();
         throw const ApiException('按住多说一会儿再松手哦');
       }
+      await voice.beginProcessing();
+      backgroundProcessing = true;
       final audio = await voice.stopRecording();
       if (!mounted || _disposing) return;
       final task = _PendingVoiceTask(id: _nextPendingId++, text: '刚刚的语音');
@@ -753,9 +756,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
       queued = true;
       unawaited(_transcribeAndProcess(task, audio));
+      // 后台任务的所有权交给异步上传流程，避免 stopVoice 的 finally 提前释放。
+      backgroundProcessing = false;
     } catch (e) {
       if (mounted && !_disposing) setState(() => error = e.toString());
     } finally {
+      if (backgroundProcessing) await voice.endProcessing();
       _voiceReady = false;
       _voiceStart = null;
       _pressStartedAt = null;
@@ -769,6 +775,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _PendingVoiceTask task,
     List<int> audio,
   ) async {
+    var backgroundProcessing = true;
+    Future<void> finishBackgroundProcessing() async {
+      if (!backgroundProcessing) return;
+      backgroundProcessing = false;
+      await voice.endProcessing();
+    }
+
     try {
       final text = await voice
           .transcribe(audio)
@@ -779,7 +792,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         task.text = text.trim();
         task.status = '分类排队中';
       });
-      await _processPending(task);
+      await _processPending(
+        task,
+        onQueued: () => unawaited(finishBackgroundProcessing()),
+      );
     } catch (exception) {
       if (mounted && !_disposing) {
         final message = _voiceFailureMessage(exception, transcribing: true);
@@ -789,10 +805,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           error = message;
         });
       }
+    } finally {
+      await finishBackgroundProcessing();
     }
   }
 
-  Future<void> _processPending(_PendingVoiceTask task) async {
+  Future<void> _processPending(
+    _PendingVoiceTask task, {
+    void Function()? onQueued,
+  }) async {
     try {
       final result = await widget.api
           .ingest(
@@ -801,6 +822,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               if (mounted && !_disposing) {
                 setState(() => task.status = '信息处理中');
               }
+              onQueued?.call();
             },
           )
           // ApiClient 自己会持续轮询任务；这里留足本地模型失败后回退云端的时间。

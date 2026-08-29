@@ -69,6 +69,22 @@ class VoiceService {
 
   Future<String> transcribe(List<int> audio) => api.transcribeAudio(audio);
 
+  Future<void> beginProcessing() async {
+    try {
+      await _recordingChannel.invokeMethod<void>('beginProcessing');
+    } catch (_) {
+      // 非 iOS 平台或系统拒绝后台任务时仍可在前台继续处理。
+    }
+  }
+
+  Future<void> endProcessing() async {
+    try {
+      await _recordingChannel.invokeMethod<void>('endProcessing');
+    } catch (_) {
+      // 与 beginProcessing 对称；原生通道不可用时无需清理。
+    }
+  }
+
   Future<String> transcribeLong(List<int> audio) async {
     final chunks = splitWavForTranscription(Uint8List.fromList(audio));
     final parts = <String>[];
