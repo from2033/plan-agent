@@ -40,6 +40,11 @@ export interface WorldPulseAnalysis {
 
 export interface WorldPulseDiscovery {
   overview: string;
+  radar: Array<{
+    id: "gold" | "housing" | "ai" | "programmer" | "policy" | "international";
+    hasReliableSignal: boolean;
+    summary: string;
+  }>;
   events: Array<{
     sectionId: string;
     title: string;
@@ -113,7 +118,7 @@ const directSources: DirectSourceDefinition[] = [
     name: "国家金融监督管理总局",
     url: "https://www.nfra.gov.cn/cbircweb/DocInfo/SelectDocByItemIdAndChild?itemId=915&pageSize=30&pageIndex=1",
     format: "nfra_json",
-    sectionIds: ["gold_impact", "china_housing"],
+    sectionIds: ["china_housing"],
   },
   {
     id: "nbs",
@@ -242,12 +247,14 @@ const sections: SectionDefinition[] = [
     title: "中国程序员市场与职场",
     query: "(程序员 OR 软件开发工程师 OR IT招聘) (就业 OR 招聘 OR 薪资 OR 裁员 OR 职场) 中国 when:7d",
     discoveryQueries: [
-      "中国 (程序员 OR 软件工程师 OR 开发者) (招聘 OR 裁员 OR 薪资 OR 就业) when:7d",
-      "(site:mohrss.gov.cn OR site:stats.gov.cn) (人工智能 OR 信息技术 OR 软件) (招聘 OR 就业 OR 工资) when:14d",
-      "(AI招聘 OR 人工智能岗位 OR 大模型人才 OR 应届生招聘) 中国 when:7d",
-      "(developer jobs OR software engineer hiring OR tech layoffs) China when:7d",
+      "中国 (程序员 OR 软件工程师 OR 开发者) (招聘 OR 裁员 OR 薪资 OR 就业) when:30d",
+      "(程序员 OR 软件工程师) (BOSS直聘 OR 智联招聘 OR 猎聘 OR 拉勾 OR 脉脉) (招聘 OR 薪资 OR 岗位) when:30d",
+      "(腾讯 OR 阿里 OR 字节跳动 OR 华为 OR 美团) (程序员 OR 软件工程师 OR 校招 OR 社招 OR 裁员) when:30d",
+      "(site:mohrss.gov.cn OR site:stats.gov.cn OR site:miit.gov.cn) (人工智能 OR 信息技术 OR 软件) (招聘 OR 就业 OR 工资 OR 运行情况) when:30d",
+      "(AI招聘 OR 人工智能岗位 OR 大模型人才 OR 应届生招聘) 中国 when:30d",
+      "(developer jobs OR software engineer hiring OR tech layoffs) China when:30d",
     ],
-    discoveryMaxAgeDays: 10,
+    discoveryMaxAgeDays: 30,
     priorityTerms: [
       "程序员", "软件开发", "工程师", "招聘", "就业", "岗位", "薪资", "裁员",
       "校招", "社招", "外包", "技能",
@@ -263,6 +270,8 @@ const sections: SectionDefinition[] = [
       "(Dario Amodei OR Sam Altman OR Demis Hassabis OR Jensen Huang) (essay OR interview OR views OR viral) when:7d",
       "(site:anthropic.com OR site:openai.com OR site:deepmind.google OR site:blogs.nvidia.com) AI when:7d",
       "(Anthropic OR OpenAI OR Google DeepMind OR 英伟达 OR Meta AI) when:3d",
+      "(Anthropic OR OpenAI OR xAI OR DeepMind) (融资 OR 营收 OR 上市 OR 估值 OR 企业客户 OR 用户) when:7d",
+      "(AI智能体 OR 企业AI OR 推理成本 OR 数据中心 OR AI芯片) (落地 OR 收入 OR 投资 OR 发布) when:7d",
       "(AI大模型 OR 智能体 OR AI芯片 OR 机器人 OR 具身智能) when:3d",
       "(AI长文 OR AI观点 OR 阅读量 OR 围观 OR 爆火) when:7d",
       "(AI essay OR AI launch OR AI research OR AI viral) when:3d",
@@ -630,6 +639,22 @@ function isDirectItemRelevant(item: WorldNewsItem, definition: SectionDefinition
   return definition.priorityTerms.some(term => item.title.toLowerCase().includes(term.toLowerCase()));
 }
 
+export function isWorldPulseCandidateUseful(item: WorldNewsItem): boolean {
+  const title = item.title.replace(/\s+/g, " ").trim();
+  const url = item.url.toLowerCase();
+  if (!title) return false;
+  if (/博彩|赌博|赌场|彩票|投注|老虎机|体育竞猜|游戏攻略|手游礼包|网游开服|电竞比分/.test(title)) {
+    return false;
+  }
+  if (/帮助中心|客服中心|常见问题|账号申诉|充值说明|下载客户端|隐私中心/.test(title)) {
+    return false;
+  }
+  if (/(^|[./_-])(casino|gambling|betting|sportsbook|help-center|support-center)([./?_-]|$)/i.test(url)) {
+    return false;
+  }
+  return true;
+}
+
 async function fetchHackerNewsHotspots(): Promise<WorldNewsItem[]> {
   const queries = ["Anthropic", "OpenAI", "AI agents", "NVIDIA AI"];
   const since = Math.floor((Date.now() - 7 * 86_400_000) / 1000);
@@ -892,6 +917,7 @@ export async function buildWorldPulseDiscoveryInput(pulse: WorldPulse, dayKey: s
     const hotspots = definition.id === "ai_development" ? hotspotItems : [];
     const searched = results.flatMap(result => result.status === "fulfilled" ? result.value.slice(0, 5) : []);
     const candidates = [...direct.slice(0, 5), ...searched.slice(0, 6), ...hotspots.slice(0, 2)]
+      .filter(isWorldPulseCandidateUseful)
       .filter(item => {
         const key = item.title.replace(/[\s\p{P}\p{S}]+/gu, "").toLowerCase();
         if (!key || seen.has(key) || Date.parse(item.publishedAt) < cutoff) return false;

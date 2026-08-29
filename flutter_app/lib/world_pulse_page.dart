@@ -201,6 +201,9 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
     final events = (briefing['events'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList();
+    final radar = (briefing['radar'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
     return Container(
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
@@ -225,7 +228,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
-                        '今日重点',
+                        '重大变化',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
@@ -346,10 +349,66 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                 color: Color(0xfff0dca7),
               ),
           ],
+          if (radar.isNotEmpty) ...[
+            const Divider(height: 1, color: Color(0xfff0dca7)),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '领域雷达',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 9),
+                  for (final item in radar) ...[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          margin: const EdgeInsets.only(top: 6),
+                          decoration: BoxDecoration(
+                            color: item['hasReliableSignal'] == true
+                                ? const Color(0xffb7791f)
+                                : const Color(0xffb8a77c),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${_radarLabel(item['id'] as String?)}：${item['summary'] ?? ''}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              height: 1.45,
+                              color: Color(0xff5f5a53),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 7),
+                  ],
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  String _radarLabel(String? value) => switch (value) {
+    'gold' => '黄金',
+    'housing' => '楼市',
+    'ai' => 'AI',
+    'programmer' => '程序员',
+    'policy' => '政策',
+    'international' => '国际',
+    _ => '其他',
+  };
 
   String _verificationLabel(String? value) => switch (value) {
     'official' => ' · 一手来源核验',

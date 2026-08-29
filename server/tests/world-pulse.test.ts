@@ -11,6 +11,7 @@ import {
   parseOfficialHtmlList,
   parseSitemap,
   parseSyndicationFeed,
+  isWorldPulseCandidateUseful,
 } from "../src/world-pulse.js";
 
 test("趋势栏目包含用户长期关心的程序员、AI 和南京楼市", () => {
@@ -109,4 +110,31 @@ test("金融监管总局接口转换为可核验的一手来源", () => {
   assert.equal(items[0].source, "国家金融监督管理总局");
   assert.equal(items[0].sourceTier, "authority");
   assert.match(items[0].url, /docId=1270032/);
+});
+
+test("趋势候选过滤博彩、游戏导流和帮助中心页面", () => {
+  const base = {
+    source: "示例来源",
+    publishedAt: "2026-08-29T00:00:00.000Z",
+  };
+  assert.equal(isWorldPulseCandidateUseful({
+    ...base,
+    title: "AI 企业发布新产品",
+    url: "https://example.com/news/ai-product",
+  }), true);
+  assert.equal(isWorldPulseCandidateUseful({
+    ...base,
+    title: "手游礼包和游戏攻略汇总",
+    url: "https://example.com/games/guide",
+  }), false);
+  assert.equal(isWorldPulseCandidateUseful({
+    ...base,
+    title: "账号帮助中心",
+    url: "https://example.com/help-center/account",
+  }), false);
+  assert.equal(isWorldPulseCandidateUseful({
+    ...base,
+    title: "体育博彩投注指南",
+    url: "https://example.com/sportsbook",
+  }), false);
 });
