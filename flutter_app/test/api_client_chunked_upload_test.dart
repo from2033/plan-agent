@@ -18,6 +18,7 @@ void main() {
       if (request.url.path.endsWith('/documents/uploads')) {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         expect(body['totalBytes'], 8 * 1024 * 1024 + 17);
+        expect((body['userNote'] as String).length, 2000);
         return http.Response(
           jsonEncode({
             'uploadId': '123e4567-e89b-42d3-a456-426614174000',
@@ -51,7 +52,7 @@ void main() {
       fileName: '班会.wav',
       mimeType: 'audio/wav',
       bytes: Uint8List(8 * 1024 * 1024 + 17),
-      note: '班会自动转写',
+      note: List<String>.filled(2500, '会').join(),
       waitForProcessing: false,
     );
 

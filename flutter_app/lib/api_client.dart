@@ -353,6 +353,7 @@ class ApiClient {
   }) async {
     if (_isGuest) throw const ApiException('请先登录后再上传家庭资料');
     try {
+      final cleanNote = note.trim();
       final session =
           await _request(
                 'POST',
@@ -360,7 +361,9 @@ class ApiClient {
                 body: {
                   'fileName': fileName,
                   'mimeType': mimeType,
-                  'userNote': note.trim(),
+                  'userNote': cleanNote.length <= 2000
+                      ? cleanNote
+                      : cleanNote.substring(0, 2000),
                   'totalBytes': totalBytes,
                 },
               )

@@ -963,7 +963,7 @@ function acceptDocumentUpload(
 const ChunkedDocumentUploadSchema = z.object({
   fileName: z.string().trim().min(1).max(240),
   mimeType: z.string().trim().min(1).max(120).transform(value => value.toLowerCase()),
-  userNote: z.string().trim().max(2_000).default(""),
+  userNote: z.string().trim().max(100_000).transform(value => value.slice(0, 2_000)).default(""),
   totalBytes: z.number().int().positive().max(MAX_CHUNKED_DOCUMENT_SIZE),
 });
 
