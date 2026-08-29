@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -20,7 +18,6 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
   Map<String, dynamic>? data;
   bool loading = false;
   String? error;
-  Timer? analysisTimer;
 
   @override
   void initState() {
@@ -28,22 +25,6 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
     data = widget.initialData;
     if (data == null) {
       refresh();
-    } else {
-      scheduleAnalysisRefresh();
-    }
-  }
-
-  @override
-  void dispose() {
-    analysisTimer?.cancel();
-    super.dispose();
-  }
-
-  void scheduleAnalysisRefresh() {
-    analysisTimer?.cancel();
-    if (data?['discoveryStatus'] == 'QUEUED' ||
-        data?['discoveryStatus'] == 'PROCESSING') {
-      analysisTimer = Timer(const Duration(seconds: 5), refresh);
     }
   }
 
@@ -57,7 +38,6 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
       final value = await widget.api.worldPulse(force: force);
       if (mounted) {
         setState(() => data = value);
-        scheduleAnalysisRefresh();
       }
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
@@ -65,28 +45,6 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
       if (mounted) setState(() => loading = false);
     }
   }
-
-  IconData iconFor(String id) => switch (id) {
-    'gold_impact' => Icons.show_chart_rounded,
-    'china_housing' => Icons.apartment_rounded,
-    'nanjing_housing' => Icons.location_city_rounded,
-    'china_programmer_jobs' => Icons.code_rounded,
-    'ai_development' => Icons.psychology_alt_rounded,
-    'china_policy' => Icons.account_balance_rounded,
-    'china_policy_preview' => Icons.upcoming_rounded,
-    _ => Icons.public_rounded,
-  };
-
-  Color colorFor(String id) => switch (id) {
-    'gold_impact' => const Color(0xffb7791f),
-    'china_housing' => const Color(0xff2563eb),
-    'nanjing_housing' => const Color(0xff0891b2),
-    'china_programmer_jobs' => const Color(0xff4f46e5),
-    'ai_development' => const Color(0xff9333ea),
-    'china_policy' => const Color(0xffdc2626),
-    'china_policy_preview' => const Color(0xff7c3aed),
-    _ => const Color(0xff047857),
-  };
 
   String timeLabel(String? value) {
     final time = DateTime.tryParse(value ?? '')?.toLocal();
@@ -112,9 +70,6 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
 
   @override
   Widget build(BuildContext context) {
-    final sections = (data?['sections'] as List<dynamic>? ?? const [])
-        .whereType<Map<String, dynamic>>()
-        .toList();
     final dailyBriefing = data?['dailyBriefing'] as Map<String, dynamic>?;
     return Scaffold(
       appBar: AppBar(
@@ -160,7 +115,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                   const SizedBox(height: 6),
                   Text(
                     data?['overview'] as String? ??
-                        '只关注黄金、国内与南京楼市、程序员职场、AI、中国政策和国际大事。模型会用普通话总结影响，原始来源放在下面核实。',
+                        '每天从政策、楼市、黄金、AI、职场和国际变化中筛选真正重要的事情，并用普通话解释与你的关系。',
                     style: const TextStyle(
                       color: Color(0xffd1d5db),
                       height: 1.45,
@@ -217,20 +172,19 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
             if (dailyBriefing != null) ...[
               const SizedBox(height: 16),
               _dailyBriefingCard(dailyBriefing),
-            ],
-            if (sections.isEmpty && loading)
+            ] else if (loading)
               const Padding(
                 padding: EdgeInsets.only(top: 100),
                 child: Center(child: CircularProgressIndicator()),
               )
             else
-              for (final section in sections) ...[
-                const SizedBox(height: 16),
-                _sectionCard(section),
-              ],
+              const Padding(
+                padding: EdgeInsets.only(top: 60),
+                child: Center(child: Text('今日简报尚未生成，请稍后再看')),
+              ),
             const SizedBox(height: 16),
             const Text(
-              '新闻标题来自公开聚合源，仅作为趋势线索。涉及投资、政策或安全的重要决定，请打开原文并交叉核实。',
+              '简报根据公开来源自动筛选和解读。涉及投资、政策或安全的重要决定，请打开原文并交叉核实。',
               style: TextStyle(
                 color: Color(0xff8a8680),
                 fontSize: 11,
@@ -239,132 +193,6 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _sectionCard(Map<String, dynamic> section) {
-    final id = section['id'] as String? ?? 'world';
-    final color = colorFor(id);
-    final items = (section['items'] as List<dynamic>? ?? const [])
-        .whereType<Map<String, dynamic>>()
-        .toList();
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.black.withValues(alpha: .06)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: .1),
-                        borderRadius: BorderRadius.circular(11),
-                      ),
-                      child: Icon(iconFor(id), color: color, size: 21),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        section['title'] as String? ?? '全球动态',
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  section['summary'] as String? ?? '',
-                  style: const TextStyle(height: 1.5),
-                ),
-                const SizedBox(height: 12),
-                _insightLine('为什么重要', section['whyItMatters'] as String? ?? ''),
-                const SizedBox(height: 7),
-                _insightLine('接下来关注', section['watchNext'] as String? ?? ''),
-                if ((section['action'] as String? ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 7),
-                  _insightLine('现在怎么做', section['action'] as String),
-                ],
-              ],
-            ),
-          ),
-          if (items.isNotEmpty) const Divider(height: 1),
-          for (var index = 0; index < items.length; index++) ...[
-            InkWell(
-              onTap: () => openArticle(items[index]['url'] as String?),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 13,
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            items[index]['title'] as String? ?? '新闻',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              height: 1.35,
-                            ),
-                          ),
-                          if ((items[index]['context'] as String? ?? '')
-                              .isNotEmpty) ...[
-                            const SizedBox(height: 5),
-                            Text(
-                              items[index]['context'] as String,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Color(0xff5f5a53),
-                                fontSize: 12,
-                                height: 1.4,
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 5),
-                          Text(
-                            '${items[index]['source'] ?? '来源'} · ${timeLabel(items[index]['publishedAt'] as String?)}${_verificationLabel(items[index]['verification'] as String?)}',
-                            style: const TextStyle(
-                              color: Color(0xff8a8680),
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    const Icon(
-                      Icons.open_in_new_rounded,
-                      size: 17,
-                      color: Color(0xff9a948b),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (index != items.length - 1)
-              const Divider(height: 1, indent: 16, endIndent: 16),
-          ],
-        ],
       ),
     );
   }
@@ -418,6 +246,17 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                   briefing['overview'] as String? ?? '',
                   style: const TextStyle(height: 1.5, color: Color(0xff55431d)),
                 ),
+                if (briefing['coverage']
+                    case final Map<String, dynamic> coverage) ...[
+                  const SizedBox(height: 9),
+                  Text(
+                    '已检查 ${coverage['sections'] ?? 0} 个领域 · ${coverage['candidates'] ?? 0} 条线索 · ${coverage['sources'] ?? 0} 个来源',
+                    style: const TextStyle(
+                      color: Color(0xff9a7629),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -426,10 +265,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
           for (var index = 0; index < events.length; index++) ...[
             InkWell(
               onTap: () {
-                final sources =
-                    (events[index]['sources'] as List<dynamic>? ?? const [])
-                        .whereType<Map<String, dynamic>>()
-                        .toList();
+                final sources = _eventSources(events[index]);
                 if (sources.isNotEmpty) {
                   openArticle(sources.first['url'] as String?);
                 }
@@ -451,7 +287,7 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      events[index]['summary'] as String? ?? '',
+                      '发生内容：${events[index]['summary'] ?? ''}',
                       style: const TextStyle(
                         fontSize: 12,
                         height: 1.45,
@@ -467,9 +303,21 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
                         color: Color(0xff7a5b17),
                       ),
                     ),
+                    if ((events[index]['watchNext'] as String? ?? '')
+                        .isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        '接下来关注：${events[index]['watchNext']}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          height: 1.4,
+                          color: Color(0xff7a5b17),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 5),
                     Text(
-                      '${_verificationLabel(events[index]['verification'] as String?).replaceFirst(' · ', '')} · 点击查看来源',
+                      _sourceVerificationLabel(events[index]),
                       style: const TextStyle(
                         fontSize: 11,
                         color: Color(0xff9a7629),
@@ -500,19 +348,25 @@ class _WorldPulsePageState extends State<WorldPulsePage> {
     _ => '',
   };
 
-  Widget _insightLine(String label, String value) => Row(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      SizedBox(
-        width: 72,
-        child: Text(
-          label,
-          style: const TextStyle(color: Color(0xff8a8680), fontSize: 12),
-        ),
-      ),
-      Expanded(
-        child: Text(value, style: const TextStyle(fontSize: 12, height: 1.4)),
-      ),
-    ],
-  );
+  List<Map<String, dynamic>> _eventSources(Map<String, dynamic> event) =>
+      (event['sources'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .toList();
+
+  String _sourceVerificationLabel(Map<String, dynamic> event) {
+    final sources = _eventSources(event);
+    final publishers = sources
+        .map((source) => source['publisher'] as String? ?? '')
+        .where((publisher) => publisher.isNotEmpty)
+        .toSet()
+        .take(3)
+        .join('、');
+    final verification = _verificationLabel(
+      event['verification'] as String?,
+    ).replaceFirst(' · ', '');
+    final sourceSummary = sources.isEmpty
+        ? '暂无可打开来源'
+        : '${sources.length} 个来源${publishers.isEmpty ? '' : '（$publishers）'} · 点击查看';
+    return '来源核验：${verification.isEmpty ? '尚待核实' : verification} · $sourceSummary';
+  }
 }

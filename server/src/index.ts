@@ -745,10 +745,36 @@ app.get(`${API}/world-pulse`, async (req, res) => {
       saveWorldPulseDiscovery(completedDiscoveryDay, completedDiscoveryJob.result as WorldPulseDiscovery);
     }
     const briefing = currentWorldPulseDiscovery();
+    const completedGroups = (completedDiscoveryDay === briefing?.dayKey
+      ? (completedDiscoveryJob?.input as {
+          candidateGroups?: Array<{
+            candidates?: Array<{ source?: unknown }>;
+          }>;
+        } | undefined)?.candidateGroups
+      : undefined) || [];
+    const candidateCount = completedGroups.reduce(
+      (total, group) => total + (group.candidates?.length || 0),
+      0,
+    );
+    const sourceCount = new Set(
+      completedGroups.flatMap(group =>
+        (group.candidates || [])
+          .map(candidate => String(candidate.source || ""))
+          .filter(Boolean),
+      ),
+    ).size;
     res.json({
       ...pulse,
       discoveryStatus: discoveryJobDay === dayKey ? discoveryJob?.status : undefined,
-      dailyBriefing: briefing ? { dayKey: briefing.dayKey, ...briefing.value } : undefined,
+      dailyBriefing: briefing ? {
+        dayKey: briefing.dayKey,
+        ...briefing.value,
+        coverage: {
+          sections: completedGroups.length,
+          candidates: candidateCount,
+          sources: sourceCount,
+        },
+      } : undefined,
       discoverySchedule: "每天 06:30",
     });
   } catch (error) {

@@ -79,6 +79,7 @@ const sections: SectionDefinition[] = [
     query: "黄金 OR 美联储 OR 美债 OR 美元 OR 地缘冲突 OR 央行购金 when:2d",
     discoveryQueries: [
       "(黄金 OR 金价) (美联储 OR 美债 OR 美元 OR 通胀 OR 央行购金) when:2d",
+      "(美联储 OR 美国财政部 OR 世界黄金协会) (利率 OR 美债 OR 黄金) when:3d",
       "(gold OR bullion) (Federal Reserve OR Treasury yields OR central bank buying) when:2d",
       "(战争 OR 制裁 OR 关税 OR 能源) (黄金 OR 避险) when:2d",
     ],
@@ -95,8 +96,8 @@ const sections: SectionDefinition[] = [
     title: "中国房价与楼市走势",
     query: "中国房价 OR 楼市 OR 房地产政策 OR 二手房 OR 新房 when:7d",
     discoveryQueries: [
-      "个人住房贷款 最长 40年 when:3d",
       "(房贷 OR 个人住房贷款 OR 首付 OR 公积金) (央行 OR 金融监管总局 OR 住建部) when:3d",
+      "(site:pbc.gov.cn OR site:nfra.gov.cn OR site:mohurd.gov.cn) (住房 OR 房地产 OR 房贷) when:7d",
       "(房地产新政 OR 楼市政策 OR 住房政策) 中国 when:3d",
       "(房价 OR 二手房 OR 新房 OR 成交 OR 库存) 中国 when:7d",
     ],
@@ -114,6 +115,7 @@ const sections: SectionDefinition[] = [
     query: "南京房价 OR 南京楼市 OR 南京二手房 OR 南京新房 OR 南京房地产政策 when:14d",
     discoveryQueries: [
       "南京 (房贷 OR 公积金 OR 购房政策 OR 房地产新政) when:14d",
+      "(site:nanjing.gov.cn OR site:fcj.nanjing.gov.cn) (住房 OR 房地产 OR 公积金) when:14d",
       "南京 (二手房 OR 新房 OR 房价 OR 成交 OR 挂牌 OR 土拍) when:14d",
     ],
     discoveryMaxAgeDays: 14,
@@ -130,6 +132,7 @@ const sections: SectionDefinition[] = [
     query: "(程序员 OR 软件开发工程师 OR IT招聘) (就业 OR 招聘 OR 薪资 OR 裁员 OR 职场) 中国 when:7d",
     discoveryQueries: [
       "中国 (程序员 OR 软件工程师 OR 开发者) (招聘 OR 裁员 OR 薪资 OR 就业) when:7d",
+      "(site:mohrss.gov.cn OR site:stats.gov.cn) (人工智能 OR 信息技术 OR 软件) (招聘 OR 就业 OR 工资) when:14d",
       "(AI招聘 OR 人工智能岗位 OR 大模型人才 OR 应届生招聘) 中国 when:7d",
       "(developer jobs OR software engineer hiring OR tech layoffs) China when:7d",
     ],
@@ -146,7 +149,8 @@ const sections: SectionDefinition[] = [
     title: "AI产业与技术发展",
     query: "人工智能 OR AI大模型 OR 智能体 OR AI芯片 OR 具身智能 OR 机器人 when:2d",
     discoveryQueries: [
-      "(Dario Amodei OR Anthropic CEO) (essay OR longform OR views OR viral) when:14d",
+      "(Dario Amodei OR Sam Altman OR Demis Hassabis OR Jensen Huang) (essay OR interview OR views OR viral) when:7d",
+      "(site:anthropic.com OR site:openai.com OR site:deepmind.google OR site:blogs.nvidia.com) AI when:7d",
       "(Anthropic OR OpenAI OR Google DeepMind OR 英伟达 OR Meta AI) when:3d",
       "(AI大模型 OR 智能体 OR AI芯片 OR 机器人 OR 具身智能) when:3d",
       "(AI长文 OR AI观点 OR 阅读量 OR 围观 OR 爆火) when:7d",
