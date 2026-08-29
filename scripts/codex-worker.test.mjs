@@ -16,6 +16,7 @@ import {
   runOllama,
   searchAccessibleDocuments,
   searchLocalDocuments,
+  shouldSearchDocumentsForIngest,
   writeVaultDocument,
 } from "./codex-worker.mjs";
 
@@ -306,8 +307,8 @@ test("family document search includes only explicitly granted document ids", () 
     const ownId = "1b472924-15cc-4676-8d3d-f5f947e574fa";
     const sharedId = "2b472924-15cc-4676-8d3d-f5f947e574fa";
     const privateId = "3b472924-15cc-4676-8d3d-f5f947e574fa";
-    fs.writeFileSync(path.join(viewerNotes, "自己的资料.md"), `---\ndocument_id: "${ownId}"\ntitle: "自己的资料"\ncategory: "测试"\n---\n共同检索词 自己资料\n`, "utf8");
-    fs.writeFileSync(path.join(ownerNotes, "共享资料.md"), `---\ndocument_id: "${sharedId}"\ntitle: "共享资料"\ncategory: "测试"\n---\n共同检索词 允许共享\n`, "utf8");
+    fs.writeFileSync(path.join(viewerNotes, "自己的资料.md"), `---\ndocument_id: "${ownId}"\ntitle: "自己的资料"\ncategory: "测试"\ndocument_date: "2026-08-29"\narchived_at: "2026-08-29T08:00:00.000Z"\n---\n共同检索词 自己资料\n`, "utf8");
+    fs.writeFileSync(path.join(ownerNotes, "共享资料.md"), `---\ndocument_id: "${sharedId}"\ntitle: "共享资料"\ncategory: "测试"\ndocument_date: "2026-08-29"\narchived_at: "2026-08-29T12:00:00.000Z"\n---\n# 共享资料\n\n## 摘要\n\n今晚会议讨论了共同检索词和允许共享的内容。\n\n## 提取文字\n\n未能提取文字，请查看原始文件。\n`, "utf8");
     fs.writeFileSync(path.join(ownerNotes, "私人资料.md"), `---\ndocument_id: "${privateId}"\ntitle: "私人资料"\ncategory: "测试"\n---\n共同检索词 私人秘密\n`, "utf8");
 
     const results = searchAccessibleDocuments("共同检索词", {
@@ -317,6 +318,18 @@ test("family document search includes only explicitly granted document ids", () 
     assert.deepEqual(new Set(results.map(item => item.documentId)), new Set([ownId, sharedId]));
     assert.equal(results.some(item => item.documentId === privateId), false);
 
+    const recentResults = searchAccessibleDocuments("今天最新的共同检索词", {
+      spaceId: spaceOne,
+      input: { context: { currentDate: "2026-08-29" } },
+      sharedDocumentScopes: [{ spaceId: spaceTwo, documentIds: [sharedId] }],
+    }, temporaryDir, 6, { vectorSearch: false });
+    assert.equal(recentResults[0].documentId, sharedId);
+    assert.equal(recentResults[0].documentDate, "2026-08-29");
+    assert.equal(recentResults[0].archivedAt, "2026-08-29T12:00:00.000Z");
+    assert.match(recentResults[0].excerpt, /今晚会议讨论了共同检索词和允许共享的内容。/);
+    assert.ok(recentResults[0].excerpt.indexOf("今晚会议讨论")
+      < recentResults[0].excerpt.indexOf("未能提取文字"));
+
     const revoked = searchAccessibleDocuments("共同检索词", {
       spaceId: spaceOne,
       sharedDocumentScopes: [],
@@ -325,6 +338,21 @@ test("family document search includes only explicitly granted document ids", () 
   } finally {
     fs.rmSync(temporaryDir, { recursive: true, force: true });
   }
+});
+
+test("explicit family document questions override an incorrect record classification", () => {
+  assert.equal(shouldSearchDocumentsForIngest(
+    "帮我总结今日家长会，总结成一二三这样的点，不能遗漏。",
+    { kind: "record" },
+  ), true);
+  assert.equal(shouldSearchDocumentsForIngest(
+    "请问今天晚上的会议主要内容有哪几点？",
+    { kind: "record" },
+  ), true);
+  assert.equal(shouldSearchDocumentsForIngest(
+    "明天下午三点提醒我参加家长会",
+    { kind: "record" },
+  ), false);
 });
 
 test("plain text documents are extracted and archived as Obsidian notes", () => {
