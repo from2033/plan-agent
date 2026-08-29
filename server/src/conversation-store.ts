@@ -111,6 +111,14 @@ export interface ConversationResourceGrant {
   addedAt: string;
 }
 
+export interface ConversationContextMessage {
+  role: "user" | "assistant";
+  senderUserId: string | null;
+  content: string;
+  kind: ConversationMessage["kind"];
+  metadata: Record<string, unknown>;
+}
+
 export interface ConversationMessage {
   id: string;
   conversationId: string;
@@ -394,10 +402,35 @@ export function conversationDocumentGrants(
 ): Array<{ resourceId: string; ownerUserId: string }> | null {
   const members = listConversationMembers(conversationId, userId);
   if (!members) return null;
-  if (members.length <= 1) return null;
+  const conversation = db.prepare("SELECT conversation_type FROM conversations WHERE id=?")
+    .get(conversationId) as { conversation_type: ConversationType } | undefined;
+  // The permanent “我与 AI” thread keeps account-wide private retrieval.
+  // Every explicitly created topic/group is scoped to resources sent into it,
+  // even before another member joins.
+  if (!conversation || conversation.conversation_type === "direct_ai") return null;
   return (listConversationResources(conversationId, userId) || [])
     .filter(resource => resource.resourceType === "document")
     .map(resource => ({ resourceId: resource.resourceId, ownerUserId: resource.ownerUserId }));
+}
+
+export function conversationContextForAi(
+  conversationId: string,
+  userId: string,
+  limit = 16,
+): ConversationContextMessage[] | null {
+  if (!canViewConversation(conversationId, userId)) return null;
+  const safeLimit = Math.max(1, Math.min(30, Math.floor(limit)));
+  const rows = db.prepare(`SELECT * FROM conversation_messages
+    WHERE conversation_id=? AND status='complete' AND sender_type IN ('user','assistant')
+    ORDER BY created_at DESC,id DESC LIMIT ?`)
+    .all(conversationId, safeLimit) as unknown as MessageRow[];
+  return rows.reverse().map(messageFromRow).map(message => ({
+    role: message.senderType as "user" | "assistant",
+    senderUserId: message.senderUserId,
+    content: message.content.slice(0, 4_000),
+    kind: message.kind,
+    metadata: message.metadata,
+  }));
 }
 
 function nextConversationTimestamp(conversationId: string, after = ""): string {
@@ -529,8 +562,12 @@ export function completeAiInteraction(
       .run(now, userMessage.conversation_id);
     if (suggestedTitle.length >= 2) {
       db.prepare(`UPDATE conversations SET title=?
-        WHERE id=? AND title IN ('新对话','新聊天')`)
-        .run(suggestedTitle, userMessage.conversation_id);
+        WHERE id=? AND (
+          title IN ('新对话','新聊天') OR
+          (SELECT COUNT(*) FROM conversation_messages
+            WHERE conversation_id=? AND sender_type='assistant') <= 2
+        )`)
+        .run(suggestedTitle, userMessage.conversation_id, userMessage.conversation_id);
     }
     db.exec("COMMIT");
     return true;

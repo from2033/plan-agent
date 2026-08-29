@@ -327,6 +327,14 @@ test("family document search includes only explicitly granted document ids", () 
     }, temporaryDir, 6, { vectorSearch: false });
     assert.deepEqual(groupResults.map(item => item.documentId), [sharedId]);
 
+    const deicticResults = searchAccessibleDocuments("总结下这个资料", {
+      spaceId: spaceOne,
+      primaryDocumentIds: [],
+      sharedDocumentScopes: [{ spaceId: spaceTwo, documentIds: [sharedId] }],
+    }, temporaryDir, 6, { vectorSearch: false });
+    assert.deepEqual(deicticResults.map(item => item.documentId), [sharedId]);
+    assert.match(deicticResults[0].excerpt, /今晚会议讨论/);
+
     const recentResults = searchAccessibleDocuments("今天最新的共同检索词", {
       spaceId: spaceOne,
       input: { context: { currentDate: "2026-08-29" } },
@@ -362,6 +370,13 @@ test("explicit family document questions override an incorrect record classifica
     "明天下午三点提醒我参加家长会",
     { kind: "record" },
   ), false);
+});
+
+test("a follow-up asking to summarize this document always triggers document retrieval", () => {
+  assert.equal(shouldSearchDocumentsForIngest(
+    "总结下这个资料",
+    { kind: "record" },
+  ), true);
 });
 
 test("plain text documents are extracted and archived as Obsidian notes", () => {

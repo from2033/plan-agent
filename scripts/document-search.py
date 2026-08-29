@@ -419,6 +419,34 @@ def hybrid_search(connection: sqlite3.Connection, question: str, limit: int, emb
     ]
 
 
+def documents_by_ids(connection: sqlite3.Connection, document_ids, limit: int):
+    requested = [value for value in document_ids if isinstance(value, str) and value][:limit]
+    if not requested:
+        return []
+    placeholders = ",".join("?" for _ in requested)
+    rows = connection.execute(
+        f"SELECT path,document_id,title,category,body FROM documents WHERE document_id IN ({placeholders})",
+        requested,
+    ).fetchall()
+    by_id = {row[1]: row for row in rows}
+    results = []
+    for document_id in requested:
+        row = by_id.get(document_id)
+        if not row:
+            continue
+        path, _, title, category, body = row
+        results.append({
+            "documentId": document_id,
+            "title": title,
+            "category": category,
+            "vaultPath": path,
+            "excerpt": excerpt(body, []),
+            "score": 1.0,
+            "matchType": "explicit",
+        })
+    return results
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--vault", required=True)
@@ -427,6 +455,7 @@ def main() -> None:
     parser.add_argument("--embedding-url", default="")
     parser.add_argument("--embedding-model", default="")
     parser.add_argument("--refresh-only", action="store_true")
+    parser.add_argument("--document-id", action="append", default=[])
     args = parser.parse_args()
     vault = Path(args.vault).expanduser().resolve()
     connection = connect(vault / ".assistant" / "document-index.db")
@@ -436,6 +465,12 @@ def main() -> None:
             refresh_vector_index(connection, args.embedding_url, args.embedding_model)
         if args.refresh_only:
             print(json.dumps({"ok": True}, ensure_ascii=False))
+            return
+        if args.document_id:
+            print(json.dumps(
+                documents_by_ids(connection, args.document_id, max(1, min(args.limit, 10))),
+                ensure_ascii=False,
+            ))
             return
         if not args.question.strip():
             raise ValueError("question_required")

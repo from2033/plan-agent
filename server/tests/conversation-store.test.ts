@@ -70,6 +70,7 @@ test("专题对话可邀请成员，接受后共享群消息和指定资料", ()
   const owner = "owner@example.com";
   const member = "member@example.com";
   const conversationId = conversations.createConversation(owner, "孩子入学");
+  assert.deepEqual(conversations.conversationDocumentGrants(conversationId, owner), []);
   const invitation = conversations.inviteConversationMember(conversationId, owner, member);
   assert.ok(invitation);
   assert.equal(conversations.listConversationMessages(conversationId, member), null);
@@ -104,6 +105,9 @@ test("专题对话可邀请成员，接受后共享群消息和指定资料", ()
   assert.equal(messages.at(-2)?.senderUserId, member);
   assert.equal(messages.at(-1)?.content, "上午八点报到。");
   assert.equal(messages.some(message => message.content.startsWith("分享了资料：")), true);
+  const context = conversations.conversationContextForAi(conversationId, owner)!;
+  assert.equal(context.some(message => message.content === "分享了资料：资料"), true);
+  assert.equal(context.at(-1)?.content, "上午八点报到。");
 });
 
 test("新对话在首次 AI 回答后自动生成标题，私人对话也可中途邀请", () => {
@@ -120,6 +124,19 @@ test("新对话在首次 AI 回答后自动生成标题，私人对话也可中�
   assert.equal(
     conversations.listConversations(owner).find(item => item.id === conversationId)?.title,
     "学校报到准备",
+  );
+
+  const correctionJobId = crypto.randomUUID();
+  conversations.beginAiInteraction(owner, correctionJobId, "总结下这个资料", "text", conversationId);
+  conversations.completeAiInteraction(owner, correctionJobId, "ingest", {
+    kind: "ask",
+    answer: "家长会说明了报到安排。",
+    sources: [],
+    conversationTitle: "家长会资料总结",
+  });
+  assert.equal(
+    conversations.listConversations(owner).find(item => item.id === conversationId)?.title,
+    "家长会资料总结",
   );
 
   const direct = conversations.ensureDirectAiConversation(owner);

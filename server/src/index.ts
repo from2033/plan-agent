@@ -63,6 +63,7 @@ import {
   addConversationResource,
   beginAiInteraction,
   completeAiInteraction,
+  conversationContextForAi,
   createConversation,
   deleteConversationAccountData,
   failAiInteraction,
@@ -1649,6 +1650,13 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
   const conversationId = typeof req.body?.conversationId === "string"
     ? req.body.conversationId.trim().slice(0, 100)
     : "";
+  const conversationHistory = conversationId
+    ? conversationContextForAi(conversationId, req.userId!, 16)
+    : null;
+  if (conversationId && !conversationHistory) {
+    res.status(404).json({ error: "对话不存在或当前账号无权访问" });
+    return;
+  }
   let synchronousInteractionId: string | null = null;
   if (!raw) {
     res.status(400).json({ error: "raw 不能为空" });
@@ -1674,6 +1682,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           requestedAt: new Date().toISOString(),
           locale: "zh-CN",
           audience: "中国普通用户",
+          ...(conversationHistory?.length ? { conversationHistory } : {}),
           ...(conversationId ? { conversationId } : {}),
         }, 70);
         beginAiInteraction(req.userId!, job.id, raw, inputMode, conversationId || undefined);
@@ -1699,6 +1708,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         intentHint,
         context: assistantClock(),
         knowledge,
+        ...(conversationHistory?.length ? { conversationHistory } : {}),
         ...(conversationId ? { conversationId } : {}),
       });
       if (!isGuestUser(req.userId)) {

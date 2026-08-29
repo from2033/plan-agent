@@ -6,6 +6,25 @@ import 'package:intl/intl.dart';
 import 'api_client.dart';
 import 'models.dart';
 
+Map<String, dynamic> _documentResult(Map<String, dynamic> document) =>
+    Map<String, dynamic>.from(document['result'] as Map? ?? const {});
+
+String _documentTitle(Map<String, dynamic> document) {
+  final result = _documentResult(document);
+  return (result['title']?.toString().trim().isNotEmpty ?? false)
+      ? result['title'].toString().trim()
+      : (document['title']?.toString().trim().isNotEmpty ?? false)
+      ? document['title'].toString().trim()
+      : document['fileName']?.toString() ?? '资料';
+}
+
+String _documentCategory(Map<String, dynamic> document) {
+  final result = _documentResult(document);
+  return result['category']?.toString() ??
+      document['category']?.toString() ??
+      '文件';
+}
+
 class ConversationPage extends StatefulWidget {
   const ConversationPage({
     super.key,
@@ -279,80 +298,110 @@ class _ConversationPageState extends State<ConversationPage> {
       final knowledge = await widget.api.knowledge();
       if (!mounted) return;
       var shared = false;
+      var query = '';
       await showModalBottomSheet<void>(
         context: context,
         showDragHandle: true,
-        builder: (sheetContext) => SafeArea(
-          child: SizedBox(
-            height: MediaQuery.sizeOf(context).height * .65,
-            child: Column(
-              children: [
-                const ListTile(
-                  title: Text(
-                    '发送资料',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  subtitle: Text('发送即共享，当前和以后进入该对话的成员都可以查看'),
-                ),
-                Expanded(
-                  child: ListView(
-                    children: [
-                      if (documents.isNotEmpty) const _SectionLabel('文件资料'),
-                      for (final document in documents.where(
-                        (item) => item['canEdit'] != false,
-                      ))
-                        ListTile(
-                          leading: const Icon(Icons.description_outlined),
-                          title: Text(
-                            document['title']?.toString() ??
-                                document['fileName']?.toString() ??
-                                '资料',
-                          ),
-                          subtitle: Text(
-                            document['category']?.toString() ?? '文件',
-                          ),
-                          onTap: () async {
-                            await widget.api.addConversationResource(
-                              selected.id,
-                              'document',
-                              document['id'] as String,
-                            );
-                            shared = true;
-                            if (sheetContext.mounted) {
-                              Navigator.pop(sheetContext);
-                            }
-                          },
+        builder: (sheetContext) => StatefulBuilder(
+          builder: (context, setSheetState) {
+            final needle = query.trim().toLowerCase();
+            final visibleDocuments = documents.where((item) {
+              if (item['canEdit'] == false) return false;
+              final text = '${_documentTitle(item)} ${_documentCategory(item)}'
+                  .toLowerCase();
+              return needle.isEmpty || text.contains(needle);
+            }).toList();
+            final visibleKnowledge = knowledge.where((item) {
+              if (!item.canEdit) return false;
+              final text = '${item.title} ${item.content}'.toLowerCase();
+              return needle.isEmpty || text.contains(needle);
+            }).toList();
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.sizeOf(context).height * .72,
+                child: Column(
+                  children: [
+                    const ListTile(
+                      title: Text(
+                        '发送资料',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      subtitle: Text('发送即共享，当前和以后进入该对话的成员都可以查看'),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: TextField(
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          hintText: '搜索资料标题或内容',
+                          prefixIcon: Icon(Icons.search_rounded),
                         ),
-                      if (knowledge.isNotEmpty) const _SectionLabel('知识记录'),
-                      for (final item in knowledge.where(
-                        (item) => item.canEdit,
-                      ))
-                        ListTile(
-                          leading: const Icon(Icons.notes_rounded),
-                          title: Text(item.title),
-                          subtitle: Text(
-                            item.content,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          onTap: () async {
-                            await widget.api.addConversationResource(
-                              selected.id,
-                              'knowledge',
-                              item.id,
-                            );
-                            shared = true;
-                            if (sheetContext.mounted) {
-                              Navigator.pop(sheetContext);
-                            }
-                          },
-                        ),
-                    ],
-                  ),
+                        onChanged: (value) =>
+                            setSheetState(() => query = value),
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          if (visibleDocuments.isNotEmpty)
+                            const _SectionLabel('文件资料'),
+                          for (final document in visibleDocuments)
+                            ListTile(
+                              leading: const Icon(Icons.description_outlined),
+                              title: Text(_documentTitle(document)),
+                              subtitle: Text(_documentCategory(document)),
+                              onTap: () async {
+                                await widget.api.addConversationResource(
+                                  selected.id,
+                                  'document',
+                                  document['id'] as String,
+                                );
+                                shared = true;
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                              },
+                            ),
+                          if (visibleKnowledge.isNotEmpty)
+                            const _SectionLabel('知识记录'),
+                          for (final item in visibleKnowledge)
+                            ListTile(
+                              leading: const Icon(Icons.notes_rounded),
+                              title: Text(item.title),
+                              subtitle: Text(
+                                item.content,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onTap: () async {
+                                await widget.api.addConversationResource(
+                                  selected.id,
+                                  'knowledge',
+                                  item.id,
+                                );
+                                shared = true;
+                                if (sheetContext.mounted) {
+                                  Navigator.pop(sheetContext);
+                                }
+                              },
+                            ),
+                          if (visibleDocuments.isEmpty &&
+                              visibleKnowledge.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.all(32),
+                              child: Text(
+                                '没有找到匹配的资料',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       );
       if (shared && mounted) {
