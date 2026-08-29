@@ -534,6 +534,16 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const discovery = value as Omit<WorldPulseDiscovery, "events"> & {
       events: Array<Omit<WorldPulseDiscovery["events"][number], "sources"> & { sourceIndexes: number[] }>;
     };
+    // A model can occasionally echo the field descriptions from the prompt
+    // (for example, "准确简洁的中文标题") while still satisfying the loose
+    // JSON schema. Never publish such a result as a daily briefing.
+    const placeholderPattern = /^(?:准确简洁的中文标题|一句话总结|一句话说明影响|一句话后续验证信号)$/u;
+    const hasPlaceholder = (event: typeof discovery.events[number]) =>
+      [event.title, event.summary, event.whyItMatters, event.watchNext]
+        .some(text => placeholderPattern.test(String(text || "").trim()));
+    if (discovery.events.some(hasPlaceholder)) {
+      throw new Error("world_discovery_placeholder_content");
+    }
     const safeValue: WorldPulseDiscovery = {
       ...discovery,
       events: discovery.events.flatMap(event => {
@@ -558,6 +568,9 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
         return [{ ...safeEvent, verification, sources: sources.slice(0, 3) }];
       }),
     };
+    if (!safeValue.events.length) {
+      throw new Error("world_discovery_no_grounded_events");
+    }
     saveWorldPulseDiscovery(dayKey, safeValue);
     return safeValue;
   }
