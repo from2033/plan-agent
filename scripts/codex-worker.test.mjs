@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   appendVaultDocumentNote,
+  documentAnswerForIngest,
   documentSourcesForAnswer,
   extractDocumentText,
   hasExplicitTimeRange,
@@ -377,6 +378,23 @@ test("a follow-up asking to summarize this document always triggers document ret
     "总结下这个资料",
     { kind: "record" },
   ), true);
+});
+
+test("a document answer keeps the generated conversation title required by the queue", () => {
+  const result = documentAnswerForIngest(
+    { conversationTitle: "家长会资料总结" },
+    { answer: "报到时间是八月三十一日。", sourceIndexes: [0] },
+    [{
+      documentId: "00000000-0000-4000-8000-000000000001",
+      title: "秋季开学家长会",
+      category: "会议录音",
+      vaultPath: "/tmp/meeting.md",
+      excerpt: "八月三十一日到校报到。",
+      relatedDocumentIds: [],
+    }],
+  );
+  assert.equal(result.conversationTitle, "家长会资料总结");
+  assert.equal(result.documentSources.length, 1);
 });
 
 test("plain text documents are extracted and archived as Obsidian notes", () => {

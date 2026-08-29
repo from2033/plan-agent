@@ -1343,6 +1343,17 @@ export function shouldSearchDocumentsForIngest(raw, classifiedResult) {
   return asksForAnswer && mentionsDocuments;
 }
 
+export function documentAnswerForIngest(classifiedResult, answeredResult, candidates) {
+  return {
+    kind: "ask",
+    answer: answeredResult.answer,
+    sourceIds: [],
+    documentSources: documentSourcesForAnswer(candidates, answeredResult),
+    conversationTitle: String(classifiedResult?.conversationTitle || "资料内容总结")
+      .trim().slice(0, 30) || "资料内容总结",
+  };
+}
+
 async function processIngestJob(job) {
   const raw = String(job.input?.raw || "").trim();
   if (!raw) return runInference(job);
@@ -1371,12 +1382,7 @@ async function processIngestJob(job) {
   if (answered.result.insufficientEvidence
     && Array.isArray(classified.result.sourceIds) && classified.result.sourceIds.length) return classified;
   return {
-    result: {
-      kind: "ask",
-      answer: answered.result.answer,
-      sourceIds: [],
-      documentSources: documentSourcesForAnswer(candidates, answered.result),
-    },
+    result: documentAnswerForIngest(classified.result, answered.result, candidates),
     provider: answered.provider,
   };
 }
