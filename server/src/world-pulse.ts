@@ -517,13 +517,18 @@ export async function buildWorldPulseDiscoveryInput(pulse: WorldPulse, dayKey: s
       candidates: section.items.filter(item => section.id === "china_policy_preview"
         || Date.parse(item.publishedAt) >= Date.parse(pulse.updatedAt) - 7 * 86_400_000),
     }));
+  let sourceIndex = 0;
+  const candidateGroups = [...grouped, ...policyCandidates].map(group => ({
+    ...group,
+    candidates: group.candidates.map(candidate => ({ ...candidate, sourceIndex: sourceIndex++ })),
+  }));
   return {
     dayKey,
     currentTime: pulse.updatedAt,
     locale: "zh-CN",
     audience: "居住在中国南京的普通用户",
     selectionGoal: "从候选中选出今天真正值得普通人知道的变化，优先直接影响生活、资产、工作与未来趋势的事件",
-    candidateGroups: [...grouped, ...policyCandidates],
+    candidateGroups,
   };
 }
 

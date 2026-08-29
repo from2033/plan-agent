@@ -423,16 +423,18 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     }
     const candidates = (job.input as {
       candidateGroups?: Array<{ candidates?: Array<{
-        title?: unknown; source?: unknown; url?: unknown; publishedAt?: unknown;
+        sourceIndex?: unknown; title?: unknown; source?: unknown; url?: unknown; publishedAt?: unknown;
       }> }>;
     }).candidateGroups?.flatMap(group => group.candidates || []) || [];
-    const sourcesByUrl = new Map(candidates.map(source => [String(source.url || ""), source]));
-    const discovery = value as WorldPulseDiscovery;
+    const sourcesByIndex = new Map(candidates.map(source => [Number(source.sourceIndex), source]));
+    const discovery = value as Omit<WorldPulseDiscovery, "events"> & {
+      events: Array<Omit<WorldPulseDiscovery["events"][number], "sources"> & { sourceIndexes: number[] }>;
+    };
     const safeValue: WorldPulseDiscovery = {
       ...discovery,
       events: discovery.events.flatMap(event => {
-        const sources = event.sources.flatMap(source => {
-          const candidate = sourcesByUrl.get(source.url);
+        const sources = event.sourceIndexes.flatMap(sourceIndex => {
+          const candidate = sourcesByIndex.get(sourceIndex);
           if (!candidate) return [];
           return [{
             title: String(candidate.title || "").slice(0, 300),
@@ -441,7 +443,15 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
             publishedAt: String(candidate.publishedAt || "").slice(0, 40),
           }];
         });
-        return sources.length ? [{ ...event, sources: sources.slice(0, 3) }] : [];
+        if (!sources.length) return [];
+        const { sourceIndexes: _, ...safeEvent } = event;
+        const publishers = new Set(sources.map(source => source.publisher));
+        const hasPrimarySource = sources.some(source =>
+          /中国政府网|人民银行|金融监管总局|国家发展改革委|人力资源和社会保障部|统计局|外交部|财政部|住房和城乡建设部|Anthropic|OpenAI|Google|NVIDIA|英伟达/i.test(source.publisher));
+        const verification = hasPrimarySource
+          ? "official" as const
+          : publishers.size >= 2 ? "multi_source" as const : "single_source" as const;
+        return [{ ...safeEvent, verification, sources: sources.slice(0, 3) }];
       }),
     };
     saveWorldPulseDiscovery(dayKey, safeValue);

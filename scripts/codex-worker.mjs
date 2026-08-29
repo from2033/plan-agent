@@ -36,7 +36,7 @@ const visionOcrScript = path.join(scriptDir, "vision-ocr.swift");
 const documentSearchScript = path.join(scriptDir, "document-search.py");
 const pythonBin = process.env.ASSISTANT_PYTHON_BIN || "/usr/bin/python3";
 const once = process.argv.includes("--once");
-const queueProtocolVersion = 8;
+const queueProtocolVersion = 9;
 const researchModel = process.env.ASSISTANT_RESEARCH_MODEL || "gpt-5.6-sol";
 const researchTimeoutMs = Math.max(120_000, Number(process.env.ASSISTANT_RESEARCH_TIMEOUT_MS || 600_000));
 
@@ -182,26 +182,16 @@ const worldDiscoverySchema = {
             type: "string",
             enum: ["official", "multi_source", "single_source", "unverified"],
           },
-          sources: {
+          sourceIndexes: {
             type: "array",
             minItems: 1,
             maxItems: 3,
-            items: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                title: { type: "string" },
-                publisher: { type: "string" },
-                url: { type: "string" },
-                publishedAt: { type: "string" },
-              },
-              required: ["title", "publisher", "url", "publishedAt"],
-            },
+            items: { type: "integer", minimum: 0 },
           },
         },
         required: [
           "sectionId", "title", "summary", "whyItMatters", "watchNext",
-          "verification", "sources",
+          "verification", "sourceIndexes",
         ],
       },
     },
@@ -390,11 +380,9 @@ function validOllamaResult(kind, value) {
         && [event.title, event.summary, event.whyItMatters, event.watchNext]
           .every(item => typeof item === "string" && item.length > 0)
         && ["official", "multi_source", "single_source", "unverified"].includes(event.verification)
-        && Array.isArray(event.sources) && event.sources.length > 0 && event.sources.length <= 3
-        && event.sources.every(source => source && typeof source === "object"
-          && [source.title, source.publisher, source.url, source.publishedAt]
-            .every(item => typeof item === "string" && item.length > 0)
-          && /^https:\/\//.test(source.url)));
+        && Array.isArray(event.sourceIndexes) && event.sourceIndexes.length > 0
+        && event.sourceIndexes.length <= 3
+        && event.sourceIndexes.every(index => Number.isInteger(index) && index >= 0));
   }
   if (kind === "document") {
     return typeof value.title === "string" && value.title.length > 0 && value.title.length <= 200
@@ -546,12 +534,13 @@ const worldDiscoveryPrompt = `你是 Daynote 的本地每日趋势编辑。程�
 
 规则：
 1. 同一事件的多个标题必须合并。title 用准确简洁的中文，不做标题党。
-2. sources 必须逐字复制相关候选里的 title、source、url、publishedAt，不能创造或改写URL，最多3个。优先最近24小时；超过3天的事件，除非是南京楼市连续数据或仍在进行的政策征求意见，否则不进入今日重点。
+2. sourceIndexes 只填写实际支持该事件的候选 sourceIndex，最多3个；不能填写不存在的编号。优先最近24小时；超过3天的事件，除非是南京楼市连续数据或仍在进行的政策征求意见，否则不进入今日重点。
 3. 来源是政府、监管机构、央行、企业官网或作者原文时 verification=official；至少两个相互独立的可靠媒体一致时为 multi_source；只有一个媒体时为 single_source；标题本身含“据悉、传闻、或将”等且缺少可靠印证时为 unverified。
 4. “拟、征求意见、媒体称可能”不能写成已经出台。阅读量、观看量、金额和百分比只有候选标题明确出现时才可写。
 5. summary、whyItMatters、watchNext 各写一句短句，每项不超过80个汉字。说明已知事实、不确定性、对生活或趋势的关系和后续验证信号。不得给黄金买卖或买房卖房建议，不制造就业焦虑。
 6. 每次都认真比较住房金融与正式政策候选，不要因为同栏目已有一条事件就忽略另一条对普通人影响更直接的政策。
 7. 涉及延长贷款期限，必须同时说明它可能降低月供，但也可能增加累计利息，具体期限仍由借款人与银行协商，不能简单写成单向利好。
+8. 南京单宗土地挂牌、单个楼盘成交或中介宣传不能推断全市房价上涨或市场升温；缺少连续成交量、价格和库存数据时，宁可不选。
 
 overview 用2至4句总结今天最重要的共同方向；discoveredAt 使用 input.currentTime。严格返回符合JSON Schema的对象。`;
 

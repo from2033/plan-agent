@@ -7,8 +7,8 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 8;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-08-29.1";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 9;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-08-29.2";
 
 export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse" | "world_discovery" | "research";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
@@ -151,12 +151,7 @@ const WorldDiscoveryResultSchema = z.object({
     whyItMatters: z.string().min(1).max(600),
     watchNext: z.string().min(1).max(500),
     verification: z.enum(["official", "multi_source", "single_source", "unverified"]),
-    sources: z.array(z.object({
-      title: z.string().min(1).max(300),
-      publisher: z.string().min(1).max(120),
-      url: z.string().url().max(2_000),
-      publishedAt: z.string().max(40),
-    })).min(1).max(3),
+    sourceIndexes: z.array(z.number().int().nonnegative()).min(1).max(3),
   })).max(8),
   discoveredAt: z.string().min(1).max(40),
 });

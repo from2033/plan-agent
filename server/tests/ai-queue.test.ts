@@ -134,12 +134,7 @@ test("每日全网巡检结果加密保存并可按类型读取最新任务", ()
       whyItMatters: "可能影响月供和总利息。",
       watchNext: "等待监管部门正式文件。",
       verification: "single_source",
-      sources: [{
-        title: "相关报道",
-        publisher: "示例媒体",
-        url: "https://example.com/housing",
-        publishedAt: "2026-08-29T01:00:00.000Z",
-      }],
+      sourceIndexes: [0],
     }],
     discoveredAt: "2026-08-29T02:00:00.000Z",
   };
