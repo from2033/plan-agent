@@ -892,6 +892,20 @@ app.get(`${API}/documents/:id/content`, (req, res) => {
   res.send(uploaded.content);
 });
 
+app.delete(`${API}/documents/:id`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再删除资料" });
+    return;
+  }
+  const document = getDocument(req.params.id, req.userId!);
+  if (!document) {
+    res.status(404).json({ error: "资料不存在或不属于当前账号" });
+    return;
+  }
+  discardDocument(document.id, req.userId!);
+  res.status(204).end();
+});
+
 const MistakeInputSchema = z.object({
   childName: z.string().trim().min(1).max(60),
   subject: z.string().trim().min(1).max(40),

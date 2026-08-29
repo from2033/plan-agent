@@ -2822,6 +2822,23 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                   label: const Text('补充说明（支持语音）'),
                 ),
               ),
+              if (isAudio) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      unawaited(deleteMeetingRecording(document));
+                    },
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    label: const Text('删除这条会议录音'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xffb42318),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 18),
               Container(
                 padding: const EdgeInsets.all(13),
@@ -2852,6 +2869,48 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         ),
       ),
     );
+  }
+
+  Future<void> deleteMeetingRecording(Map<String, dynamic> document) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除这条会议录音？'),
+        content: Text('将同时删除原始录音和整理结果，且无法恢复。\n\n${documentTitle(document)}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              '确认删除',
+              style: TextStyle(color: Color(0xffb42318)),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final id = document['id'] as String;
+    final previous = List<Map<String, dynamic>>.of(documents);
+    setState(() => documents.removeWhere((item) => item['id'] == id));
+    try {
+      await widget.api.deleteDocument(id);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('会议录音已删除')));
+      }
+    } catch (exception) {
+      if (mounted) {
+        setState(() {
+          documents = previous;
+          error = exception.toString();
+        });
+      }
+    }
   }
 
   Widget _detailLine(String label, String value) => Padding(

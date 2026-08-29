@@ -286,6 +286,11 @@ class ApiClient {
     return response.bodyBytes;
   }
 
+  Future<void> deleteDocument(String id) async {
+    if (_isGuest) throw const ApiException('请先登录后再删除资料');
+    await _request('DELETE', '/documents/${Uri.encodeComponent(id)}');
+  }
+
   Future<Map<String, dynamic>> uploadDocument({
     required String fileName,
     required String mimeType,

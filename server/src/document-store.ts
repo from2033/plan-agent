@@ -274,8 +274,8 @@ export function appendDocumentNote(id: string, userId: string, note: string): St
 }
 
 export function discardDocument(id: string, userId: string): void {
-  db.prepare("DELETE FROM documents WHERE id=? AND user_id=?").run(id, userId);
-  fs.rmSync(uploadPath(id), { force: true });
+  const result = db.prepare("DELETE FROM documents WHERE id=? AND user_id=?").run(id, userId);
+  if (result.changes > 0) fs.rmSync(uploadPath(id), { force: true });
 }
 
 export function deleteUserDocuments(userId: string): void {

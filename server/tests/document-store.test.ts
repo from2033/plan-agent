@@ -14,6 +14,7 @@ const {
   appendDocumentNote,
   completeDocument,
   createResearchDocument,
+  discardDocument,
   findDuplicateDocument,
   readDocumentUpload,
   resolveDocumentEvidence,
@@ -46,6 +47,15 @@ test("录音原文只能由所属账号完整读取", () => {
   assert.equal(readDocumentUpload(stored.id, "user-2"), null);
   completeDocument(stored.id, "user-1", { title: "会议" });
   assert.deepEqual(readDocumentUpload(stored.id, "user-1")?.content, content);
+});
+
+test("删除会议录音会同时删除所属账号的记录和原始音频", () => {
+  const content = Buffer.from("meeting-to-delete", "utf8");
+  const stored = storeDocumentUpload("user-1", "待删除会议.wav", "audio/wav", content);
+  discardDocument(stored.id, "user-2");
+  assert.deepEqual(readDocumentUpload(stored.id, "user-1")?.content, content);
+  discardDocument(stored.id, "user-1");
+  assert.equal(readDocumentUpload(stored.id, "user-1"), null);
 });
 
 test("后台研究任务以加密报告资料形式保存", () => {
