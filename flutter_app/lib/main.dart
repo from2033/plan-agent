@@ -698,6 +698,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_consumePendingShortcut());
+      unawaited(refresh());
     }
     if (state == AppLifecycleState.resumed && !widget.isGuest) {
       unawaited(_recoverMeetingRecordings());
