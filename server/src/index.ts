@@ -89,6 +89,10 @@ import {
   storeDocumentUpload,
 } from "./document-store.js";
 import {
+  chunkedUploadStore,
+  MAX_CHUNKED_DOCUMENT_SIZE,
+} from "./chunked-upload.js";
+import {
   deleteMistake,
   insertMistake,
   listMistakes,
@@ -908,6 +912,137 @@ const DOCUMENT_MIME_TYPES = new Set([
   "audio/x-wav",
 ]);
 
+function acceptDocumentUpload(
+  userId: string,
+  fileName: string,
+  mimeType: string,
+  content: Buffer,
+  userNote: string,
+): { status: number; body: Record<string, unknown> } {
+  const duplicate = findDuplicateDocument(userId, content);
+  if (duplicate && duplicate.status !== "FAILED") {
+    if (userNote && duplicate.status === "COMPLETE") {
+      const job = enqueueAiJob(userId, "document_note", {
+        documentId: duplicate.id,
+        note: userNote,
+      }, 95);
+      return {
+        status: 202,
+        body: {
+          duplicate: true,
+          noteQueued: true,
+          documentId: duplicate.id,
+          jobId: job.id,
+          status: job.status,
+        },
+      };
+    }
+    return {
+      status: 200,
+      body: { duplicate: true, documentId: duplicate.id, status: duplicate.status },
+    };
+  }
+  if (duplicate) discardDocument(duplicate.id, userId);
+  const document = storeDocumentUpload(userId, fileName, mimeType, content, userNote);
+  try {
+    const job = enqueueAiJob(userId, "document", {
+      documentId: document.id,
+      ...(userNote ? { userNote } : {}),
+    }, 90);
+    bindDocumentJob(document.id, userId, job.id);
+    return {
+      status: 202,
+      body: { documentId: document.id, jobId: job.id, status: "QUEUED" },
+    };
+  } catch (error) {
+    discardDocument(document.id, userId);
+    throw error;
+  }
+}
+
+const ChunkedDocumentUploadSchema = z.object({
+  fileName: z.string().trim().min(1).max(240),
+  mimeType: z.string().trim().min(1).max(120).transform(value => value.toLowerCase()),
+  userNote: z.string().trim().max(2_000).default(""),
+  totalBytes: z.number().int().positive().max(MAX_CHUNKED_DOCUMENT_SIZE),
+});
+
+app.post(`${API}/documents/uploads`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再上传家庭资料" });
+    return;
+  }
+  const parsed = ChunkedDocumentUploadSchema.safeParse(req.body);
+  if (!parsed.success || !DOCUMENT_MIME_TYPES.has(parsed.data?.mimeType || "")) {
+    res.status(400).json({ error: "上传资料参数无效" });
+    return;
+  }
+  try {
+    const upload = chunkedUploadStore.create(req.userId!, parsed.data);
+    res.status(201).json({
+      uploadId: upload.id,
+      chunkSize: upload.chunkSize,
+      chunkCount: upload.chunkCount,
+    });
+  } catch (error) {
+    console.error("[chunked document upload] 创建失败:", error);
+    res.status(500).json({ error: "无法开始资料上传" });
+  }
+});
+
+app.put(
+  `${API}/documents/uploads/:id/chunks/:index`,
+  express.raw({ type: () => true, limit: "9mb" }),
+  (req, res) => {
+    if (isGuestUser(req.userId)) {
+      res.status(403).json({ error: "请先登录后再上传家庭资料" });
+      return;
+    }
+    try {
+      chunkedUploadStore.writeChunk(
+        req.userId!,
+        req.params.id,
+        Number(req.params.index),
+        req.body as Buffer,
+      );
+      res.status(204).end();
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      const status = code === "upload_not_found" ? 404 : 400;
+      res.status(status).json({ error: status === 404 ? "上传任务不存在" : "录音分片无效" });
+    }
+  },
+);
+
+app.post(`${API}/documents/uploads/:id/complete`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再上传家庭资料" });
+    return;
+  }
+  try {
+    const assembled = chunkedUploadStore.assemble(req.userId!, req.params.id);
+    const accepted = acceptDocumentUpload(
+      req.userId!,
+      assembled.metadata.fileName,
+      assembled.metadata.mimeType,
+      assembled.content,
+      assembled.metadata.userNote,
+    );
+    chunkedUploadStore.remove(req.userId!, req.params.id);
+    res.status(accepted.status).json(accepted.body);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    if (code === "upload_not_found" || code === "upload_incomplete" || code === "upload_size_mismatch") {
+      res.status(code === "upload_not_found" ? 404 : 409).json({
+        error: code === "upload_not_found" ? "上传任务不存在" : "录音分片尚未上传完整",
+      });
+      return;
+    }
+    console.error("[chunked document upload] 合并失败:", error);
+    res.status(500).json({ error: "录音合并保存失败" });
+  }
+});
+
 app.get(`${API}/documents`, (req, res) => {
   if (isGuestUser(req.userId)) {
     res.json([]);
@@ -1058,7 +1193,9 @@ app.post(`${API}/documents/:id/notes`, (req, res) => {
 
 app.post(
   `${API}/documents`,
-  express.raw({ type: () => true, limit: "30mb" }),
+  // Older app versions upload a complete WAV in one request. Keep enough room
+  // to recover their pending recordings; current builds use chunked uploads.
+  express.raw({ type: () => true, limit: "256mb" }),
   (req, res) => {
     if (isGuestUser(req.userId)) {
       res.status(403).json({ error: "请先登录后再上传家庭资料" });
@@ -1080,42 +1217,10 @@ app.post(
       res.status(415).json({ error: "支持 PDF、Word、图片、文本和 WAV 录音" });
       return;
     }
-    let storedDocumentId = "";
     try {
-      const duplicate = findDuplicateDocument(req.userId!, content);
-      if (duplicate && duplicate.status !== "FAILED") {
-        if (userNote && duplicate.status === "COMPLETE") {
-          const job = enqueueAiJob(req.userId!, "document_note", {
-            documentId: duplicate.id,
-            note: userNote,
-          }, 95);
-          res.status(202).json({
-            duplicate: true,
-            noteQueued: true,
-            documentId: duplicate.id,
-            jobId: job.id,
-            status: job.status,
-          });
-          return;
-        }
-        res.status(200).json({
-          duplicate: true,
-          documentId: duplicate.id,
-          status: duplicate.status,
-        });
-        return;
-      }
-      if (duplicate) discardDocument(duplicate.id, req.userId!);
-      const document = storeDocumentUpload(req.userId!, fileName, mimeType, content, userNote);
-      storedDocumentId = document.id;
-      const job = enqueueAiJob(req.userId!, "document", {
-        documentId: document.id,
-        ...(userNote ? { userNote } : {}),
-      }, 90);
-      bindDocumentJob(document.id, req.userId!, job.id);
-      res.status(202).json({ documentId: document.id, jobId: job.id, status: "QUEUED" });
+      const accepted = acceptDocumentUpload(req.userId!, fileName, mimeType, content, userNote);
+      res.status(accepted.status).json(accepted.body);
     } catch (error) {
-      if (storedDocumentId) discardDocument(storedDocumentId, req.userId!);
       console.error("[document upload] 保存失败:", error);
       res.status(500).json({ error: "资料上传失败" });
     }

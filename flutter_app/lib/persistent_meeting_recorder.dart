@@ -17,15 +17,47 @@ const meetingChunkSeconds = 50;
 class PersistentMeetingResult {
   const PersistentMeetingResult({
     required this.sessionId,
-    required this.wav,
+    required this.pcmPath,
+    required this.pcmBytes,
     required this.transcript,
     required this.createdAt,
   });
 
   final String sessionId;
-  final Uint8List wav;
+  final String pcmPath;
+  final int pcmBytes;
   final String transcript;
   final DateTime createdAt;
+
+  int get wavBytes => 44 + pcmBytes;
+
+  Future<Uint8List> readWavChunk(int offset, int length) async {
+    if (offset < 0 || length < 0 || offset + length > wavBytes) {
+      throw const ApiException('录音分片范围无效');
+    }
+    final output = Uint8List(length);
+    final header = wavHeader(pcmBytes);
+    final headerStart = offset.clamp(0, header.length);
+    final headerEnd = (offset + length).clamp(0, header.length);
+    if (headerEnd > headerStart) {
+      output.setRange(0, headerEnd - headerStart, header, headerStart);
+    }
+    final pcmOutputOffset = (header.length - offset).clamp(0, length);
+    final pcmOffset = (offset - header.length).clamp(0, pcmBytes);
+    final pcmLength = length - pcmOutputOffset;
+    if (pcmLength > 0) {
+      final file = await File(pcmPath).open();
+      try {
+        await file.setPosition(pcmOffset);
+        final bytes = await file.read(pcmLength);
+        if (bytes.length != pcmLength) throw const ApiException('本机录音读取不完整');
+        output.setRange(pcmOutputOffset, length, bytes);
+      } finally {
+        await file.close();
+      }
+    }
+    return output;
+  }
 }
 
 class PersistentMeetingRecorder {
@@ -309,11 +341,12 @@ class PersistentMeetingRecorder {
     Directory directory,
     DateTime started,
   ) async {
-    final pcm = await File('${directory.path}/audio.pcm').readAsBytes();
+    final pcmFile = File('${directory.path}/audio.pcm');
     final transcriptFile = File('${directory.path}/transcript.txt');
     return PersistentMeetingResult(
       sessionId: directory.path.split('/').last,
-      wav: pcmToWav(pcm),
+      pcmPath: pcmFile.path,
+      pcmBytes: await pcmFile.length(),
       transcript: await transcriptFile.exists()
           ? (await transcriptFile.readAsString()).trim()
           : '',
@@ -342,10 +375,26 @@ Uint8List pcmToWav(
   int sampleRate = meetingSampleRate,
   int channels = meetingChannels,
 }) {
-  final output = Uint8List(44 + pcm.length);
+  final header = wavHeader(
+    pcm.length,
+    sampleRate: sampleRate,
+    channels: channels,
+  );
+  final output = Uint8List(header.length + pcm.length);
+  output.setRange(0, header.length, header);
+  output.setRange(header.length, output.length, pcm);
+  return output;
+}
+
+Uint8List wavHeader(
+  int pcmLength, {
+  int sampleRate = meetingSampleRate,
+  int channels = meetingChannels,
+}) {
+  final output = Uint8List(44);
   final data = ByteData.sublistView(output);
   output.setRange(0, 4, ascii.encode('RIFF'));
-  data.setUint32(4, output.length - 8, Endian.little);
+  data.setUint32(4, pcmLength + 36, Endian.little);
   output.setRange(8, 12, ascii.encode('WAVE'));
   output.setRange(12, 16, ascii.encode('fmt '));
   data.setUint32(16, 16, Endian.little);
@@ -356,7 +405,6 @@ Uint8List pcmToWav(
   data.setUint16(32, channels * 2, Endian.little);
   data.setUint16(34, 16, Endian.little);
   output.setRange(36, 40, ascii.encode('data'));
-  data.setUint32(40, pcm.length, Endian.little);
-  output.setRange(44, output.length, pcm);
+  data.setUint32(40, pcmLength, Endian.little);
   return output;
 }

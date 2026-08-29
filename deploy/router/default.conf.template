@@ -6,7 +6,9 @@ upstream personal_assistant_backend {
 server {
   listen 8787;
   server_name _;
-  client_max_body_size 32m;
+  # Backward compatibility for older mobile builds that upload one complete WAV.
+  # New builds use 8 MiB chunks, but this keeps pending local recordings recoverable.
+  client_max_body_size 272m;
 
   location / {
     proxy_pass http://personal_assistant_backend;

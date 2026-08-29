@@ -668,10 +668,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final timestamp = DateFormat(
           'yyyyMMdd-HHmmss',
         ).format(result.createdAt);
-        await widget.api.uploadDocument(
+        await widget.api.uploadDocumentInChunks(
           fileName: '会议录音-$timestamp.wav',
           mimeType: 'audio/wav',
-          bytes: result.wav,
+          totalBytes: result.wavBytes,
+          readChunk: result.readWavChunk,
           note: result.transcript.isEmpty
               ? '会议/谈话录音。App 意外结束后已恢复原始录音。'
               : '会议/谈话录音恢复转写：\n${result.transcript}',
@@ -2407,10 +2408,11 @@ class _KnowledgePaneState extends State<KnowledgePane> {
 
   Future<void> _archiveRecording(PersistentMeetingResult result) async {
     final timestamp = DateFormat('yyyyMMdd-HHmmss').format(result.createdAt);
-    await widget.api.uploadDocument(
+    await widget.api.uploadDocumentInChunks(
       fileName: '会议录音-$timestamp.wav',
       mimeType: 'audio/wav',
-      bytes: result.wav,
+      totalBytes: result.wavBytes,
+      readChunk: result.readWavChunk,
       note: result.transcript.isEmpty
           ? '会议/谈话录音。转写暂时失败，原始录音已保留。'
           : '会议/谈话录音自动转写：\n${result.transcript}',

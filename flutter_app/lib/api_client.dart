@@ -29,8 +29,10 @@ class ApiClient {
   static const _tokenKey = 'assistant_session_token';
   static const _guestTokenKey = 'assistant_guest_token';
   static const _sessionModeKey = 'assistant_session_mode';
+  static const _chunkedUploadThreshold = 8 * 1024 * 1024;
   final http.Client _http;
-  final GuestStore _guestStore = GuestStore();
+  GuestStore? _guestStoreInstance;
+  GuestStore get _guestStore => _guestStoreInstance ??= GuestStore();
   StudySession? _studySession;
 
   String? _token;
@@ -299,6 +301,17 @@ class ApiClient {
     bool waitForProcessing = true,
   }) async {
     if (_isGuest) throw const ApiException('请先登录后再上传家庭资料');
+    if (bytes.length > _chunkedUploadThreshold) {
+      return uploadDocumentInChunks(
+        fileName: fileName,
+        mimeType: mimeType,
+        totalBytes: bytes.length,
+        readChunk: (offset, length) async =>
+            Uint8List.sublistView(bytes, offset, offset + length),
+        note: note,
+        waitForProcessing: waitForProcessing,
+      );
+    }
     final uri = Uri.parse(
       '$apiBase/documents',
     ).replace(queryParameters: {'fileName': fileName});
@@ -328,6 +341,96 @@ class ApiClient {
       if (error is ApiException) rethrow;
       throw const ApiException('资料上传失败，请检查网络后重试');
     }
+  }
+
+  Future<Map<String, dynamic>> uploadDocumentInChunks({
+    required String fileName,
+    required String mimeType,
+    required int totalBytes,
+    required Future<Uint8List> Function(int offset, int length) readChunk,
+    String note = '',
+    bool waitForProcessing = true,
+  }) async {
+    if (_isGuest) throw const ApiException('请先登录后再上传家庭资料');
+    try {
+      final session =
+          await _request(
+                'POST',
+                '/documents/uploads',
+                body: {
+                  'fileName': fileName,
+                  'mimeType': mimeType,
+                  'userNote': note.trim(),
+                  'totalBytes': totalBytes,
+                },
+              )
+              as Map<String, dynamic>;
+      final uploadId = session['uploadId'] as String;
+      final chunkSize = (session['chunkSize'] as num).toInt();
+      final chunkCount = (session['chunkCount'] as num).toInt();
+      for (var index = 0; index < chunkCount; index += 1) {
+        final start = index * chunkSize;
+        final end = (start + chunkSize).clamp(0, totalBytes);
+        final chunk = await readChunk(start, end - start);
+        if (chunk.length != end - start) {
+          throw const ApiException('本机录音分片读取不完整');
+        }
+        await _uploadDocumentChunk(uploadId, index, chunk);
+      }
+      final json =
+          await _request(
+                'POST',
+                '/documents/uploads/${Uri.encodeComponent(uploadId)}/complete',
+              )
+              as Map<String, dynamic>;
+      if (json['status'] != 'QUEUED' || !waitForProcessing) return json;
+      final result = await _waitForJob(
+        json['jobId'] as String,
+        timeoutSeconds: 300,
+      );
+      return {
+        ...result,
+        if (json['duplicate'] == true) 'duplicate': true,
+        if (json['noteQueued'] == true) 'noteAppended': true,
+      };
+    } catch (error) {
+      if (error is ApiException) rethrow;
+      throw const ApiException('资料分段上传失败，请检查网络后重试');
+    }
+  }
+
+  Future<void> _uploadDocumentChunk(
+    String uploadId,
+    int index,
+    Uint8List chunk,
+  ) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        final response = await _http.put(
+          Uri.parse(
+            '$apiBase/documents/uploads/${Uri.encodeComponent(uploadId)}/chunks/$index',
+          ),
+          headers: {
+            'content-type': 'application/octet-stream',
+            if (_token != null) 'authorization': 'Bearer $_token',
+          },
+          body: chunk,
+        );
+        if (response.statusCode >= 200 && response.statusCode < 300) return;
+        _decode(response);
+      } catch (error) {
+        lastError = error;
+        if (error is ApiException && (error.status ?? 0) < 500) rethrow;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 350 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    if (lastError is ApiException) throw lastError;
+    throw const ApiException('录音分片上传失败，请稍后重试');
   }
 
   Future<Map<String, dynamic>> addDocumentNote(
