@@ -31,6 +31,7 @@ class ApiClient {
   static const _sessionModeKey = 'assistant_session_mode';
   final http.Client _http;
   final GuestStore _guestStore = GuestStore();
+  StudySession? _studySession;
 
   String? _token;
   bool _isGuest = false;
@@ -141,6 +142,7 @@ class ApiClient {
   Future<void> logout() async {
     _token = null;
     _isGuest = false;
+    _studySession = null;
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _sessionModeKey);
   }
@@ -150,6 +152,7 @@ class ApiClient {
     await _request('DELETE', '/account');
     _token = null;
     _isGuest = false;
+    _studySession = null;
     // The server deletion has already succeeded and invalidated this token.
     // Local cleanup is best-effort so a Keychain error cannot make the UI
     // incorrectly claim that the account still exists.
@@ -172,6 +175,73 @@ class ApiClient {
     final json =
         await _request('POST', '/study/launch') as Map<String, dynamic>;
     return Uri.parse(json['url'] as String);
+  }
+
+  Future<StudySession> studySession({bool refresh = false}) async {
+    if (!refresh && _studySession != null) return _studySession!;
+    final launch = await studyLaunchUrl();
+    final ticket = launch.queryParameters['sso'];
+    if (ticket == null || ticket.isEmpty) {
+      throw const ApiException('QQ群消息中心登录失败');
+    }
+    final base = Uri.parse('${launch.scheme}://${launch.authority}/api');
+    final response = await _http.post(
+      base.resolve('/api/auth/assistant-login'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({'token': ticket}),
+    );
+    final value = _decode(response) as Map<String, dynamic>;
+    _studySession = StudySession(base, value['token'] as String);
+    return _studySession!;
+  }
+
+  Future<List<Map<String, dynamic>>> studyMessages(String date) async {
+    final value = await _studyRequest('/messages', query: {'date': date});
+    return (value as List<dynamic>).cast<Map<String, dynamic>>();
+  }
+
+  Future<List<Map<String, dynamic>>> studyDownloads(String date) async {
+    final value = await _studyRequest('/downloads', query: {'date': date});
+    return (value as List<dynamic>).cast<Map<String, dynamic>>();
+  }
+
+  Future<Uint8List> studyPrintBundle(List<int> ids) async {
+    final session = await studySession();
+    final response = await _http.post(
+      session.apiBase.resolve('/api/downloads/print-bundle'),
+      headers: {
+        'content-type': 'application/json',
+        'authorization': 'Bearer ${session.token}',
+      },
+      body: jsonEncode({'ids': ids}),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _decode(response);
+    }
+    return response.bodyBytes;
+  }
+
+  Future<dynamic> _studyRequest(
+    String path, {
+    Map<String, String>? query,
+  }) async {
+    var session = await studySession();
+    Future<http.Response> send() {
+      final uri = session.apiBase
+          .resolve('/api$path')
+          .replace(queryParameters: query);
+      return _http.get(
+        uri,
+        headers: {'authorization': 'Bearer ${session.token}'},
+      );
+    }
+
+    var response = await send();
+    if (response.statusCode == 401) {
+      session = await studySession(refresh: true);
+      response = await send();
+    }
+    return _decode(response);
   }
 
   Future<List<AssistantEntry>> entries() async {
@@ -498,4 +568,11 @@ class ApiClient {
     }
     return value;
   }
+}
+
+class StudySession {
+  const StudySession(this.apiBase, this.token);
+
+  final Uri apiBase;
+  final String token;
 }

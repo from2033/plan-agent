@@ -12,6 +12,7 @@ import 'document_audio_player.dart';
 import 'models.dart';
 import 'persistent_meeting_recorder.dart';
 import 'reminder_service.dart';
+import 'qq_group_center_page.dart';
 import 'voice_service.dart';
 import 'world_pulse_page.dart';
 
@@ -1572,17 +1573,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> openStudyCenter() async {
-    try {
-      final uri = await widget.api.studyLaunchUrl();
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!opened) throw const ApiException('无法打开QQ群消息中心');
-    } catch (error) {
-      if (!mounted) return;
-      final message = error is ApiException ? error.message : 'QQ群消息中心暂时无法打开';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => QqGroupCenterPage(api: widget.api),
+      ),
+    );
   }
 
   Widget _settingsTile(
