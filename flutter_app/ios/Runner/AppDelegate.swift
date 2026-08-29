@@ -22,6 +22,8 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
   private var capturedCameraImages: [UIImage] = []
   private var recordingProcessingTask: UIBackgroundTaskIdentifier = .invalid
   private var recordingProcessingReferences = 0
+  private var shortcutChannel: FlutterMethodChannel?
+  private var shortcutObserver: NSObjectProtocol?
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -92,6 +94,25 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
           details: nil
         ))
       }
+    }
+    let shortcutChannel = FlutterMethodChannel(
+      name: "com.from2033.assistant/shortcuts",
+      binaryMessenger: registrar.messenger()
+    )
+    self.shortcutChannel = shortcutChannel
+    shortcutChannel.setMethodCallHandler { call, result in
+      guard call.method == "consumeStartRecording" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      result(DaynoteShortcutBridge.consumeStartRecording())
+    }
+    shortcutObserver = NotificationCenter.default.addObserver(
+      forName: DaynoteShortcutBridge.startRecordingNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.shortcutChannel?.invokeMethod("startRecording", arguments: nil)
     }
   }
 

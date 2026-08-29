@@ -552,6 +552,9 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  static const shortcutChannel = MethodChannel(
+    'com.from2033.assistant/shortcuts',
+  );
   late final VoiceService voice = VoiceService(widget.api);
   late final PersistentMeetingRecorder meetingRecorder =
       PersistentMeetingRecorder(widget.api);
@@ -567,6 +570,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final List<_PendingVoiceTask> pendingTasks = [];
   int _nextPendingId = 1;
   int _knowledgeRevision = 0;
+  int _startMeetingRecordingRequest = 0;
   bool showCompletedTodos = false;
   DateTime selectedDate = DateUtils.dateOnly(DateTime.now());
   Future<void>? _voiceStart;
@@ -590,9 +594,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    shortcutChannel.setMethodCallHandler(_handleShortcutMethod);
     refresh();
     unawaited(refreshWorldPulse());
     if (!widget.isGuest) unawaited(_recoverMeetingRecordings());
+    unawaited(_consumePendingShortcut());
+  }
+
+  Future<dynamic> _handleShortcutMethod(MethodCall call) async {
+    if (call.method != 'startRecording') return;
+    await shortcutChannel.invokeMethod<bool>('consumeStartRecording');
+    _requestMeetingRecording();
+  }
+
+  Future<void> _consumePendingShortcut() async {
+    try {
+      final pending =
+          await shortcutChannel.invokeMethod<bool>('consumeStartRecording') ??
+          false;
+      if (pending) _requestMeetingRecording();
+    } on MissingPluginException {
+      // Android、Web 等平台没有 iOS 快捷指令通道。
+    }
+  }
+
+  void _requestMeetingRecording() {
+    if (!mounted) return;
+    setState(() {
+      tab = 2;
+      _startMeetingRecordingRequest += 1;
+    });
   }
 
   Future<void> refreshWorldPulse({bool force = false}) async {
@@ -664,6 +695,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_consumePendingShortcut());
+    }
     if (state == AppLifecycleState.resumed && !widget.isGuest) {
       unawaited(_recoverMeetingRecordings());
     }
@@ -1016,6 +1050,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     _disposing = true;
     WidgetsBinding.instance.removeObserver(this);
+    shortcutChannel.setMethodCallHandler(null);
     worldPulseAnalysisTimer?.cancel();
     voice.dispose();
     meetingRecorder.dispose();
@@ -1428,6 +1463,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       key: ValueKey(_knowledgeRevision),
       api: widget.api,
       meetingRecorder: meetingRecorder,
+      startRecordingRequest: _startMeetingRecordingRequest,
+      onStartRecordingRequestHandled: () {
+        if (mounted && _startMeetingRecordingRequest != 0) {
+          setState(() => _startMeetingRecordingRequest = 0);
+        }
+      },
     );
   }
 
@@ -2069,10 +2110,14 @@ class KnowledgePane extends StatefulWidget {
     super.key,
     required this.api,
     required this.meetingRecorder,
+    required this.startRecordingRequest,
+    required this.onStartRecordingRequestHandled,
   });
 
   final ApiClient api;
   final PersistentMeetingRecorder meetingRecorder;
+  final int startRecordingRequest;
+  final VoidCallback onStartRecordingRequestHandled;
 
   @override
   State<KnowledgePane> createState() => _KnowledgePaneState();
@@ -2108,6 +2153,33 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       _startMeetingTimer();
     }
     load();
+    if (widget.startRecordingRequest > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _handleStartRecordingRequest();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant KnowledgePane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.startRecordingRequest > 0 &&
+        widget.startRecordingRequest != oldWidget.startRecordingRequest) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _handleStartRecordingRequest();
+      });
+    }
+  }
+
+  void _handleStartRecordingRequest() {
+    if (!mounted) return;
+    widget.onStartRecordingRequestHandled();
+    unawaited(_startMeetingRecordingFromShortcut());
+  }
+
+  Future<void> _startMeetingRecordingFromShortcut() async {
+    if (!mounted || meetingRecording || meetingSaving || uploading) return;
+    await toggleMeetingRecording();
   }
 
   @override
