@@ -32,6 +32,12 @@ test("群消息里的周几按消息发送日期解析", () => {
   assert.equal(entry.reminderAt, undefined);
 });
 
+test("下周按下一个自然周解析而不是额外多加一周", () => {
+  const [entry] = extractQqTasks(message("下周一上午8点到校报到"), now);
+  assert.equal(entry.scheduledDate, "2026-08-31");
+  assert.equal(entry.time, "08:00");
+});
+
 test("截止日前做完或上传的表述也会成为待办", () => {
   const [entry] = extractQqTasks(message("请在9月2日前填写资料并上传到群里"), now);
   assert.equal(entry.scheduledDate, "2026-09-02");

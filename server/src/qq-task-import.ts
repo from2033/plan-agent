@@ -10,7 +10,7 @@ export interface QqTaskMessage {
   sentAt: string;
 }
 
-const ACTION_RE = /(提交|上交|交作业|完成|做完|填写|上传|发送|发到|下载|购买|带齐|带上|携带|到校|返校|参加|开会|报名|缴费|支付|打印|准备|回复|确认|领取|归还|打卡|复习|订正|检查|值班|护学岗|考试|测验|上课|放学|接送)/;
+const ACTION_RE = /(提交|上交|交作业|完成|做完|填写|上传|发送|发到|下载|购买|带齐|带上|携带|到校|返校|报到|参加|开会|报名|缴费|支付|打印|准备|回复|确认|领取|归还|打卡|复习|订正|检查|值班|护学岗|考试|测验|上课|放学|接送)/;
 const DATE_RE = /(今天|今日|今晚|明天|明晚|后天|(?:本|这|下下|下)?(?:周|星期|礼拜)[一二三四五六日天]|(?:\d{4}[年./-])?\d{1,2}[月./-]\d{1,2}日?)/g;
 const IGNORE_RE = /^(收到|好的|谢谢|感谢|欢迎|辛苦|祝|已完成|已经完成|已提交|已经提交|不用|取消)[！!。,.，\s]/;
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -47,9 +47,15 @@ function resolveDate(text: string, sentAt: string): string | undefined {
   if (weekdayMatch) {
     const target = "日一二三四五六".indexOf(weekdayMatch[2] === "天" ? "日" : weekdayMatch[2]);
     const prefix = weekdayMatch[1] || "";
-    let delta = (target - base.weekday + 7) % 7;
-    if (prefix === "下") delta += 7;
-    if (prefix === "下下") delta += 14;
+    let delta: number;
+    if (!prefix) {
+      delta = (target - base.weekday + 7) % 7;
+    } else {
+      const currentWeekOffset = (base.weekday + 6) % 7;
+      const targetWeekOffset = target === 0 ? 6 : target - 1;
+      const weekShift = prefix === "下" ? 1 : prefix === "下下" ? 2 : 0;
+      delta = targetWeekOffset - currentWeekOffset + weekShift * 7;
+    }
     return addDays(baseDate, delta);
   }
 
