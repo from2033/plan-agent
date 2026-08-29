@@ -397,6 +397,7 @@ interface WorkerIngestResult {
   content?: string;
   answer?: string;
   sourceIds?: string[];
+  conversationTitle?: string;
   documentSources?: Array<{
     documentId: string;
     title: string;
@@ -634,7 +635,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const item = isGuestUser(job.userId)
       ? { id: `ai-${job.id}`, title, content, timestamp: new Date().toISOString() }
       : insertKnowledge(job.userId, title, content, `ai-${job.id}`);
-    return { kind: "save", item };
+    return { kind: "save", item, conversationTitle: result.conversationTitle };
   }
   if (result.kind === "save") {
     const item = isGuestUser(job.userId)
@@ -645,7 +646,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
           timestamp: new Date().toISOString(),
         }
       : insertKnowledge(job.userId, result.title!, result.content!, `ai-${job.id}`);
-    return { kind: "save", item };
+    return { kind: "save", item, conversationTitle: result.conversationTitle };
   }
   if (result.kind === "ask") {
     const wanted = new Set(result.sourceIds || []);
@@ -673,7 +674,12 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
         sourceKind,
       };
     });
-    return { kind: "ask", answer: result.answer, sources: [...documentSources, ...knowledgeSources] };
+    return {
+      kind: "ask",
+      answer: result.answer,
+      sources: [...documentSources, ...knowledgeSources],
+      conversationTitle: result.conversationTitle,
+    };
   }
 
   const now = new Date();
@@ -729,7 +735,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
       }
     }
   }
-  return { kind: "record", entries, via: "codex-desktop" };
+  return { kind: "record", entries, via: "codex-desktop", conversationTitle: result.conversationTitle };
 }
 
 app.post(`${WORKER_API}/jobs/:id/result`, requireWorker, (req, res) => {
@@ -1504,7 +1510,7 @@ app.post(`${API}/conversations/:id/invitations`, (req, res) => {
     parsed.data.account,
   );
   if (!invitation) {
-    res.status(409).json({ error: "无法邀请：仅群主可邀请，且私人默认对话不能直接公开" });
+    res.status(409).json({ error: "无法邀请：仅对话创建者可以邀请，或该账号已经在对话中" });
     return;
   }
   res.status(201).json(invitation);
@@ -1525,10 +1531,23 @@ app.put(`${API}/conversations/:id/resources/:type/:resourceId`, (req, res) => {
     res.status(400).json({ error: "资料类型无效" });
     return;
   }
-  const resource = resourceType === "document"
-    ? getDocument(req.params.resourceId, req.userId!)
-    : getKnowledgeForViewer(req.params.resourceId, req.userId!);
-  if (!resource || ("canEdit" in resource && resource.canEdit === false)) {
+  let resourceTitle = "资料";
+  if (resourceType === "document") {
+    const document = getDocument(req.params.resourceId, req.userId!);
+    if (!document) {
+      res.status(404).json({ error: "只能把自己拥有的资料加入群聊" });
+      return;
+    }
+    resourceTitle = String(((document.result as { title?: unknown } | null)?.title) || document.fileName);
+  } else {
+    const knowledge = getKnowledgeForViewer(req.params.resourceId, req.userId!);
+    if (!knowledge || !knowledge.canEdit) {
+      res.status(404).json({ error: "只能把自己拥有的资料加入群聊" });
+      return;
+    }
+    resourceTitle = knowledge.title;
+  }
+  if (!resourceTitle) {
     res.status(404).json({ error: "只能把自己拥有的资料加入群聊" });
     return;
   }
@@ -1538,6 +1557,7 @@ app.put(`${API}/conversations/:id/resources/:type/:resourceId`, (req, res) => {
     resourceType,
     req.params.resourceId,
     req.userId!,
+    resourceTitle,
   )) {
     res.status(404).json({ error: "对话不存在" });
     return;

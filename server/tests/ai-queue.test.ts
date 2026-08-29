@@ -78,6 +78,7 @@ test("统一提问任务保留家庭资料的原文证据", () => {
   const claimed = claimAiJob("test-worker");
   const result = {
     kind: "ask" as const,
+    conversationTitle: "租赁合同到期时间",
     answer: "合同于 2027 年 8 月 31 日到期。",
     sourceIds: [],
     documentSources: [{

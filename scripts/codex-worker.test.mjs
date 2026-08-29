@@ -81,7 +81,9 @@ test("runOllama sends a constrained non-thinking request and parses JSON", async
   assert.equal(requestBody.stream, false);
   assert.equal(requestBody.options.num_predict, 320);
   assert.equal(requestBody.format.type, "object");
-  assert.deepEqual(requestBody.format.required, ["kind", "fields", "title", "content", "answer", "sourceIds"]);
+  assert.deepEqual(requestBody.format.required, [
+    "kind", "fields", "title", "content", "answer", "sourceIds", "conversationTitle",
+  ]);
   assert.deepEqual(JSON.parse(requestBody.messages[1].content), { input: ingestJob.input });
 });
 

@@ -262,7 +262,7 @@ export function inviteConversationMember(
   if (conversationRole(conversationId, inviter) !== "owner" || !recipient || recipient === inviter) return null;
   const conversation = db.prepare(`SELECT title,conversation_type FROM conversations WHERE id=?`)
     .get(conversationId) as { title: string; conversation_type: ConversationType } | undefined;
-  if (!conversation || conversation.conversation_type === "direct_ai") return null;
+  if (!conversation) return null;
   if (canViewConversation(conversationId, recipient)) return null;
   const existing = db.prepare(`SELECT id,created_at FROM conversation_invitations
     WHERE conversation_id=? AND recipient_user_id=? AND status='pending' LIMIT 1`)
@@ -334,13 +334,24 @@ export function addConversationResource(
   resourceType: "knowledge" | "document",
   resourceId: string,
   ownerUserId: string,
+  resourceTitle = "资料",
 ): boolean {
   const member = normalizeUserId(userId);
   if (!canViewConversation(conversationId, member)) return false;
-  db.prepare(`INSERT OR IGNORE INTO conversation_resources
+  const result = db.prepare(`INSERT OR IGNORE INTO conversation_resources
     (conversation_id,resource_type,resource_id,owner_user_id,added_by,added_at)
     VALUES (?,?,?,?,?,?)`).run(conversationId, resourceType, resourceId,
       normalizeUserId(ownerUserId), member, new Date().toISOString());
+  if (Number(result.changes) > 0) {
+    const now = nextConversationTimestamp(conversationId);
+    db.prepare(`INSERT INTO conversation_messages
+      (id,conversation_id,sender_type,sender_user_id,message_kind,content,status,job_id,metadata_json,created_at,updated_at)
+      VALUES (?,?,'user',?,'action',?,'complete',NULL,?,?,?)`)
+      .run(crypto.randomUUID(), conversationId, member,
+        encField(`分享了资料：${resourceTitle.trim().slice(0, 200) || "资料"}`),
+        encField(JSON.stringify({ resourceType, resourceId })), now, now);
+    db.prepare("UPDATE conversations SET updated_at=? WHERE id=?").run(now, conversationId);
+  }
   return true;
 }
 
@@ -493,13 +504,18 @@ export function completeAiInteraction(
   result: unknown,
 ): boolean {
   const owner = normalizeUserId(userId);
-  const userMessage = db.prepare(`SELECT id,conversation_id,created_at FROM conversation_messages
+  const userMessage = db.prepare(`SELECT id,conversation_id,content,created_at FROM conversation_messages
     WHERE job_id=? AND sender_type='user' AND sender_user_id=? LIMIT 1`)
-    .get(jobId, owner) as { id: string; conversation_id: string; created_at: string } | undefined;
+    .get(jobId, owner) as { id: string; conversation_id: string; content: string; created_at: string } | undefined;
   if (!userMessage) return false;
   const response = assistantMessage(result, jobKind);
   if (!response) return false;
   const now = nextConversationTimestamp(userMessage.conversation_id, userMessage.created_at);
+  const modelTitle = result && typeof result === "object"
+    ? String((result as Record<string, unknown>).conversationTitle || "").trim().slice(0, 30)
+    : "";
+  const suggestedTitle = modelTitle || decField(userMessage.content)
+    .replace(/[？?！!。,.，：:\n].*$/u, "").trim().slice(0, 18);
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare(`UPDATE conversation_messages SET status='complete',updated_at=? WHERE id=?`)
@@ -511,6 +527,11 @@ export function completeAiInteraction(
         encField(response.content), jobId, encField(JSON.stringify(response.metadata)), now, now);
     db.prepare("UPDATE conversations SET updated_at=? WHERE id=?")
       .run(now, userMessage.conversation_id);
+    if (suggestedTitle.length >= 2) {
+      db.prepare(`UPDATE conversations SET title=?
+        WHERE id=? AND title IN ('新对话','新聊天')`)
+        .run(suggestedTitle, userMessage.conversation_id);
+    }
     db.exec("COMMIT");
     return true;
   } catch (error) {

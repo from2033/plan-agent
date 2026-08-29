@@ -103,4 +103,30 @@ test("专题对话可邀请成员，接受后共享群消息和指定资料", ()
   const messages = conversations.listConversationMessages(conversationId, owner)!;
   assert.equal(messages.at(-2)?.senderUserId, member);
   assert.equal(messages.at(-1)?.content, "上午八点报到。");
+  assert.equal(messages.some(message => message.content.startsWith("分享了资料：")), true);
+});
+
+test("新对话在首次 AI 回答后自动生成标题，私人对话也可中途邀请", () => {
+  const owner = "title-owner@example.com";
+  const conversationId = conversations.createConversation(owner);
+  const jobId = crypto.randomUUID();
+  conversations.beginAiInteraction(owner, jobId, "八月三十一日学校报到要准备什么？", "text", conversationId);
+  conversations.completeAiInteraction(owner, jobId, "ingest", {
+    kind: "ask",
+    answer: "请准备录取材料。",
+    sources: [],
+    conversationTitle: "学校报到准备",
+  });
+  assert.equal(
+    conversations.listConversations(owner).find(item => item.id === conversationId)?.title,
+    "学校报到准备",
+  );
+
+  const direct = conversations.ensureDirectAiConversation(owner);
+  const invitation = conversations.inviteConversationMember(
+    direct,
+    owner,
+    "title-member@example.com",
+  );
+  assert.ok(invitation);
 });

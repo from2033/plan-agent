@@ -80,17 +80,23 @@ const DocumentEvidenceSchema = z.object({
 });
 
 const IngestResultSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("record"), fields: z.array(EntryFieldsSchema).min(1).max(8) }),
+  z.object({
+    kind: z.literal("record"),
+    fields: z.array(EntryFieldsSchema).min(1).max(8),
+    conversationTitle: z.string().min(2).max(30),
+  }),
   z.object({
     kind: z.literal("save"),
     title: z.string().min(1).max(100),
     content: z.string().min(1).max(10_000),
+    conversationTitle: z.string().min(2).max(30),
   }),
   z.object({
     kind: z.literal("ask"),
     answer: z.string().min(1).max(10_000),
     sourceIds: z.array(z.string()).max(20).default([]),
     documentSources: z.array(DocumentEvidenceSchema).max(8).default([]),
+    conversationTitle: z.string().min(2).max(30),
   }),
 ]);
 

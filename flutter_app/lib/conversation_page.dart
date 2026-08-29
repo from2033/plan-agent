@@ -158,39 +158,8 @@ class _ConversationPageState extends State<ConversationPage> {
   }
 
   Future<void> createNewConversation() async {
-    final controller = TextEditingController();
-    final title = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新建对话'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 80,
-          decoration: const InputDecoration(
-            labelText: '对话名称',
-            hintText: '例如：孩子入学',
-          ),
-          onSubmitted: (value) => Navigator.pop(context, value.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('创建'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (title == null || !mounted) return;
     try {
-      final id = await widget.api.createConversation(
-        title.isEmpty ? '新对话' : title,
-      );
+      final id = await widget.api.createConversation('新对话');
       final loaded = await widget.api.conversations();
       if (!mounted) return;
       final selected = loaded.firstWhere((item) => item.id == id);
@@ -225,22 +194,6 @@ class _ConversationPageState extends State<ConversationPage> {
   Future<void> manageMembers() async {
     final selected = conversation;
     if (selected == null) return;
-    if (selected.type == 'direct_ai') {
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('私人对话'),
-          content: const Text('为了不公开以前的私人记录，请先新建一个对话，再从新对话中邀请成员。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('知道了'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
     try {
       final members = await widget.api.conversationMembers(selected.id);
       if (!mounted) return;
@@ -265,6 +218,11 @@ class _ConversationPageState extends State<ConversationPage> {
                     trailing: Text(member['role'] == 'owner' ? '群主' : '成员'),
                   ),
                 const Divider(),
+                const Text(
+                  '对方接受后，可以查看这段对话已有的消息和已发送资料。',
+                  style: TextStyle(fontSize: 12, color: Color(0xffb45f06)),
+                ),
+                const SizedBox(height: 10),
                 TextField(
                   controller: account,
                   keyboardType: TextInputType.emailAddress,
@@ -331,10 +289,10 @@ class _ConversationPageState extends State<ConversationPage> {
               children: [
                 const ListTile(
                   title: Text(
-                    '添加群资料',
+                    '发送资料',
                     style: TextStyle(fontWeight: FontWeight.w800),
                   ),
-                  subtitle: Text('加入后，当前和以后进入该群的成员都可以查看'),
+                  subtitle: Text('发送即共享，当前和以后进入该对话的成员都可以查看'),
                 ),
                 Expanded(
                   child: ListView(
@@ -398,9 +356,11 @@ class _ConversationPageState extends State<ConversationPage> {
         ),
       );
       if (shared && mounted) {
+        await _reloadMessages();
+        if (!mounted) return;
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('资料已加入当前对话')));
+        ).showSnackBar(const SnackBar(content: Text('资料已发送到当前对话，群成员均可查看')));
       }
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
@@ -603,11 +563,6 @@ class _ConversationPageState extends State<ConversationPage> {
                 ),
               ),
               IconButton(
-                onPressed: shareResource,
-                tooltip: '添加群资料',
-                icon: const Icon(Icons.library_add_outlined),
-              ),
-              IconButton(
                 onPressed: manageMembers,
                 tooltip: '成员',
                 icon: const Icon(Icons.group_add_outlined),
@@ -632,7 +587,7 @@ class _ConversationPageState extends State<ConversationPage> {
                             ),
                             SizedBox(height: 12),
                             Text(
-                              '从这里开始对话\n需要协作时可邀请成员并添加群资料',
+                              '从这里开始对话\n需要协作时可中途邀请成员或发送资料',
                               textAlign: TextAlign.center,
                             ),
                           ],
@@ -669,6 +624,11 @@ class _ConversationPageState extends State<ConversationPage> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              IconButton(
+                onPressed: shareResource,
+                tooltip: '发送资料',
+                icon: const Icon(Icons.add_circle_outline_rounded),
+              ),
               Expanded(
                 child: TextField(
                   controller: input,
