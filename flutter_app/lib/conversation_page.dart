@@ -54,6 +54,7 @@ class _ConversationPageState extends State<ConversationPage> {
   );
   final scaffoldKey = GlobalKey<ScaffoldState>();
   final input = TextEditingController();
+  final conversationSearch = TextEditingController();
   final scroll = ScrollController();
   late final VoiceService chatVoice = VoiceService(widget.api);
   List<AiConversation> conversations = const [];
@@ -69,6 +70,7 @@ class _ConversationPageState extends State<ConversationPage> {
   bool pollingPendingMessages = false;
   String? error;
   Timer? pendingMessageTimer;
+  Timer? conversationSearchTimer;
 
   @override
   void initState() {
@@ -85,10 +87,28 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void dispose() {
     pendingMessageTimer?.cancel();
+    conversationSearchTimer?.cancel();
     unawaited(chatVoice.dispose());
     input.dispose();
+    conversationSearch.dispose();
     scroll.dispose();
     super.dispose();
+  }
+
+  void searchConversations(String value) {
+    conversationSearchTimer?.cancel();
+    conversationSearchTimer = Timer(
+      const Duration(milliseconds: 280),
+      () async {
+        try {
+          final loaded = await widget.api.conversations(query: value);
+          if (!mounted || conversationSearch.text != value) return;
+          setState(() => conversations = loaded);
+        } catch (exception) {
+          if (mounted) setState(() => error = exception.toString());
+        }
+      },
+    );
   }
 
   Future<void> toggleVoice() async {
@@ -769,6 +789,36 @@ class _ConversationPageState extends State<ConversationPage> {
           ],
         ),
       ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        child: TextField(
+          controller: conversationSearch,
+          onChanged: searchConversations,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: '搜索对话标题和聊天内容',
+            prefixIcon: const Icon(Icons.search_rounded, size: 20),
+            suffixIcon: conversationSearch.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: '清空搜索',
+                    onPressed: () {
+                      conversationSearch.clear();
+                      searchConversations('');
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                  ),
+            filled: true,
+            fillColor: const Color(0xfff3f0eb),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+      ),
       if (error != null) _ErrorText(error!),
       Expanded(
         child: loading
@@ -805,59 +855,56 @@ class _ConversationPageState extends State<ConversationPage> {
                           ),
                         ),
                       ),
+                    if (conversations.isEmpty &&
+                        conversationSearch.text.isNotEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 36),
+                        child: Text('没有找到相关对话', textAlign: TextAlign.center),
+                      ),
                     for (final item in conversations)
-                      Card(
-                        child: ListTile(
-                          onTap: () {
-                            Navigator.of(context).pop();
-                            unawaited(openConversation(item));
+                      ListTile(
+                        dense: true,
+                        visualDensity: const VisualDensity(vertical: -2),
+                        contentPadding: const EdgeInsets.only(
+                          left: 10,
+                          right: 2,
+                        ),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          unawaited(openConversation(item));
+                        },
+                        title: Text(
+                          item.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            height: 1.25,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        trailing: PopupMenuButton<String>(
+                          tooltip: '对话操作',
+                          onSelected: (value) {
+                            if (value == 'delete') {
+                              unawaited(deleteConversation(item));
+                            }
                           },
-                          leading: CircleAvatar(
-                            backgroundColor: item.type == 'direct_ai'
-                                ? const Color(0xffffead5)
-                                : const Color(0xffe8efe7),
-                            child: Icon(
-                              item.memberCount > 1
-                                  ? Icons.groups_2_outlined
-                                  : Icons.auto_awesome_rounded,
-                              color: item.type == 'direct_ai'
-                                  ? const Color(0xffd97706)
-                                  : const Color(0xff4f7252),
-                            ),
-                          ),
-                          title: Text(
-                            item.title,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Text(
-                            item.memberCount > 1
-                                ? '${item.memberCount} 位成员 · AI 在群内协助'
-                                : '私人对话 · 仅你与 AI 可见',
-                            style: const TextStyle(fontSize: 11),
-                          ),
-                          trailing: PopupMenuButton<String>(
-                            tooltip: '对话操作',
-                            onSelected: (value) {
-                              if (value == 'delete') {
-                                unawaited(deleteConversation(item));
-                              }
-                            },
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.delete_outline_rounded,
-                                      color: Color(0xffb42318),
-                                    ),
-                                    SizedBox(width: 9),
-                                    Text('删除对话'),
-                                  ],
-                                ),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.delete_outline_rounded,
+                                    color: Color(0xffb42318),
+                                  ),
+                                  SizedBox(width: 9),
+                                  Text('删除对话'),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
                   ],

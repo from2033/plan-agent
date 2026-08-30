@@ -652,7 +652,7 @@ function backfillRecentAiQuestions(userId: string): void {
   }
 }
 
-export function listConversations(userId: string): ConversationSummary[] {
+export function listConversations(userId: string, query = ""): ConversationSummary[] {
   const owner = normalizeUserId(userId);
   ensureDirectAiConversation(owner);
   backfillRecentAiQuestions(owner);
@@ -661,7 +661,7 @@ export function listConversations(userId: string): ConversationSummary[] {
     FROM conversations c JOIN conversation_members cm ON cm.conversation_id=c.id
     WHERE cm.user_id=? ORDER BY c.updated_at DESC`)
     .all(owner) as unknown as ConversationRow[];
-  return rows.map(row => {
+  const summaries = rows.map(row => {
     const last = db.prepare(`SELECT * FROM conversation_messages
       WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 1`)
       .get(row.id) as unknown as MessageRow | undefined;
@@ -679,6 +679,14 @@ export function listConversations(userId: string): ConversationSummary[] {
         createdAt: message.createdAt,
       } : null,
     };
+  });
+  const needle = query.trim().toLocaleLowerCase().slice(0, 100);
+  if (!needle) return summaries;
+  return summaries.filter(summary => {
+    if (`${summary.title} ${summary.lastMessage?.content || ""}`
+      .toLocaleLowerCase().includes(needle)) return true;
+    return (listConversationMessages(summary.id, owner, 200) || [])
+      .some(message => message.content.toLocaleLowerCase().includes(needle));
   });
 }
 

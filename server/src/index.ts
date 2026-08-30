@@ -1468,7 +1468,8 @@ app.get(`${API}/conversations`, (req, res) => {
     res.json([]);
     return;
   }
-  res.json(listConversations(req.userId!));
+  const query = typeof req.query.q === "string" ? req.query.q : "";
+  res.json(listConversations(req.userId!, query));
 });
 
 const CreateConversationSchema = z.object({

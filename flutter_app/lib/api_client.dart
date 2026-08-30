@@ -262,9 +262,13 @@ class ApiClient {
         .toList();
   }
 
-  Future<List<AiConversation>> conversations() async {
+  Future<List<AiConversation>> conversations({String query = ''}) async {
     if (_isGuest) return const [];
-    final value = await _request('GET', '/conversations') as List<dynamic>;
+    final suffix = query.trim().isEmpty
+        ? ''
+        : '?q=${Uri.encodeQueryComponent(query.trim())}';
+    final value =
+        await _request('GET', '/conversations$suffix') as List<dynamic>;
     return value
         .map((item) => AiConversation.fromJson(item as Map<String, dynamic>))
         .toList();

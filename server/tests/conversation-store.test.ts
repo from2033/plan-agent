@@ -121,6 +121,9 @@ test("新对话在首次 AI 回答后自动生成标题，私人对话也可中�
     sources: [],
     conversationTitle: "学校报到准备",
   });
+  assert.equal(conversations.listConversations(owner, "学校报到").some(item => item.id === conversationId), true);
+  assert.equal(conversations.listConversations(owner, "录取材料").some(item => item.id === conversationId), true);
+  assert.equal(conversations.listConversations(owner, "不存在的关键词").length, 0);
   assert.equal(
     conversations.listConversations(owner).find(item => item.id === conversationId)?.title,
     "学校报到准备",
