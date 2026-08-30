@@ -1379,7 +1379,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('明日管家', style: TextStyle(fontWeight: FontWeight.w800)),
+                Text(
+                  '明日管家',
+                  style: TextStyle(
+                    color: Color(0xff2f241b),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
+                ),
                 SizedBox(height: 3),
                 Text(
                   '每天 18:00 整理明天的安排、清单和提前准备事项',
