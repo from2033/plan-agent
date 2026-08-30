@@ -14,6 +14,7 @@ import {
   hasExplicitTimeRange,
   ollamaModelForJob,
   resolveKnowledgeSpaceRoot,
+  retrievalQuestionForIngest,
   runInference,
   runOllama,
   searchAccessibleDocuments,
@@ -33,6 +34,20 @@ const ingestJob = {
     knowledge: [],
   },
 };
+
+test("follow-up retrieval includes recent conversation context", () => {
+  const question = retrievalQuestionForIngest({
+    input: {
+      raw: "再试一下",
+      conversationHistory: [
+        { role: "user", content: "帮我找一下张老师的手机号" },
+        { role: "assistant", content: "刚才没有找到。" },
+      ],
+    },
+  });
+  assert.match(question, /张老师的手机号/);
+  assert.match(question, /再试一下/);
+});
 
 test("runOllama sends a constrained non-thinking request and parses JSON", async (t) => {
   let requestBody;

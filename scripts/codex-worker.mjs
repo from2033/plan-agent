@@ -102,6 +102,18 @@ export async function unifiedHybridSearch(sources, question, limit = 20) {
   return lexical.slice(0, limit).map(item => item.source);
 }
 
+export function retrievalQuestionForIngest(job) {
+  const raw = compactSearchText(job?.input?.raw);
+  const history = Array.isArray(job?.input?.conversationHistory)
+    ? job.input.conversationHistory
+      .slice(-6)
+      .filter(item => item && (item.role === "user" || item.role === "assistant"))
+      .map(item => compactSearchText(item.content).slice(0, 1_000))
+      .filter(Boolean)
+    : [];
+  return [...history, raw].filter(Boolean).join("\n").slice(-6_000);
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -1469,7 +1481,8 @@ export async function processIngestJob(job) {
   if (!raw) return runInference(job);
   // All server-authorized evidence shares one retrieval layer. Permission filtering
   // happens on the server before this point; ranking never broadens that scope.
-  const unifiedSources = await unifiedHybridSearch(job.input?.knowledge, raw, 20);
+  const retrievalQuestion = retrievalQuestionForIngest(job);
+  const unifiedSources = await unifiedHybridSearch(job.input?.knowledge, retrievalQuestion, 20);
   const rankedJob = unifiedSources.length || Array.isArray(job.input?.knowledge)
     ? { ...job, input: { ...job.input, knowledge: unifiedSources } }
     : job;
