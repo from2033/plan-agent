@@ -1223,6 +1223,8 @@ class _MessageBubble extends StatelessWidget {
         .whereType<Map>()
         .map((item) => Map<String, dynamic>.from(item))
         .toList();
+    final retrievalStatus =
+        message.metadata['retrievalStatus']?.toString() ?? '';
     return Column(
       children: [
         if (showDate)
@@ -1279,25 +1281,86 @@ class _MessageBubble extends StatelessWidget {
                       color: Color(0xff272522),
                     ),
                   ),
+                  if (!mine && retrievalStatus == 'no_sources_found') ...[
+                    const SizedBox(height: 8),
+                    const _RetrievalNotice(
+                      icon: Icons.search_off_rounded,
+                      text: '未检索到相关原始来源',
+                    ),
+                  ] else if (!mine &&
+                      retrievalStatus == 'sources_found_insufficient') ...[
+                    const SizedBox(height: 8),
+                    const _RetrievalNotice(
+                      icon: Icons.find_in_page_outlined,
+                      text: '找到相关来源，但来源中没有明确答案',
+                    ),
+                  ],
                   if (sources.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 5,
-                      children: [
-                        for (final source in sources)
-                          Chip(
-                            visualDensity: VisualDensity.compact,
-                            avatar: const Icon(
-                              Icons.description_outlined,
-                              size: 13,
-                            ),
-                            label: Text(
-                              source['title']?.toString() ?? '资料',
-                              overflow: TextOverflow.ellipsis,
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xfffaf7f2),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xffe8e0d5)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            retrievalStatus == 'sources_found_insufficient'
+                                ? '检索到的相关来源（${sources.length}）'
+                                : '答案依据（${sources.length}）',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xff716b63),
                             ),
                           ),
-                      ],
+                          for (final source in sources) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(
+                                  Icons.description_outlined,
+                                  size: 14,
+                                  color: Color(0xff8a5a2b),
+                                ),
+                                const SizedBox(width: 5),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        source['title']?.toString() ?? '资料',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      if ((source['excerpt']?.toString() ?? '')
+                                          .isNotEmpty)
+                                        Text(
+                                          source['excerpt'].toString(),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            height: 1.35,
+                                            color: Color(0xff716b63),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
                   const SizedBox(height: 4),
@@ -1320,6 +1383,38 @@ class _MessageBubble extends StatelessWidget {
       ],
     );
   }
+}
+
+class _RetrievalNotice extends StatelessWidget {
+  const _RetrievalNotice({required this.icon, required this.text});
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+    decoration: BoxDecoration(
+      color: const Color(0xfffff1e8),
+      borderRadius: BorderRadius.circular(9),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: const Color(0xff9a3412)),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            text,
+            style: const TextStyle(
+              fontSize: 10,
+              color: Color(0xff9a3412),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _SectionLabel extends StatelessWidget {

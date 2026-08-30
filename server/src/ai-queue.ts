@@ -96,6 +96,12 @@ const IngestResultSchema = z.discriminatedUnion("kind", [
     answer: z.string().min(1).max(10_000),
     sourceIds: z.array(z.string()).max(20).default([]),
     documentSources: z.array(DocumentEvidenceSchema).max(8).default([]),
+    retrievalStatus: z.enum([
+      "answered_with_sources",
+      "sources_found_insufficient",
+      "no_sources_found",
+      "general_answer",
+    ]).optional(),
     conversationTitle: z.string().min(2).max(30),
   }),
 ]);

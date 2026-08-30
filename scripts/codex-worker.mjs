@@ -1569,6 +1569,9 @@ export function documentAnswerForIngest(classifiedResult, answeredResult, candid
     answer: answeredResult.answer,
     sourceIds: [],
     documentSources: documentSourcesForAnswer(candidates, answeredResult),
+    retrievalStatus: answeredResult?.insufficientEvidence
+      ? "sources_found_insufficient"
+      : "answered_with_sources",
     conversationTitle: String(classifiedResult?.conversationTitle || "资料内容总结")
       .trim().slice(0, 30) || "资料内容总结",
   };
@@ -1582,6 +1585,9 @@ export function knowledgeAnswerForIngest(classifiedResult, answeredResult, candi
     kind: "ask",
     answer: String(answeredResult?.answer || "现有资料中没有找到足够信息").slice(0, 10_000),
     sourceIds: indexes.map(index => candidates[index].id),
+    retrievalStatus: answeredResult?.insufficientEvidence
+      ? "sources_found_insufficient"
+      : "answered_with_sources",
     conversationTitle: String(classifiedResult?.conversationTitle || "资料查询")
       .trim().slice(0, 30) || "资料查询",
   };
@@ -1651,6 +1657,7 @@ export async function processIngestJob(job) {
       result: appendConversationRecordProposal(job, inference.result),
     };
   }
+  let insufficientKnowledgeSources = [];
   if (classified.result?.kind === "ask" && searchedSources.length) {
     const evidenceSources = await rerankKnowledgeSources(retrievalQuestion, searchedSources);
     const evidenceAnswer = await runInference({
@@ -1675,12 +1682,39 @@ export async function processIngestJob(job) {
         },
         provider: evidenceAnswer.provider,
       };
+    } else {
+      insufficientKnowledgeSources = evidenceSources.slice(0, 3);
     }
   }
   if (!shouldSearchDocumentsForIngest(raw, classified.result)) return classified;
   const candidates = searchAccessibleDocuments(raw, job, vaultRoot, 3);
   if (!candidates.length) {
     if (classified.result?.kind !== "ask") return classified;
+    if (Array.isArray(classified.result.sourceIds) && classified.result.sourceIds.length) return classified;
+    if (insufficientKnowledgeSources.length) {
+      return {
+        result: {
+          kind: "ask",
+          answer: "我找到了相关来源，但里面没有明确写出你问的这项信息。",
+          sourceIds: insufficientKnowledgeSources.map(source => source.id),
+          retrievalStatus: "sources_found_insufficient",
+          conversationTitle: String(classified.result.conversationTitle || "资料查询").slice(0, 30),
+        },
+        provider: "local-search",
+      };
+    }
+    if (job.input?.intentHint === "ask") {
+      return {
+        result: {
+          kind: "ask",
+          answer: "我没有检索到与这个问题相关的原始消息、资料或聊天记录。",
+          sourceIds: [],
+          retrievalStatus: "no_sources_found",
+          conversationTitle: String(classified.result.conversationTitle || "资料查询").slice(0, 30),
+        },
+        provider: "local-search",
+      };
+    }
     if (!String(classified.result.answer || "").startsWith("__QUESTION_CLASSIFIED__")) return classified;
     const fallback = await runInference(job, { model: ollamaLargeModel });
     return {
@@ -1704,6 +1738,22 @@ export async function processIngestJob(job) {
   });
   if (answered.result.insufficientEvidence
     && Array.isArray(classified.result.sourceIds) && classified.result.sourceIds.length) return classified;
+  if (answered.result.insufficientEvidence) {
+    return {
+      result: {
+        kind: "ask",
+        answer: "我找到了相关来源，但里面没有明确写出你问的这项信息。",
+        sourceIds: insufficientKnowledgeSources.map(source => source.id),
+        documentSources: documentSourcesForAnswer(candidates, {
+          sourceIndexes: candidates.slice(0, 3).map((_, index) => index),
+          insufficientEvidence: true,
+        }),
+        retrievalStatus: "sources_found_insufficient",
+        conversationTitle: String(classified.result.conversationTitle || "资料查询").slice(0, 30),
+      },
+      provider: answered.provider,
+    };
+  }
   return {
     result: documentAnswerForIngest(classified.result, answered.result, candidates),
     provider: answered.provider,

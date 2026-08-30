@@ -94,6 +94,7 @@ test("knowledge evidence answer maps model source indexes back to source ids", (
       kind: "ask",
       answer: "已找到英语老师的联系方式。",
       sourceIds: ["qq-english-teacher"],
+      retrievalStatus: "answered_with_sources",
       conversationTitle: "老师联系方式",
     },
   );
@@ -598,6 +599,7 @@ test("a document answer keeps the generated conversation title required by the q
   );
   assert.equal(result.conversationTitle, "家长会资料总结");
   assert.equal(result.documentSources.length, 1);
+  assert.equal(result.retrievalStatus, "answered_with_sources");
 });
 
 test("plain text documents are extracted and archived as Obsidian notes", () => {

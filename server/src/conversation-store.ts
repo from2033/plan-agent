@@ -535,7 +535,11 @@ function assistantMessage(result: unknown, jobKind: string): {
     return {
       content: String(value.answer || "现有资料中没有找到足够信息。"),
       kind: "answer",
-      metadata: { resultKind: "ask", sources: summarizeSources(value.sources) },
+      metadata: {
+        resultKind: "ask",
+        sources: summarizeSources(value.sources),
+        retrievalStatus: String(value.retrievalStatus || "general_answer"),
+      },
     };
   }
   if (value.kind === "save") {
@@ -571,6 +575,7 @@ function summarizeSources(value: unknown): Array<Record<string, string>> {
       title: String(source.title || "资料").slice(0, 200),
       category: String(source.category || "").slice(0, 60),
       sourceType: String(source.sourceType || "document").slice(0, 30),
+      excerpt: String(source.content || source.excerpt || "").replace(/\s+/g, " ").trim().slice(0, 240),
     }];
   });
 }

@@ -492,6 +492,7 @@ interface WorkerIngestResult {
   content?: string;
   answer?: string;
   sourceIds?: string[];
+  retrievalStatus?: "answered_with_sources" | "sources_found_insufficient" | "no_sources_found" | "general_answer";
   conversationTitle?: string;
   documentSources?: Array<{
     documentId: string;
@@ -889,6 +890,9 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
       kind: "ask",
       answer: result.answer,
       sources: [...documentSources, ...knowledgeSources],
+      retrievalStatus: result.retrievalStatus || (documentSources.length || knowledgeSources.length
+        ? "answered_with_sources"
+        : "general_answer"),
       conversationTitle: result.conversationTitle,
       ...(resultConversationId ? { conversationId: resultConversationId } : {}),
     };
