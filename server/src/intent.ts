@@ -27,6 +27,11 @@ export function researchTopic(
 }
 
 export function knowledgeIntentHint(raw: string): IntentHint {
+  // Short noun-phrase lookups are common in the home input (for example
+  // “英语老师电话号码”) and should not be mistaken for a diary entry.
+  if (/(电话号码|手机号|联系方式|地址|群里|老师|家长|作业|通知).{0,12}(是|多少|什么|怎么|找|查|告诉|电话|号码)?/.test(raw)) {
+    return "ask";
+  }
   if (
     /(?:记|记录|存|保存)(?:到|进|入)(?:我的)?(?:个人)?(?:知识库|芝士库)|(?:这个|这条|上面的)?(?:方法|做法|经验|配方|路线).{0,8}(?:记下|存下|保存)/.test(raw)
   ) {

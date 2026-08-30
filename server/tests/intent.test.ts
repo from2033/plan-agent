@@ -42,3 +42,7 @@ test("显式研究指令提取主题但不拦截个人资料查询", () => {
   assert.equal(researchTopic("帮我查一下我的资料里的租赁合同"), null);
   assert.equal(researchTopic("今天吃了什么"), null);
 });
+
+test("短语式联系人查询识别为资料查找", () => {
+  assert.equal(knowledgeIntentHint("英语老师电话号码"), "ask");
+});
