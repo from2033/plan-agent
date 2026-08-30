@@ -1,6 +1,6 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import 'api_client.dart';
@@ -58,6 +58,9 @@ class ConversationPage extends StatefulWidget {
 }
 
 class _ConversationPageState extends State<ConversationPage> {
+  static const documentChannel = MethodChannel(
+    'com.from2033.assistant/documents',
+  );
   final scaffoldKey = GlobalKey<ScaffoldState>();
   final input = TextEditingController();
   final scroll = ScrollController();
@@ -68,6 +71,7 @@ class _ConversationPageState extends State<ConversationPage> {
   String currentUser = '';
   bool loading = true;
   bool sending = false;
+  bool uploadingAttachment = false;
   bool pollingPendingMessages = false;
   String? error;
   Timer? pendingMessageTimer;
@@ -332,7 +336,87 @@ class _ConversationPageState extends State<ConversationPage> {
     }
   }
 
-  Future<void> shareResource() async {
+  Future<void> showAttachmentMenu() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.add_photo_alternate_outlined),
+              title: const Text('拍照、选择图片或文件'),
+              subtitle: const Text('上传后直接加入当前聊天'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                unawaited(pickAndAttach());
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_copy_outlined),
+              title: const Text('从资料库选择'),
+              subtitle: const Text('发送已经保存的文件或知识'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                unawaited(shareExistingResource());
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> pickAndAttach() async {
+    final selected = conversation;
+    if (selected == null || uploadingAttachment) return;
+    try {
+      final picked = await documentChannel.invokeMapMethod<String, dynamic>(
+        'pick',
+      );
+      if (picked == null || !mounted) return;
+      final bytes = picked['bytes'] as Uint8List?;
+      final fileName = picked['fileName'] as String? ?? '聊天附件';
+      final mimeType =
+          picked['mimeType'] as String? ?? 'application/octet-stream';
+      if (bytes == null || bytes.isEmpty) throw const ApiException('文件内容为空');
+      setState(() {
+        uploadingAttachment = true;
+        error = null;
+      });
+      final uploaded = await widget.api.uploadDocument(
+        fileName: fileName,
+        mimeType: mimeType,
+        bytes: bytes,
+        note: '从聊天“${selected.title}”上传',
+        waitForProcessing: false,
+      );
+      final documentId = uploaded['documentId'] as String?;
+      if (documentId == null || documentId.isEmpty) {
+        throw const ApiException('附件上传成功，但没有取得资料编号');
+      }
+      await widget.api.addConversationResource(
+        selected.id,
+        'document',
+        documentId,
+      );
+      await _reloadMessages();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已发送附件：$fileName')));
+      }
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    } finally {
+      if (mounted) setState(() => uploadingAttachment = false);
+    }
+  }
+
+  Future<void> shareExistingResource() async {
     final selected = conversation;
     if (selected == null) return;
     FocusManager.instance.primaryFocus?.unfocus();
@@ -846,9 +930,15 @@ class _ConversationPageState extends State<ConversationPage> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               IconButton(
-                onPressed: shareResource,
-                tooltip: '发送资料',
-                icon: const Icon(Icons.add_circle_outline_rounded),
+                onPressed: uploadingAttachment ? null : showAttachmentMenu,
+                tooltip: '添加图片或文件',
+                icon: uploadingAttachment
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_circle_outline_rounded),
               ),
               Expanded(
                 child: TextField(
