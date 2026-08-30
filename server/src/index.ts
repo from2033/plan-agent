@@ -58,6 +58,7 @@ import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import { privacyPageHtml } from "./privacy-page.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
+import { explicitTomorrowChecklist, includeEntryInTomorrowBrief } from "./tomorrow-brief.js";
 import { conversationDocumentAccess, sharedDocumentScopesForViewer } from "./document-access.js";
 import {
   addConversationResource,
@@ -523,9 +524,11 @@ function ensureSummaryJob(
 function tomorrowBriefEntries(userId: string, now = new Date()): ReportEntry[] {
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   const dateKey = shanghaiDate(tomorrow.toISOString());
+  const todayKey = shanghaiDate(now.toISOString());
+  const [targetYear, targetMonth, targetDay] = dateKey.split("-");
+  const targetLabels = [dateKey, `${targetYear}年${Number(targetMonth)}月${Number(targetDay)}日`, `${Number(targetMonth)}月${Number(targetDay)}日`];
   const entries = listEntriesForViewer(userId, QQ_TASK_SYNC_USER)
-    .filter((entry) => (entry.scheduledDate || entry.reminderAt && shanghaiDate(entry.reminderAt)) === dateKey
-      || (entry.type === "memo" && !entry.done))
+    .filter((entry) => includeEntryInTomorrowBrief(entry, dateKey))
     .map((entry) => ({
       type: entry.type,
       category: entry.category,
@@ -535,7 +538,18 @@ function tomorrowBriefEntries(userId: string, now = new Date()): ReportEntry[] {
       done: entry.done,
       date: entry.scheduledDate || (entry.reminderAt ? shanghaiDate(entry.reminderAt) : undefined),
     }));
-  const knowledge = listKnowledgeForViewer(userId).slice(0, 80).map((item) => ({
+  const knowledge = listKnowledgeForViewer(userId).filter((item) => {
+    const text = `${item.title}\n${item.content}`;
+    if (item.title.startsWith("QQ群消息")) {
+      const sent = text.match(/发送时间：\s*(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+      const sentKey = sent
+        ? `${sent[1]}-${String(Number(sent[2])).padStart(2, "0")}-${String(Number(sent[3])).padStart(2, "0")}`
+        : "";
+      // “明天”必须以消息发送日为基准，昨天的“明天”不能继续污染今天的简报。
+      return (sentKey === todayKey && /明天|明晚/.test(text)) || targetLabels.some((label) => text.includes(label));
+    }
+    return targetLabels.some((label) => text.includes(label));
+  }).slice(0, 80).map((item) => ({
     type: "knowledge",
     category: "资料",
     description: `${item.title}：${item.content}`,
@@ -700,17 +714,27 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
   if (job.kind === "summary") {
     const input = job.input as {
       reportCache?: { scope: ReportScope; periodKey: string; inputHash: string };
+      entries?: ReportEntry[];
     };
+    let report = value as Report;
+    if (input.reportCache?.scope === "tomorrow") {
+      const required = explicitTomorrowChecklist(input.entries || []);
+      const generated = report.checklist || [];
+      const normalizedGenerated = generated.join(" ").replace(/[\s，。！？、,.!?]/g, "");
+      const missing = required.filter((item) =>
+        !normalizedGenerated.includes(item.replace(/[\s，。！？、,.!?]/g, "")));
+      report = { ...report, checklist: [...missing.map((item) => `带上：${item}`), ...generated].slice(0, 12) };
+    }
     if (input.reportCache && !isGuestUser(job.userId)) {
       saveCachedReport(
         job.userId,
         input.reportCache.scope,
         input.reportCache.periodKey,
         input.reportCache.inputHash,
-        value as Report,
+        report,
       );
     }
-    return value;
+    return report;
   }
   if (job.kind !== "ingest") return value;
   const result = value as WorkerIngestResult;
