@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractQqTasks, type QqTaskMessage } from "../src/qq-task-import.js";
+import { extractQqTasks, qqMessageKnowledge, type QqTaskMessage } from "../src/qq-task-import.js";
 
 const now = new Date("2026-08-29T04:00:00.000Z");
 
@@ -58,4 +58,12 @@ test("相同 QQ 消息生成稳定 id 供服务端去重", () => {
   const first = extractQqTasks(message("明天提交报名表"), now)[0];
   const second = extractQqTasks(message("明天提交报名表"), now)[0];
   assert.equal(first.id, second.id);
+});
+
+test("每条 QQ 原始消息生成稳定的可检索知识来源", () => {
+  const note = qqMessageKnowledge(message("老师电话 18951883788", { externalId: "group-100:message-201" }));
+  assert.match(note.id, /^qq-message-[a-f0-9]{32}$/);
+  assert.match(note.title, /QQ群消息｜三年级一班｜王老师/);
+  assert.match(note.content, /18951883788/);
+  assert.equal(note.id, qqMessageKnowledge(message("老师电话 18951883788", { externalId: "group-100:message-201" })).id);
 });

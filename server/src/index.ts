@@ -52,7 +52,7 @@ import {
   type AssistantClock,
 } from "./entry-date.js";
 import type { Entry } from "./types.js";
-import { extractQqTasks } from "./qq-task-import.js";
+import { extractQqTasks, qqMessageKnowledge } from "./qq-task-import.js";
 import { knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
 import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
@@ -203,6 +203,12 @@ app.post(`${API}/integrations/qq-tasks`, (req, res) => {
   if (!parsed.success) {
     res.status(400).json({ error: "消息格式无效" });
     return;
+  }
+  // Keep the original message searchable in the owner's knowledge space. The
+  // structured task below is only a derived view and must not replace source data.
+  const source = qqMessageKnowledge(parsed.data);
+  if (!getKnowledgeForViewer(source.id, QQ_TASK_SYNC_USER)) {
+    insertKnowledge(QQ_TASK_SYNC_USER, source.title, source.content, source.id);
   }
   const candidates = extractQqTasks(parsed.data);
   const created: Entry[] = [];

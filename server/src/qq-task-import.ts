@@ -10,6 +10,21 @@ export interface QqTaskMessage {
   sentAt: string;
 }
 
+/** Build a stable, searchable knowledge note for every captured QQ message. */
+export function qqMessageKnowledge(message: QqTaskMessage): {
+  id: string;
+  title: string;
+  content: string;
+} {
+  const id = `qq-message-${crypto.createHash("sha256").update(message.externalId).digest("hex").slice(0, 32)}`;
+  const sentAt = new Date(message.sentAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
+  return {
+    id,
+    title: `QQ群消息｜${message.groupName}｜${message.sender}`.slice(0, 100),
+    content: `来源群：${message.groupName}\n发送者：${message.sender}\n发送时间：${sentAt}\n原文：\n${message.content}`.slice(0, 10_000),
+  };
+}
+
 const ACTION_RE = /(提交|上交|交作业|完成|做完|填写|上传|发送|发到|下载|购买|带齐|带上|携带|到校|返校|报到|参加|开会|报名|缴费|支付|打印|准备|回复|确认|领取|归还|打卡|复习|订正|检查|值班|护学岗|考试|测验|上课|放学|接送)/;
 const DATE_RE = /(今天|今日|今晚|明天|明晚|后天|(?:本|这|下下|下)?(?:周|星期|礼拜)[一二三四五六日天]|(?:\d{4}[年./-])?\d{1,2}[月./-]\d{1,2}日?)/g;
 const IGNORE_RE = /^(收到|好的|谢谢|感谢|欢迎|辛苦|祝|已完成|已经完成|已提交|已经提交|不用|取消)[！!。,.，\s]/;
