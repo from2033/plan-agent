@@ -58,7 +58,7 @@ import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import { privacyPageHtml } from "./privacy-page.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
-import { explicitTomorrowChecklist, includeEntryInTomorrowBrief } from "./tomorrow-brief.js";
+import { finalizeTomorrowReport, includeEntryInTomorrowBrief } from "./tomorrow-brief.js";
 import { conversationDocumentAccess, sharedDocumentScopesForViewer } from "./document-access.js";
 import {
   addConversationResource,
@@ -718,28 +718,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     };
     let report = value as Report;
     if (input.reportCache?.scope === "tomorrow") {
-      const required = explicitTomorrowChecklist(input.entries || []);
-      const generated = report.checklist || [];
-      const normalizedGenerated = generated.join(" ").replace(/[\s，。！？、,.!?]/g, "");
-      const missing = required.filter((item) =>
-        !normalizedGenerated.includes(item.replace(/[\s，。！？、,.!?]/g, "")));
-      const forbiddenDate = /昨天|昨日|下个月|下月/;
-      const checklist = [...missing.map((item) => `带上：${item}`), ...generated]
-        .filter((item, index, values) => !forbiddenDate.test(item) && values.indexOf(item) === index)
-        .slice(0, 12);
-      report = {
-        ...report,
-        overview: report.overview || (checklist.length
-          ? `明天有明确的准备事项，今晚请按清单逐项核对，避免遗漏。`
-          : "明天暂无明确安排。"),
-        checklist,
-        preparations: report.preparations?.length
-          ? report.preparations.filter((item) => !forbiddenDate.test(item))
-          : checklist.length ? ["今晚把明天要带的物品和作业集中放好，并逐项核对。"] : [],
-        highlights: report.highlights.filter((item) => !forbiddenDate.test(item)),
-        improvements: report.improvements.filter((item) => !forbiddenDate.test(item)),
-        suggestions: report.suggestions.filter((item) => !forbiddenDate.test(item)),
-      };
+      report = finalizeTomorrowReport(report, input.entries || []);
     }
     if (input.reportCache && !isGuestUser(job.userId)) {
       saveCachedReport(

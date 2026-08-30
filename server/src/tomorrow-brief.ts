@@ -1,4 +1,4 @@
-import type { ReportEntry } from "./summary.js";
+import type { Report, ReportEntry } from "./summary.js";
 import type { Entry } from "./types.js";
 
 function shanghaiDate(timestamp: string): string {
@@ -46,4 +46,37 @@ export function explicitTomorrowChecklist(entries: ReportEntry[]): string[] {
     }
   }
   return items.slice(0, 12);
+}
+
+function normalizedChecklistItem(value: string): string {
+  return value.replace(/^带上[：:]?/, "").replace(/[\s，。！？、,.!?：:]/g, "");
+}
+
+export function finalizeTomorrowReport(report: Report, entries: ReportEntry[]): Report {
+  const forbiddenDate = /昨天|昨日|下个月|下月/;
+  const required = explicitTomorrowChecklist(entries).filter((item) => !forbiddenDate.test(item));
+  const requiredNormalized = required.map(normalizedChecklistItem);
+  const generated = (report.checklist || []).filter((item) => {
+    if (forbiddenDate.test(item)) return false;
+    const normalized = normalizedChecklistItem(item);
+    // 明确物品由程序逐项列出，丢弃模型生成的合并或改写版本，避免重复和截断。
+    return !requiredNormalized.some((requiredItem) =>
+      normalized === requiredItem || normalized.includes(requiredItem) || requiredItem.includes(normalized));
+  });
+  const checklist = [...required.map((item) => `带上：${item}`), ...generated]
+    .filter((item, index, values) => values.indexOf(item) === index)
+    .slice(0, 18);
+  return {
+    ...report,
+    overview: report.overview || (checklist.length
+      ? "明天有明确的准备事项，今晚请按清单逐项核对，避免遗漏。"
+      : "明天暂无明确安排。"),
+    checklist,
+    preparations: report.preparations?.length
+      ? report.preparations.filter((item) => !forbiddenDate.test(item))
+      : checklist.length ? ["今晚把明天要带的物品和作业集中放好，并逐项核对。"] : [],
+    highlights: report.highlights.filter((item) => !forbiddenDate.test(item)),
+    improvements: report.improvements.filter((item) => !forbiddenDate.test(item)),
+    suggestions: report.suggestions.filter((item) => !forbiddenDate.test(item)),
+  };
 }
