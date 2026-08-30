@@ -2385,7 +2385,9 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                     items: report!.improvements,
                   ),
                   _ReportSection(
-                    title: scope == 'day'
+                    title: scope == 'tomorrow'
+                        ? '管家建议'
+                        : scope == 'day'
                         ? '明天建议'
                         : scope == 'week'
                         ? '下周建议'
