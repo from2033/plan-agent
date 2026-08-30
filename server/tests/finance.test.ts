@@ -52,17 +52,18 @@ const initialRows = [
   row(["A3", "O3", "2026-08-03 09:00:00", "2026-08-03 09:00:01", "2026-08-04 09:00:01", "支付宝", "即时到账交易", "淘宝", "网购退款", "50.00", "支出", "交易关闭", "0.00", "50.00", "", "已支出"]),
   row(["R1", "O3", "2026-08-04 09:00:00", "", "2026-08-04 09:00:01", "支付宝", "即时到账交易", "淘宝", "退款", "70.00", "不计收支", "退款成功", "0.00", "0.00", "", "已收入"]),
   row(["I1", "O4", "2026-08-05 10:00:00", "2026-08-05 10:00:01", "2026-08-05 10:00:01", "支付宝", "即时到账交易", "客户", "收款", "200.00", "收入", "交易成功", "0.00", "0.00", "", "已收入"]),
+  row(["T1", "O6", "2026-08-05 11:00:00", "2026-08-05 11:00:01", "2026-08-05 11:00:01", "支付宝", "即时到账交易", "支付宝小荷包(备用)", "支付宝小荷包-转入", "500.00", "支出", "交易成功", "0.00", "0.00", "", "已支出"]),
 ];
 
 test("支付宝 ZIP 账单可解析、分类，并按交易号增量去重", () => {
   const firstFile = billZip(initialRows);
   const parsed = parseAlipayBill("支付宝账单.zip", firstFile);
-  assert.equal(parsed.transactions.length, 5);
+  assert.equal(parsed.transactions.length, 6);
   assert.equal(parsed.transactions[0]?.category, "餐饮外卖");
   assert.equal(parsed.transactions[1]?.category, "交通出行");
 
   const first = importAlipayBill("owner", "支付宝账单.zip", firstFile);
-  assert.equal(first.insertedCount, 5);
+  assert.equal(first.insertedCount, 6);
   assert.equal(first.updatedCount, 0);
   assert.equal(first.duplicateCount, 0);
   assert.equal(fs.readdirSync(process.env.FINANCE_UPLOAD_DIR!).length, 1);
@@ -76,6 +77,7 @@ test("支付宝 ZIP 账单可解析、分类，并按交易号增量去重", () 
   assert.equal(initialOverview.summary.grossExpense, 180);
   assert.equal(initialOverview.summary.refunds, 70);
   assert.equal(initialOverview.summary.income, 200);
+  assert.equal(initialOverview.summary.transfersOut, 500);
   assert.equal(initialOverview.summary.paymentCount, 2);
 
   const overlapRows = [
@@ -94,7 +96,7 @@ test("支付宝 ZIP 账单可解析、分类，并按交易号增量去重", () 
   assert.equal(updatedOverview.categories.find((item) => item.category === "医疗健康")?.amount, 40);
 
   const other = importAlipayBill("other", "支付宝账单.zip", firstFile);
-  assert.equal(other.insertedCount, 5);
+  assert.equal(other.insertedCount, 6);
   assert.equal(getFinanceOverview("other", 12).summary.netExpense, 110);
   assert.equal(getFinanceOverview("owner", 12).summary.netExpense, 155);
 

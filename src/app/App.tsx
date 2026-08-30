@@ -29,6 +29,7 @@ import {
 import * as api from "./api";
 import { StreamingAsr, recordingSupported } from "./asrStream";
 import MistakeBook from "./MistakeBook";
+import FinanceDashboard from "./FinanceDashboard";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ interface Entry {
   timestamp: Date;
 }
 
-type Tab = "today" | "ledger" | "memo" | "wish" | "knowledge" | "mistakes";
+type Tab = "today" | "ledger" | "finance" | "memo" | "wish" | "knowledge" | "mistakes";
 
 interface SpeechRecognitionResultEventLike {
   resultIndex: number;
@@ -1257,6 +1258,7 @@ export default function App() {
           {[
             { key: "today" as Tab, label: "行程", icon: <Clock size={11} />, count: activityEntries.length },
             { key: "ledger" as Tab, label: "账单", icon: <CreditCard size={11} />, count: expenseEntries.length },
+            { key: "finance" as Tab, label: "消费", icon: <BarChart2 size={11} />, count: 0 },
             { key: "memo" as Tab, label: "备忘", icon: <BookOpen size={11} />, count: memoEntries.filter(m => !m.done).length },
             { key: "wish" as Tab, label: "心愿", icon: <Star size={11} />, count: wishEntries.length },
             { key: "knowledge" as Tab, label: "知识", icon: <Lightbulb size={11} />, count: knowledge.length },
@@ -1319,6 +1321,8 @@ export default function App() {
               onReview={handleReviewMistake}
               onDelete={handleDeleteMistake}
             />
+          ) : tab === "finance" ? (
+            <FinanceDashboard onUnauthorized={handleLogout} />
           ) : tab === "knowledge" ? (
             <>
               {answer && (

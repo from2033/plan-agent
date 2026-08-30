@@ -67,6 +67,70 @@ export function getEntries(): Promise<Entry[]> {
   return request<Entry[]>("/entries");
 }
 
+export interface FinanceImportResult {
+  importId: string;
+  alreadyImported: boolean;
+  source: "alipay";
+  periodStart: string | null;
+  periodEnd: string | null;
+  rowCount: number;
+  insertedCount: number;
+  updatedCount: number;
+  duplicateCount: number;
+  importedAt: string;
+}
+
+export interface FinanceOverview {
+  rangeMonths: number;
+  periodStart: string | null;
+  periodEnd: string | null;
+  summary: {
+    netExpense: number;
+    grossExpense: number;
+    refunds: number;
+    income: number;
+    transfersOut: number;
+    paymentCount: number;
+    activeDays: number;
+    averagePayment: number;
+    averageActiveDay: number;
+  };
+  categories: Array<{ category: string; amount: number; share: number; count: number }>;
+  monthlyTrend: Array<{ month: string; amount: number; count: number }>;
+  topCounterparties: Array<{ name: string; amount: number; count: number }>;
+  insights: string[];
+  recentTransactions: Array<{
+    id: string;
+    createdAt: string;
+    counterparty: string;
+    itemName: string;
+    amount: number;
+    refundedAmount: number;
+    category: string;
+    status: string;
+  }>;
+  imports: FinanceImportResult[];
+}
+
+export function getFinanceOverview(months = 3): Promise<FinanceOverview> {
+  return request<FinanceOverview>(`/finance/overview?months=${months}`);
+}
+
+export async function importFinanceFile(file: File): Promise<FinanceImportResult> {
+  const res = await fetch(`${API_BASE}/finance/import?fileName=${encodeURIComponent(file.name)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      Authorization: `Bearer ${getToken()}`,
+    },
+    body: file,
+  });
+  if (res.status === 401) throw new UnauthorizedError("未授权");
+  const payload = await res.json().catch(() => ({})) as FinanceImportResult & { error?: string };
+  if (!res.ok) throw new Error(payload.error || `账单导入失败 (${res.status})`);
+  return payload;
+}
+
 // 知识库条目（与后端 KnowledgeItem 对应）。
 export interface KnowledgeItem {
   id: string;

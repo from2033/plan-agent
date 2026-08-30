@@ -112,6 +112,7 @@ export interface FinanceOverview {
     grossExpense: number;
     refunds: number;
     income: number;
+    transfersOut: number;
     paymentCount: number;
     activeDays: number;
     averagePayment: number;
@@ -246,17 +247,19 @@ function decodeCsv(content: Buffer): string {
 }
 
 const CATEGORY_RULES: Array<{ category: string; pattern: RegExp }> = [
-  { category: "餐饮外卖", pattern: /外卖|餐饮|餐厅|饭店|小吃|火锅|烧烤|面馆|粉丝汤|馄饨|锅贴|咖啡|茶饮|奶茶|瑞幸|星巴克|肯德基|麦当劳|饿了么/ },
-  { category: "交通出行", pattern: /停车|地铁|公交|滴滴|高德打车|出租车|网约车|加油|充电桩|高速|铁路|火车|机票|航空|出行/ },
+  { category: "资金往来", pattern: /支付宝小荷包|小荷包-转入|(^|\s)转账($|\s)|亲情卡|代付/ },
+  { category: "餐饮外卖", pattern: /外卖|餐饮|餐厅|饭店|小吃|火锅|烧烤|面馆|大碗面|粉丝汤|馄饨|锅贴|咖啡|茶饮|奶茶|瑞幸|星巴克|肯德基|麦当劳|饿了么/ },
+  { category: "交通出行", pattern: /停车|地铁|公交|滴滴|高德打车|出租车|网约车|加油|石化|充电桩|高速|通行宝|铁路|火车|机票|航空|出行/ },
   { category: "医疗健康", pattern: /药房|药店|医院|医疗|诊所|体检|挂号|保健|健康/ },
   { category: "生活缴费", pattern: /物业|水费|电费|燃气|宽带|话费|通信|移动|联通|电信|有线电视/ },
-  { category: "日用商超", pattern: /超市|便利店|屈臣氏|无印良品|MUJI|百货|生鲜|小象|盒马|苏果|永辉|沃尔玛|山姆/ },
+  { category: "旅行住宿", pattern: /酒店|宾馆|民宿|客栈|度假村|住宿/ },
+  { category: "日用商超", pattern: /超市|便利店|屈臣氏|无印良品|MUJI|百货|生鲜|小象|盒马|苏果|永辉|沃尔玛|山姆|ALDI|奥乐齐|胖东来|副食品|百果园|水果/ },
+  { category: "服饰运动", pattern: /迪卡侬|服饰|男装|女装|童装|鞋|T恤|运动用品|户外/ },
   { category: "个人护理", pattern: /理发|美容|美发|洗浴|足疗|按摩|护理|美甲/ },
   { category: "教育学习", pattern: /学校|教育|培训|课程|书店|图书|文具|学费|考试/ },
   { category: "娱乐休闲", pattern: /电影|影院|游戏|演出|门票|乐园|KTV|视频会员|音乐会员/ },
-  { category: "数码订阅", pattern: /Apple|苹果|App Store|云服务|软件|订阅|会员服务|充值中心/ },
+  { category: "数码订阅", pattern: /Apple|苹果|App Store|iTunes|GiftCard|阿里云|云服务|服务器|软件|订阅|会员服务|充值中心/ },
   { category: "网络购物", pattern: /淘宝|天猫|京东|拼多多|抖音|快手|闲鱼|唯品会|闪购/ },
-  { category: "转账往来", pattern: /转账|红包|收款|付款码|亲情卡|代付/ },
 ];
 
 export function classifyFinanceTransaction(transaction: Pick<
@@ -486,7 +489,7 @@ function monthCutoff(months: number): string {
 }
 
 function readableTransaction(row: FinanceTransactionRow): ParsedFinanceTransaction & { id: string } {
-  return {
+  const transaction = {
     id: row.id,
     externalId: decField(row.external_id),
     merchantOrderId: row.merchant_order_id ? decField(row.merchant_order_id) : "",
@@ -506,6 +509,8 @@ function readableTransaction(row: FinanceTransactionRow): ParsedFinanceTransacti
     fundStatus: row.fund_status || "",
     category: decField(row.category),
   };
+  transaction.category = classifyFinanceTransaction(transaction);
+  return transaction;
 }
 
 export function getFinanceOverview(userId: string, requestedMonths = 3): FinanceOverview {
@@ -519,24 +524,29 @@ export function getFinanceOverview(userId: string, requestedMonths = 3): Finance
     transaction.direction === "支出" && /^(交易成功|支付成功)$/.test(transaction.status));
   const closedExpenses = transactions.filter((transaction) =>
     transaction.direction === "支出" && /关闭/.test(transaction.status));
+  const consumptionExpenses = successfulExpenses.filter((transaction) => transaction.category !== "资金往来");
+  const closedConsumptionExpenses = closedExpenses.filter((transaction) => transaction.category !== "资金往来");
+  const transfersOut = roundMoney(successfulExpenses
+    .filter((transaction) => transaction.category === "资金往来")
+    .reduce((sum, item) => sum + Math.max(0, item.amount - item.refundedAmount), 0));
   const netAmount = (transaction: ParsedFinanceTransaction): number =>
     Math.max(0, transaction.amount - transaction.refundedAmount);
-  const netExpense = roundMoney(successfulExpenses.reduce((sum, item) => sum + netAmount(item), 0));
+  const netExpense = roundMoney(consumptionExpenses.reduce((sum, item) => sum + netAmount(item), 0));
   const grossExpense = roundMoney(
-    [...successfulExpenses, ...closedExpenses].reduce((sum, item) => sum + item.amount, 0),
+    [...consumptionExpenses, ...closedConsumptionExpenses].reduce((sum, item) => sum + item.amount, 0),
   );
   const refunds = roundMoney(
-    [...successfulExpenses, ...closedExpenses].reduce((sum, item) => sum + item.refundedAmount, 0),
+    [...consumptionExpenses, ...closedConsumptionExpenses].reduce((sum, item) => sum + item.refundedAmount, 0),
   );
   const income = roundMoney(transactions
     .filter((item) => item.direction === "收入" && /成功/.test(item.status))
     .reduce((sum, item) => sum + item.amount, 0));
-  const activeDays = new Set(successfulExpenses.map((item) => item.createdAt.slice(0, 10))).size;
+  const activeDays = new Set(consumptionExpenses.map((item) => item.createdAt.slice(0, 10))).size;
 
   const categoryMap = new Map<string, { amount: number; count: number }>();
   const monthMap = new Map<string, { amount: number; count: number }>();
   const counterpartyMap = new Map<string, { amount: number; count: number }>();
-  for (const transaction of successfulExpenses) {
+  for (const transaction of consumptionExpenses) {
     const value = netAmount(transaction);
     const category = categoryMap.get(transaction.category) || { amount: 0, count: 0 };
     category.amount += value;
@@ -574,10 +584,10 @@ export function getFinanceOverview(userId: string, requestedMonths = 3): Finance
   if (topCategory) {
     insights.push(`「${topCategory.category}」是这段时间最大的消费板块，占净支出的 ${(topCategory.share * 100).toFixed(0)}%。`);
   }
-  const smallPayments = successfulExpenses.filter((item) => netAmount(item) > 0 && netAmount(item) < 50);
+  const smallPayments = consumptionExpenses.filter((item) => netAmount(item) > 0 && netAmount(item) < 50);
   if (smallPayments.length) {
-    const share = successfulExpenses.length
-      ? Math.round((smallPayments.length / successfulExpenses.length) * 100)
+    const share = consumptionExpenses.length
+      ? Math.round((smallPayments.length / consumptionExpenses.length) * 100)
       : 0;
     insights.push(`50 元以下的小额支付有 ${smallPayments.length} 笔，占成功支付的 ${share}%；频率比单笔金额更值得持续观察。`);
   }
@@ -603,16 +613,17 @@ export function getFinanceOverview(userId: string, requestedMonths = 3): Finance
       grossExpense,
       refunds,
       income,
-      paymentCount: successfulExpenses.length,
+      transfersOut,
+      paymentCount: consumptionExpenses.length,
       activeDays,
-      averagePayment: successfulExpenses.length ? roundMoney(netExpense / successfulExpenses.length) : 0,
+      averagePayment: consumptionExpenses.length ? roundMoney(netExpense / consumptionExpenses.length) : 0,
       averageActiveDay: activeDays ? roundMoney(netExpense / activeDays) : 0,
     },
     categories,
     monthlyTrend,
     topCounterparties,
     insights,
-    recentTransactions: successfulExpenses.slice(0, 20).map((transaction) => ({
+    recentTransactions: consumptionExpenses.slice(0, 20).map((transaction) => ({
       id: transaction.id,
       createdAt: transaction.createdAt,
       counterparty: transaction.counterparty,
