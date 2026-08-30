@@ -254,6 +254,31 @@ class ApiClient {
         .toList();
   }
 
+  Future<Map<String, dynamic>> financeOverview({int months = 3}) async {
+    return await _request('GET', '/finance/overview?months=$months')
+        as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> importFinanceFile({
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    if (_isGuest) throw const ApiException('请先登录后再导入账单');
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$apiBase/finance/import?fileName=${Uri.encodeQueryComponent(fileName)}'),
+    );
+    request.headers['authorization'] = 'Bearer $_token';
+    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: fileName));
+    final response = await request.send();
+    final body = await response.stream.bytesToString();
+    final decoded = body.isEmpty ? null : jsonDecode(body);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(decoded is Map ? (decoded['error'] as String? ?? '账单导入失败') : '账单导入失败', status: response.statusCode);
+    }
+    return (decoded as Map).cast<String, dynamic>();
+  }
+
   Future<List<KnowledgeItem>> knowledge() async {
     if (_isGuest) return _guestStore.knowledge();
     final value = await _request('GET', '/knowledge') as List<dynamic>;

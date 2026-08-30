@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'api_client.dart';
 import 'conversation_page.dart';
 import 'document_audio_player.dart';
+import 'finance_page.dart';
 import 'models.dart';
 import 'persistent_meeting_recorder.dart';
 import 'reminder_service.dart';
@@ -614,6 +615,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ('待办', Icons.checklist_rounded),
     ('对话', Icons.forum_outlined),
     ('资料库', Icons.folder_copy_outlined),
+    ('消费分析', Icons.bar_chart_rounded),
   ];
 
   @override
@@ -1162,12 +1164,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildPageHeader() {
-    const titles = ['今天', '待办', '对话', '资料库'];
+    const titles = ['今天', '待办', '对话', '资料库', '消费分析'];
     const subtitles = [
       '说一句，我来记录和查询',
       '把没做完的事情理清楚',
       '每次提问和回答都会保留',
       '长期保存的资料与知识',
+      '导入支付宝账单，查看消费规律',
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
@@ -1232,6 +1235,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       1 => _buildReminderPage(),
       2 => _buildConversationPage(),
       3 => _buildLibraryPage(),
+      4 => FinancePage(api: widget.api),
       _ => _buildHomePage(),
     };
   }
