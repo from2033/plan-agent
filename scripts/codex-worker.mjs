@@ -104,14 +104,24 @@ export async function unifiedHybridSearch(sources, question, limit = 30) {
 
 export function retrievalQuestionForIngest(job) {
   const raw = compactSearchText(job?.input?.raw);
+  if (!needsConversationContextForRetrieval(raw)) return raw;
   const history = Array.isArray(job?.input?.conversationHistory)
     ? job.input.conversationHistory
-      .slice(-6)
-      .filter(item => item && (item.role === "user" || item.role === "assistant"))
+      .slice(-12)
+      .filter(item => item?.role === "user")
+      .slice(-3)
       .map(item => compactSearchText(item.content).slice(0, 1_000))
       .filter(Boolean)
     : [];
   return [...history, raw].filter(Boolean).join("\n").slice(-6_000);
+}
+
+export function needsConversationContextForRetrieval(value) {
+  const text = compactSearchText(value).replace(/[。！？!?]+$/u, "");
+  if (!text) return false;
+  const referential = /(?:再试|重试|继续|接着|刚才|之前|上次|前面|上面|这个|那个|这条|那条|这份|那份|这些|那些|同一个|他(?:的)?|她(?:的)?|它(?:的)?|其(?:中)?)/u;
+  const bareFollowUp = /^(?:号码|电话|地址|时间|日期|金额|内容|结果|来源|还有吗|然后呢|为什么|怎么回事)(?:呢|是多少|给我|再说下)?$/u;
+  return referential.test(text) || bareFollowUp.test(text);
 }
 
 export function deduplicateEvidenceSources(sources) {

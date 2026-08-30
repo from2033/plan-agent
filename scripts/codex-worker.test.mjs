@@ -16,6 +16,7 @@ import {
   groundedAnswerFacts,
   hasExplicitTimeRange,
   knowledgeAnswerForIngest,
+  needsConversationContextForRetrieval,
   ollamaModelForJob,
   resolveKnowledgeSpaceRoot,
   rerankKnowledgeSources,
@@ -52,6 +53,34 @@ test("follow-up retrieval includes recent conversation context", () => {
   });
   assert.match(question, /张老师的手机号/);
   assert.match(question, /再试一下/);
+});
+
+test("a self-contained lookup does not inherit the previous subject", () => {
+  const question = retrievalQuestionForIngest({
+    input: {
+      raw: "语文老师号码",
+      conversationHistory: [
+        { role: "user", content: "英语老师号码给我下" },
+        { role: "assistant", content: "英语老师的号码是13800138000" },
+      ],
+    },
+  });
+  assert.equal(question, "语文老师号码");
+  assert.equal(needsConversationContextForRetrieval("语文老师号码"), false);
+});
+
+test("elliptical follow-ups use prior user questions but not assistant answers", () => {
+  const question = retrievalQuestionForIngest({
+    input: {
+      raw: "刚才那个再试一下",
+      conversationHistory: [
+        { role: "user", content: "帮我找张老师的联系方式" },
+        { role: "assistant", content: "可能是错误号码13800138000" },
+      ],
+    },
+  });
+  assert.match(question, /张老师的联系方式/);
+  assert.doesNotMatch(question, /13800138000/);
 });
 
 test("knowledge evidence answer maps model source indexes back to source ids", () => {
