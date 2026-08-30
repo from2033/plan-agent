@@ -57,4 +57,14 @@ ssh -i "$ssh_key" "$server" \
   "chmod 0755 /opt/personal-assistant/deploy-blue-green/*.sh && /opt/personal-assistant/deploy-blue-green/switch-blue-green.sh '$image'"
 logout_registry
 trap - EXIT
+
+# The inference worker runs locally under launchd and loads its prompts only at
+# process start. Restart it after a successful server deployment so prompt and
+# policy changes take effect together with the API release.
+worker_label="com.5656ai.personal-assistant-codex-worker"
+worker_target="gui/$(id -u)/$worker_label"
+if command -v launchctl >/dev/null 2>&1 && launchctl print "$worker_target" >/dev/null 2>&1; then
+  launchctl kickstart -k "$worker_target"
+  printf 'restarted_worker=%s\n' "$worker_label"
+fi
 printf 'deployed=%s\n' "$image"
