@@ -615,7 +615,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ('待办', Icons.checklist_rounded),
     ('对话', Icons.forum_outlined),
     ('资料库', Icons.folder_copy_outlined),
-    ('消费分析', Icons.bar_chart_rounded),
   ];
 
   @override
@@ -1164,13 +1163,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildPageHeader() {
-    const titles = ['今天', '待办', '对话', '资料库', '消费分析'];
+    const titles = ['今天', '待办', '对话', '资料库'];
     const subtitles = [
       '说一句，我来记录和查询',
       '把没做完的事情理清楚',
       '每次提问和回答都会保留',
       '长期保存的资料与知识',
-      '导入支付宝账单，查看消费规律',
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
@@ -1235,7 +1233,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       1 => _buildReminderPage(),
       2 => _buildConversationPage(),
       3 => _buildLibraryPage(),
-      4 => FinancePage(api: widget.api),
       _ => _buildHomePage(),
     };
   }
@@ -1294,81 +1291,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildHomePage() {
-    final selectedKey = _dateKey(selectedDate);
-    final dayActions =
-        entries.where((entry) {
-          final scheduledDate = _scheduledDateOf(entry);
-          if (scheduledDate != selectedKey) return false;
-          if (entry.type == EntryType.memo) return !entry.done;
-          return entry.type == EntryType.activity &&
-              _activityStillRelevant(entry, selectedDate);
-        }).toList()..sort((a, b) {
-          final aTime = a.reminderAt ?? a.timestamp;
-          final bTime = b.reminderAt ?? b.timestamp;
-          return aTime.compareTo(bTime);
-        });
-    final isToday = DateUtils.isSameDay(selectedDate, DateTime.now());
     return RefreshIndicator(
       onRefresh: refreshHome,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
         children: [
-          _buildDateNavigator(dayActions.length),
           if (_homeAnswer != null) ...[
             const SizedBox(height: 12),
             _buildHomeAnswerCard(_homeAnswer!),
           ],
-          const SizedBox(height: 12),
-          _buildTomorrowBriefCard(),
-          if (!widget.isGuest && qqSyncStatus != null) ...[
-            const SizedBox(height: 12),
-            _buildQqSyncStatusCard(),
-          ],
-          const SizedBox(height: 12),
-          _buildTrendSummaryCard(),
-          Padding(
-            padding: const EdgeInsets.only(top: 16, bottom: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    isToday ? '今天要做' : '当天要做',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                if (dayActions.length > 3)
-                  TextButton(
-                    onPressed: () => setState(() => tab = 1),
-                    child: Text('查看全部 ${dayActions.length}'),
-                  ),
-              ],
-            ),
-          ),
-          if (dayActions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Text(
-                  '当天没有安排要做的事',
-                  style: TextStyle(color: Color(0xff8a8680)),
-                ),
-              ),
-            )
-          else
-            for (final entry in dayActions.take(3)) ...[
-              EntryCard(
-                entry: entry,
-                reminderScheduled: scheduledReminderIds.contains(entry.id),
-                onToggleDone: entry.type == EntryType.memo
-                    ? () => toggleEntryDone(entry)
-                    : null,
-                onDelete: () => confirmDeleteEntry(entry),
-              ),
-              const SizedBox(height: 9),
-            ],
+          const SizedBox(height: 24),
+          const Center(child: Text('按住下方麦克风，说一句即可记录、查询或安排事项', style: TextStyle(color: Color(0xff8a8680), fontSize: 12))),
         ],
       ),
     );
@@ -1959,6 +1892,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       children: [
+        _settingsTile(Icons.bar_chart_rounded, '消费分析', '导入支付宝账单，查看消费规律', () => _openFinancePage()),
+        _settingsTile(Icons.auto_awesome_rounded, '管家工具', '明日管家、今日趋势、今日待办与 QQ 同步', () => _openHousekeepingPage()),
         _settingsTile(
           Icons.forum_outlined,
           'QQ群消息',
@@ -1989,6 +1924,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _settingsTile(Icons.logout_rounded, '退出登录', '仅在你明确需要切换账号时使用', logout),
       ],
     );
+  }
+
+  Future<void> _openFinancePage() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Scaffold(appBar: AppBar(title: const Text('消费分析')), body: FinancePage(api: widget.api))));
+  }
+
+  Future<void> _openHousekeepingPage() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Scaffold(appBar: AppBar(title: const Text('管家工具')), body: ListView(padding: const EdgeInsets.all(16), children: [
+      _buildTomorrowBriefCard(),
+      const SizedBox(height: 12),
+      _buildTrendSummaryCard(),
+      if (!widget.isGuest && qqSyncStatus != null) ...[const SizedBox(height: 12), _buildQqSyncStatusCard()],
+      const SizedBox(height: 12),
+      _settingsTile(Icons.checklist_rounded, '今天要做', '查看并管理今天的待办与安排', () { Navigator.of(context).pop(); setState(() => tab = 1); }),
+    ]))));
   }
 
   Future<void> openStudyCenter() async {
