@@ -433,12 +433,16 @@ function knowledgeFromRequest(req: express.Request, conversationId = ""): Array<
 }> {
   if (conversationId && conversationDocumentAccess(conversationId, req.userId!) !== null) {
     const resources = listConversationResources(conversationId, req.userId!) || [];
-    return resources
+    const scoped = resources
       .filter(resource => resource.resourceType === "knowledge")
       .flatMap(resource => {
         const item = getKnowledgeForViewer(resource.resourceId, req.userId!);
         return item ? [{ id: item.id, title: item.title, content: item.content, timestamp: item.timestamp }] : [];
       });
+    const qqNotes = listKnowledge(QQ_TASK_SYNC_USER)
+      .filter((item) => item.id.startsWith("qq-message-"))
+      .map(({ id, title, content, timestamp }) => ({ id, title, content, timestamp }));
+    return [...scoped, ...qqNotes.filter((item) => !scoped.some((candidate) => candidate.id === item.id))];
   }
   if (!isGuestUser(req.userId) || !Array.isArray(req.body?.knowledge)) {
     const visible = listKnowledgeForViewer(req.userId!);
