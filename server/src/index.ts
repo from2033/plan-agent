@@ -1705,7 +1705,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     return;
   }
   try {
-    const topic = researchTopic(raw);
+    const topic = researchTopic(raw, conversationHistory || []);
     if (topic) {
       if (isGuestUser(req.userId)) {
         res.status(403).json({ error: "请先登录后再创建后台研究报告" });

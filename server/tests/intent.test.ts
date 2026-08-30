@@ -29,6 +29,14 @@ test("显式研究指令提取主题但不拦截个人资料查询", () => {
   assert.equal(researchTopic("帮我再研究下湿疹水泡"), "湿疹水泡");
   assert.equal(researchTopic("继续研究一下湿疹水泡"), "湿疹水泡");
   assert.equal(researchTopic("在研究下湿疹水泡"), "湿疹水泡");
+  assert.equal(researchTopic("你再研究下", [
+    { role: "user", content: "湿疹水泡是怎么回事？" },
+    { role: "assistant", content: "现有资料中没有找到足够信息。" },
+  ]), "湿疹水泡是怎么回事？");
+  assert.equal(researchTopic("继续研究一下", [
+    { role: "user", content: "帮我查查南京学校开学时间" },
+  ]), "帮我查查南京学校开学时间");
+  assert.equal(researchTopic("你再研究下"), null);
   assert.equal(researchTopic("帮我查一下最近的开学时间是几号回去"), null);
   assert.equal(researchTopic("查询一下最近的开学时间"), null);
   assert.equal(researchTopic("帮我查一下我的资料里的租赁合同"), null);

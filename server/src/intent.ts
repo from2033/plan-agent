@@ -1,7 +1,24 @@
 export type IntentHint = "save" | "ask" | undefined;
 
-export function researchTopic(raw: string): string | null {
+export interface ResearchContextMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+const RESEARCH_CONTINUATION_RE = /^(?:请)?(?:你)?(?:再|继续|重新)?研究(?:一下|下)?(?:吧|呢|看看)?[。！？!?]*$/u;
+
+export function researchTopic(
+  raw: string,
+  conversationHistory: ResearchContextMessage[] = [],
+): string | null {
   if (/(?:知识库|资料库|我之前记的|我的资料)/.test(raw)) return null;
+  if (RESEARCH_CONTINUATION_RE.test(raw.trim())) {
+    const previousQuestion = [...conversationHistory].reverse().find(message =>
+      message.role === "user"
+      && message.content.trim().length >= 2
+      && !RESEARCH_CONTINUATION_RE.test(message.content.trim()));
+    return previousQuestion?.content.trim().slice(0, 500) || null;
+  }
   const match = raw.trim().match(
     /^(?:(?:请|麻烦)(?:你)?)?(?:再|在|重新|继续)?(?:(?:帮|给)我)?(?:再|在|重新|继续)?(?:(?:仔细|深入|好好|详细)(?:查(?:一下|下)?|研究(?:一下|下)?|了解(?:一下|下)?|调查(?:一下|下)?)|研究(?:一下|下)?|调查(?:一下|下)?)(?:关于)?[\s，,:：]*(.+)$/u,
   );
