@@ -23,7 +23,10 @@ test("显式研究指令提取主题但不拦截个人资料查询", () => {
     researchTopic("帮我研究下湿疹是怎么回事，原理和怎么调整"),
     "湿疹是怎么回事，原理和怎么调整",
   );
-  assert.equal(researchTopic("帮我查一下现在黄金上涨的原因"), "现在黄金上涨的原因");
+  assert.equal(researchTopic("帮我深入查一下现在黄金上涨的原因"), "现在黄金上涨的原因");
+  assert.equal(researchTopic("帮我研究一下现在黄金上涨的原因"), "现在黄金上涨的原因");
+  assert.equal(researchTopic("帮我查一下最近的开学时间是几号回去"), null);
+  assert.equal(researchTopic("查询一下最近的开学时间"), null);
   assert.equal(researchTopic("帮我查一下我的资料里的租赁合同"), null);
   assert.equal(researchTopic("今天吃了什么"), null);
 });

@@ -3,7 +3,7 @@ export type IntentHint = "save" | "ask" | undefined;
 export function researchTopic(raw: string): string | null {
   if (/(?:知识库|资料库|我之前记的|我的资料)/.test(raw)) return null;
   const match = raw.trim().match(
-    /^(?:请)?(?:帮我)?(?:仔细|深入|好好)?(?:查(?:一下|下)?|研究(?:一下|下)?|了解(?:一下|下)?|调查(?:一下|下)?)(?:关于)?[\s，,:：]*(.+)$/u,
+    /^(?:请)?(?:帮我)?(?:(?:仔细|深入|好好|详细)(?:查(?:一下|下)?|研究(?:一下|下)?|了解(?:一下|下)?|调查(?:一下|下)?)|研究(?:一下|下)?|调查(?:一下|下)?)(?:关于)?[\s，,:：]*(.+)$/u,
   );
   const topic = match?.[1]?.trim().replace(/[。！？!?]+$/u, "") || "";
   return topic.length >= 2 ? topic.slice(0, 500) : null;
