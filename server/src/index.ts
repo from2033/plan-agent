@@ -431,6 +431,7 @@ function knowledgeFromRequest(req: express.Request, conversationId = ""): Array<
   content: string;
   timestamp: string;
 }> {
+  const visible = !isGuestUser(req.userId!) ? listKnowledgeForViewer(req.userId!) : [];
   if (conversationId && conversationDocumentAccess(conversationId, req.userId!) !== null) {
     const resources = listConversationResources(conversationId, req.userId!) || [];
     const scoped = resources
@@ -442,10 +443,10 @@ function knowledgeFromRequest(req: express.Request, conversationId = ""): Array<
     const qqNotes = listKnowledge(QQ_TASK_SYNC_USER)
       .filter((item) => item.id.startsWith("qq-message-"))
       .map(({ id, title, content, timestamp }) => ({ id, title, content, timestamp }));
-    return [...scoped, ...qqNotes.filter((item) => !scoped.some((candidate) => candidate.id === item.id))];
+    const base = [...visible, ...scoped];
+    return [...base, ...qqNotes.filter((item) => !base.some((candidate) => candidate.id === item.id))];
   }
   if (!isGuestUser(req.userId) || !Array.isArray(req.body?.knowledge)) {
-    const visible = listKnowledgeForViewer(req.userId!);
     const qqNotes = listKnowledge(QQ_TASK_SYNC_USER)
       .filter((item) => item.id.startsWith("qq-message-") && QQ_TASK_SYNC_USER !== req.userId)
       .map(({ id, title, content, timestamp }) => ({ id, title, content, timestamp }));
