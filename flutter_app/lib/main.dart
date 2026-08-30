@@ -1291,6 +1291,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildHomePage() {
+    final selectedKey = _dateKey(selectedDate);
+    final dayActions = entries.where((entry) {
+      final scheduledDate = _scheduledDateOf(entry);
+      if (scheduledDate != selectedKey) return false;
+      if (entry.type == EntryType.memo) return !entry.done;
+      return entry.type == EntryType.activity && _activityStillRelevant(entry, selectedDate);
+    }).toList()..sort((a, b) => (a.reminderAt ?? a.timestamp).compareTo(b.reminderAt ?? b.timestamp));
+    final isToday = DateUtils.isSameDay(selectedDate, DateTime.now());
     return RefreshIndicator(
       onRefresh: refreshHome,
       child: ListView(
@@ -1302,6 +1310,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ],
           const SizedBox(height: 24),
           const Center(child: Text('按住下方麦克风，说一句即可记录、查询或安排事项', style: TextStyle(color: Color(0xff8a8680), fontSize: 12))),
+          Padding(
+            padding: const EdgeInsets.only(top: 22, bottom: 8),
+            child: Row(children: [Expanded(child: Text(isToday ? '今天要做' : '当天要做', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700))), if (dayActions.length > 3) TextButton(onPressed: () => setState(() => tab = 1), child: Text('查看全部 ${dayActions.length}'))]),
+          ),
+          if (dayActions.isEmpty)
+            const Padding(padding: EdgeInsets.symmetric(vertical: 18), child: Center(child: Text('今天没有安排要做的事', style: TextStyle(color: Color(0xff8a8680)))))
+          else
+            for (final entry in dayActions.take(3)) ...[
+              EntryCard(entry: entry, reminderScheduled: scheduledReminderIds.contains(entry.id), onToggleDone: entry.type == EntryType.memo ? () => toggleEntryDone(entry) : null, onDelete: () => confirmDeleteEntry(entry)),
+              const SizedBox(height: 9),
+            ],
         ],
       ),
     );
