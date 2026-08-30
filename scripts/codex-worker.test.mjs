@@ -12,6 +12,7 @@ import {
   documentSourcesForAnswer,
   extractDocumentText,
   hasExplicitTimeRange,
+  knowledgeAnswerForIngest,
   ollamaModelForJob,
   resolveKnowledgeSpaceRoot,
   retrievalQuestionForIngest,
@@ -47,6 +48,22 @@ test("follow-up retrieval includes recent conversation context", () => {
   });
   assert.match(question, /张老师的手机号/);
   assert.match(question, /再试一下/);
+});
+
+test("knowledge evidence answer maps model source indexes back to source ids", () => {
+  assert.deepEqual(
+    knowledgeAnswerForIngest(
+      { conversationTitle: "老师联系方式" },
+      { answer: "已找到英语老师的联系方式。", sourceIndexes: [1], insufficientEvidence: false },
+      [{ id: "unrelated" }, { id: "qq-english-teacher" }],
+    ),
+    {
+      kind: "ask",
+      answer: "已找到英语老师的联系方式。",
+      sourceIds: ["qq-english-teacher"],
+      conversationTitle: "老师联系方式",
+    },
+  );
 });
 
 test("runOllama sends a constrained non-thinking request and parses JSON", async (t) => {
