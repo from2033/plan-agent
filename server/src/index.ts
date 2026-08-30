@@ -444,13 +444,13 @@ function knowledgeFromRequest(req: express.Request, conversationId = ""): Array<
       .filter((item) => item.id.startsWith("qq-message-"))
       .map(({ id, title, content, timestamp }) => ({ id, title, content, timestamp }));
     const base = [...visible, ...scoped];
-    return [...base, ...qqNotes.filter((item) => !base.some((candidate) => candidate.id === item.id))];
+    return addUnifiedSources(req, conversationId, [...base, ...qqNotes.filter((item) => !base.some((candidate) => candidate.id === item.id))]);
   }
   if (!isGuestUser(req.userId) || !Array.isArray(req.body?.knowledge)) {
     const qqNotes = listKnowledge(QQ_TASK_SYNC_USER)
       .filter((item) => item.id.startsWith("qq-message-") && QQ_TASK_SYNC_USER !== req.userId)
       .map(({ id, title, content, timestamp }) => ({ id, title, content, timestamp }));
-    return [...visible, ...qqNotes.filter((item) => !visible.some((candidate) => candidate.id === item.id))];
+    return addUnifiedSources(req, conversationId, [...visible, ...qqNotes.filter((item) => !visible.some((candidate) => candidate.id === item.id))]);
   }
   return req.body.knowledge.slice(0, 100).flatMap((value: unknown) => {
     if (!value || typeof value !== "object") return [];
@@ -461,6 +461,44 @@ function knowledgeFromRequest(req: express.Request, conversationId = ""): Array<
     if (!id || !title || !content) return [];
     return [{ id, title, content, timestamp: new Date().toISOString() }];
   });
+}
+
+/** Build one permission-filtered corpus for knowledge, entries and chat evidence.
+ * The worker may rank this corpus, but it must never receive data outside this list.
+ */
+function addUnifiedSources(
+  req: express.Request,
+  conversationId: string,
+  notes: Array<{ id: string; title: string; content: string; timestamp: string }>,
+) {
+  const seen = new Set(notes.map(item => item.id));
+  const entries = isGuestUser(req.userId!) ? [] : listEntriesForViewer(req.userId!, QQ_TASK_SYNC_USER);
+  for (const entry of entries) {
+    const id = `entry-${entry.id}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    notes.push({
+      id,
+      title: `日常记录｜${entry.category}`.slice(0, 100),
+      content: `${entry.description}\n原始内容：${entry.raw}\n时间：${entry.timestamp}`.slice(0, 10_000),
+      timestamp: entry.timestamp,
+    });
+  }
+  if (conversationId) {
+    const history = conversationContextForAi(conversationId, req.userId!, 30) || [];
+    history.forEach((message, index) => {
+      const id = `conversation-${conversationId}-${index}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      notes.push({
+        id,
+        title: `聊天记录｜${message.role === "user" ? "用户" : "助手"}`,
+        content: message.content.slice(0, 10_000),
+        timestamp: new Date().toISOString(),
+      });
+    });
+  }
+  return notes;
 }
 
 function ensureSummaryJob(

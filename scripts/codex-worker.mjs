@@ -48,6 +48,60 @@ function log(message) {
   process.stdout.write(`${new Date().toISOString()} ${message}\n`);
 }
 
+function compactSearchText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 10_000);
+}
+
+function searchBigrams(value) {
+  const text = compactSearchText(value).toLowerCase().replace(/\s/g, "");
+  if (text.length < 2) return text ? [text] : [];
+  return [...new Set(Array.from({ length: text.length - 1 }, (_, i) => text.slice(i, i + 2)))];
+}
+
+export async function unifiedHybridSearch(sources, question, limit = 20) {
+  const usable = (Array.isArray(sources) ? sources : []).filter(source => source
+    && typeof source.id === "string" && typeof source.title === "string" && typeof source.content === "string");
+  if (usable.length <= limit) return usable;
+  const query = compactSearchText(question);
+  const grams = searchBigrams(query);
+  const lexical = usable.map((source, index) => {
+    const text = `${source.title} ${source.content}`.toLowerCase();
+    const overlap = grams.reduce((sum, gram) => sum + (text.includes(gram) ? 1 : 0), 0);
+    const exact = query && text.includes(query.toLowerCase()) ? 10 : 0;
+    return { source, index, lexical: overlap + exact };
+  });
+  let vectorScores = new Map();
+  if (vectorSearchEnabled) {
+    try {
+      const response = await fetch(`${ollamaUrl}/api/embed`, {
+        method: "POST",
+        signal: AbortSignal.timeout(Math.min(ollamaTimeoutMs, 30_000)),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: embeddingModel, input: [query, ...usable.map(source => `${source.title}\n${source.content.slice(0, 4_000)}`)], truncate: true }),
+      });
+      if (response.ok) {
+        const payload = await response.json();
+        const vectors = payload?.embeddings;
+        if (Array.isArray(vectors) && vectors.length === usable.length + 1) {
+          const q = vectors[0];
+          const norm = value => Math.sqrt(value.reduce((sum, item) => sum + Number(item) ** 2, 0)) || 1;
+          const qNorm = norm(q);
+          vectors.slice(1).forEach((vector, index) => {
+            const score = vector.reduce((sum, item, dimension) => sum + Number(item) * Number(q[dimension] || 0), 0)
+              / (qNorm * norm(vector));
+            if (Number.isFinite(score)) vectorScores.set(index, score);
+          });
+        }
+      }
+    } catch { /* lexical retrieval remains available when Ollama is offline */ }
+  }
+  lexical.sort((left, right) => {
+    const score = (item) => item.lexical * 0.35 + (vectorScores.get(item.index) || 0) * 100 * 0.65;
+    return score(right) - score(left) || right.source.timestamp?.localeCompare(left.source.timestamp || "") || left.index - right.index;
+  });
+  return lexical.slice(0, limit).map(item => item.source);
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -1413,16 +1467,22 @@ export function documentAnswerForIngest(classifiedResult, answeredResult, candid
 export async function processIngestJob(job) {
   const raw = String(job.input?.raw || "").trim();
   if (!raw) return runInference(job);
-  const confirmedProposal = confirmedConversationProposal(job);
+  // All server-authorized evidence shares one retrieval layer. Permission filtering
+  // happens on the server before this point; ranking never broadens that scope.
+  const unifiedSources = await unifiedHybridSearch(job.input?.knowledge, raw, 20);
+  const rankedJob = unifiedSources.length || Array.isArray(job.input?.knowledge)
+    ? { ...job, input: { ...job.input, knowledge: unifiedSources } }
+    : job;
+  const confirmedProposal = confirmedConversationProposal(rankedJob);
   const inferenceJob = confirmedProposal ? {
-    ...job,
+    ...rankedJob,
     input: {
-      ...job.input,
+      ...rankedJob.input,
       raw: confirmedProposal.sourceText,
       interactionMode: "capture",
       ...(confirmedProposal.kind === "save" ? { intentHint: "save" } : {}),
     },
-  } : job;
+  } : rankedJob;
   const inference = await runInference(inferenceJob);
   const classified = confirmedProposal ? inference : {
     ...inference,

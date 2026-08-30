@@ -3,8 +3,8 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import type { KnowledgeItem } from "./types.js";
 
-// 知识库问答：把用户的全部知识（已解密）按问题轻量预筛后交给 Claude，综合作答并标注引用。
-// 不用 embedding/向量库（个人规模足够，且避免引入第三方）。
+// 统一证据问答：输入已完成权限过滤的知识、记录、QQ 原文和聊天记录，
+// 使用关键词 + Ollama embedding 混合排序后交给模型。
 
 const AnswerSchema = z.object({
   answer: z.string(),
@@ -27,16 +27,33 @@ function bigrams(s: string): string[] {
   return out;
 }
 
-function prefilter(notes: KnowledgeItem[], query: string, limit: number): KnowledgeItem[] {
-  if (notes.length <= limit) return notes;
+async function prefilter(notes: KnowledgeItem[], query: string, limit: number): Promise<KnowledgeItem[]> {
   const q = new Set(bigrams(query));
-  const scored = notes.map((n) => {
+  const scored = notes.map((n, index) => {
     const text = `${n.title} ${n.content}`.toLowerCase();
     let score = 0;
     for (const g of q) if (text.includes(g)) score += 1;
-    return { n, score };
+    if (text.includes(query.toLowerCase())) score += 10;
+    return { n, score, index, vector: 0 };
   });
-  scored.sort((a, b) => b.score - a.score);
+  const enabled = process.env.ASSISTANT_VECTOR_SEARCH !== "false";
+  const url = (process.env.ASSISTANT_OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
+  const model = process.env.ASSISTANT_EMBEDDING_MODEL || "qwen3-embedding:0.6b";
+  if (enabled && notes.length) {
+    try {
+      const response = await fetch(`${url}/api/embed`, { method: "POST", signal: AbortSignal.timeout(30_000),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, input: [query, ...notes.map(n => `${n.title}\n${n.content}`)], truncate: true }) });
+      const payload = await response.json() as { embeddings?: number[][] };
+      const vectors = payload.embeddings;
+      if (response.ok && Array.isArray(vectors) && vectors.length === notes.length + 1) {
+        const qv = vectors[0]; const norm = (v: number[]) => Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+        const qn = norm(qv);
+        vectors.slice(1).forEach((v, i) => { scored[i].vector = v.reduce((s, x, d) => s + x * (qv[d] || 0), 0) / (qn * norm(v)); });
+      }
+    } catch { /* graceful lexical fallback */ }
+  }
+  scored.sort((a, b) => (b.score * 0.35 + b.vector * 100 * 0.65) - (a.score * 0.35 + a.vector * 100 * 0.65) || a.index - b.index);
   return scored.slice(0, limit).map((s) => s.n);
 }
 
@@ -56,7 +73,7 @@ export async function answerQuestion(
     return { answer: "你的知识库里还没有内容，先对我说“记到知识库……”存一些吧。", sources: [] };
   }
 
-  const candidates = prefilter(notes, query, 20);
+  const candidates = await prefilter(notes, query, 20);
   const numbered = candidates.map((item, i) => ({ idx: String(i + 1), item }));
   const docs = numbered.map(({ idx, item }) => `[${idx}] ${item.title}\n${item.content}`).join("\n\n");
 
