@@ -661,6 +661,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     conversationId?: string;
     context?: AssistantClock;
     knowledge?: Array<{ id: string; title: string; content: string; timestamp: string }>;
+    conversationHistory?: Array<{ role: string; content: string }>;
   };
   if (input.intentHint === "save") {
     const fallback = fallbackKnowledge(input.raw);
@@ -684,9 +685,21 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
   }
   if (result.kind === "ask") {
     const wanted = new Set(result.sourceIds || []);
-    const knowledgeSources = (input.knowledge || [])
+    let knowledgeSources = (input.knowledge || [])
       .filter((item) => wanted.has(item.id))
       .map((item) => ({ ...item, sourceType: "knowledge" as const }));
+    // Contact lookups are deterministic: never let a model discard an exact
+    // phone number present in a visible source, including a prior-turn lookup.
+    const queryText = [input.raw, ...(input.conversationHistory || []).map((m) => m.content)].join(" ");
+    if (/(电话|手机号|联系方式)/u.test(queryText)) {
+      const matches = (input.knowledge || []).filter((item) => /1[3-9]\d{9}/.test(`${item.title} ${item.content}`));
+      if (matches.length) {
+        knowledgeSources = matches.map((item) => ({ ...item, sourceType: "knowledge" as const }));
+        const numbers = [...new Set(matches.flatMap((item) => `${item.title} ${item.content}`.match(/1[3-9]\d{9}/g) || []))];
+        result.answer = `找到了：${numbers.join("、")}。来源：${matches.map((item) => item.title).join("；")}`;
+        result.sourceIds = matches.map((item) => item.id);
+      }
+    }
     const documentSources = (result.documentSources || []).map((source) => {
       const resolved = resolveDocumentEvidence(
         job.userId,
