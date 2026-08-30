@@ -2293,16 +2293,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIST = process.env.WEB_DIST
   ? path.resolve(process.env.WEB_DIST)
   : path.resolve(__dirname, "../../dist");
+const WEB_BASE = BASE_PATH || "/";
 
 if (existsSync(WEB_DIST)) {
   // 仅把不带斜杠的 /app 重定向到 /app/（用 req.path 精确判断，避免 /app/ 也被匹配导致死循环）
-  app.get(BASE_PATH, (req, res, next) => {
-    if (req.path === BASE_PATH) return res.redirect(`${BASE_PATH}/`);
+  app.get(WEB_BASE, (req, res, next) => {
+    if (req.path === WEB_BASE) return res.redirect(`${WEB_BASE}/`);
     next();
   });
-  app.use(BASE_PATH, express.static(WEB_DIST));
+  app.use(WEB_BASE, express.static(WEB_DIST));
   // SPA 回退：BASE_PATH 下的其它路径都返回 index.html
-  app.get(`${BASE_PATH}/*`, (_req, res) => {
+  app.get(`${WEB_BASE}*`, (_req, res) => {
     res.sendFile(path.join(WEB_DIST, "index.html"));
   });
 } else {
