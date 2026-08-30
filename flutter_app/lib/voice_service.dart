@@ -46,7 +46,9 @@ class VoiceService {
     }
   }
 
-  Future<List<int>> stopRecording() async {
+  Future<List<int>> stopRecording({
+    String shortRecordingMessage = '按住多说一会儿再松手哦',
+  }) async {
     // 留一小段句尾，再由原生录音器完整封装 WAV。
     await Future<void>.delayed(const Duration(milliseconds: 300));
     final stoppedPath = await _recorder.stop();
@@ -59,7 +61,7 @@ class VoiceService {
     try {
       final bytes = await file.readAsBytes();
       if (bytes.length < 1600) {
-        throw const ApiException('按住多说一会儿再松手哦');
+        throw ApiException(shortRecordingMessage);
       }
       return bytes;
     } finally {

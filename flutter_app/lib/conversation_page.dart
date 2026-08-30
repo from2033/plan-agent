@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import 'api_client.dart';
 import 'models.dart';
+import 'voice_service.dart';
 
 Map<String, dynamic> _documentResult(Map<String, dynamic> document) =>
     Map<String, dynamic>.from(document['result'] as Map? ?? const {});
@@ -32,12 +33,7 @@ class ConversationPage extends StatefulWidget {
     required this.isGuest,
     required this.revision,
     required this.onResult,
-    required this.onVoiceStart,
-    required this.onVoiceStop,
     required this.onConversationChanged,
-    required this.externalThinking,
-    required this.recording,
-    required this.recognizing,
     this.initialConversationId,
   });
 
@@ -45,12 +41,7 @@ class ConversationPage extends StatefulWidget {
   final bool isGuest;
   final int revision;
   final Future<void> Function(Map<String, dynamic> result) onResult;
-  final VoidCallback onVoiceStart;
-  final VoidCallback onVoiceStop;
   final ValueChanged<String?> onConversationChanged;
-  final bool externalThinking;
-  final bool recording;
-  final bool recognizing;
   final String? initialConversationId;
 
   @override
@@ -64,6 +55,7 @@ class _ConversationPageState extends State<ConversationPage> {
   final scaffoldKey = GlobalKey<ScaffoldState>();
   final input = TextEditingController();
   final scroll = ScrollController();
+  late final VoiceService chatVoice = VoiceService(widget.api);
   List<AiConversation> conversations = const [];
   List<ConversationInvitation> invitations = const [];
   AiConversation? conversation;
@@ -72,6 +64,8 @@ class _ConversationPageState extends State<ConversationPage> {
   bool loading = true;
   bool sending = false;
   bool uploadingAttachment = false;
+  bool voiceRecording = false;
+  bool voiceTranscribing = false;
   bool pollingPendingMessages = false;
   String? error;
   Timer? pendingMessageTimer;
@@ -91,9 +85,61 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void dispose() {
     pendingMessageTimer?.cancel();
+    unawaited(chatVoice.dispose());
     input.dispose();
     scroll.dispose();
     super.dispose();
+  }
+
+  Future<void> toggleVoice() async {
+    if (voiceTranscribing) return;
+    if (!voiceRecording) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      setState(() {
+        voiceRecording = true;
+        error = null;
+      });
+      try {
+        await chatVoice.start();
+      } catch (exception) {
+        await chatVoice.cancel();
+        if (!mounted) return;
+        setState(() {
+          voiceRecording = false;
+          error = exception.toString();
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      voiceRecording = false;
+      voiceTranscribing = true;
+      error = null;
+    });
+    var backgroundProcessing = false;
+    try {
+      await chatVoice.beginProcessing();
+      backgroundProcessing = true;
+      final audio = await chatVoice.stopRecording(
+        shortRecordingMessage: '录音太短，请多说一会儿再结束',
+      );
+      final transcript =
+          (await chatVoice
+                  .transcribe(audio)
+                  .timeout(const Duration(seconds: 30)))
+              .trim();
+      if (transcript.isEmpty) throw const ApiException('没有识别到内容，请重试');
+      if (!mounted) return;
+      final existing = input.text.trimRight();
+      input.text = existing.isEmpty ? transcript : '$existing $transcript';
+      input.selection = TextSelection.collapsed(offset: input.text.length);
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    } finally {
+      if (backgroundProcessing) await chatVoice.endProcessing();
+      if (mounted) setState(() => voiceTranscribing = false);
+    }
   }
 
   Future<void> load() async {
@@ -823,10 +869,7 @@ class _ConversationPageState extends State<ConversationPage> {
 
   Widget _buildConversationDetail() {
     final selected = conversation!;
-    final showThinking =
-        sending ||
-        widget.externalThinking ||
-        messages.any((item) => item.isPending);
+    final showThinking = sending || messages.any((item) => item.isPending);
     return Column(
       children: [
         Container(
@@ -947,7 +990,11 @@ class _ConversationPageState extends State<ConversationPage> {
                   maxLines: 4,
                   textInputAction: TextInputAction.newline,
                   decoration: InputDecoration(
-                    hintText: '发消息，或让 AI 查群资料…',
+                    hintText: voiceRecording
+                        ? '正在录音，再点一次麦克风结束'
+                        : voiceTranscribing
+                        ? '正在识别语音…'
+                        : '发消息，或让 AI 查群资料…',
                     filled: true,
                     fillColor: Colors.white,
                     contentPadding: const EdgeInsets.symmetric(
@@ -965,30 +1012,27 @@ class _ConversationPageState extends State<ConversationPage> {
                 ),
               ),
               const SizedBox(width: 7),
-              Listener(
-                onPointerDown: (_) => widget.onVoiceStart(),
-                onPointerUp: (_) => widget.onVoiceStop(),
-                onPointerCancel: (_) => widget.onVoiceStop(),
-                child: CircleAvatar(
-                  radius: 22,
-                  backgroundColor: widget.recording
+              IconButton(
+                onPressed: voiceTranscribing ? null : toggleVoice,
+                tooltip: voiceRecording ? '结束录音' : '语音输入',
+                style: IconButton.styleFrom(
+                  fixedSize: const Size.square(44),
+                  backgroundColor: voiceRecording
                       ? const Color(0xffffdada)
                       : const Color(0xffede9e1),
-                  child: widget.recognizing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(
-                          widget.recording
-                              ? Icons.graphic_eq_rounded
-                              : Icons.mic_rounded,
-                          color: widget.recording
-                              ? const Color(0xffdc2626)
-                              : const Color(0xff8a8680),
-                        ),
                 ),
+                icon: voiceTranscribing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        voiceRecording ? Icons.stop_rounded : Icons.mic_rounded,
+                        color: voiceRecording
+                            ? const Color(0xffdc2626)
+                            : const Color(0xff8a8680),
+                      ),
               ),
               const SizedBox(width: 7),
               IconButton.filled(

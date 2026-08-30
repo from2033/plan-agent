@@ -530,12 +530,10 @@ class _PendingVoiceTask {
     required this.id,
     required this.text,
     required this.fromHome,
-    this.conversationId,
   });
 
   final int id;
   String text;
-  final String? conversationId;
   final bool fromHome;
   String status = '等待处理';
   String? errorMessage;
@@ -592,7 +590,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _nextPendingId = 1;
   int _knowledgeRevision = 0;
   int _conversationRevision = 0;
-  String? _activeConversationId;
   String? _requestedConversationId;
   _HomeAnswer? _homeAnswer;
   int _startMeetingRecordingRequest = 0;
@@ -813,7 +810,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         id: _nextPendingId++,
         text: '刚刚的语音',
         fromHome: tab == 0,
-        conversationId: tab == 2 ? _activeConversationId : null,
       );
       task.status = '识别语音中';
       setState(() {
@@ -884,7 +880,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final result = await widget.api
           .ingest(
             task.text,
-            conversationId: task.conversationId,
             onQueued: () {
               if (mounted && !_disposing) {
                 setState(() => task.status = '信息处理中');
@@ -1129,7 +1124,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             if (widget.isGuest) _buildGuestBanner(),
             if (error != null) _buildErrorBanner(),
             Expanded(child: _buildCurrentPage()),
-            if (tab == 0 || tab == 2) _buildPendingTasks(),
+            if (tab == 0) _buildPendingTasks(),
             if (tab == 0) _buildVoiceInput(),
           ],
         ),
@@ -1697,18 +1692,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       api: widget.api,
       isGuest: widget.isGuest,
       revision: _conversationRevision,
-      recording: recording,
-      recognizing: recognizing,
       initialConversationId: _requestedConversationId,
-      onVoiceStart: () => unawaited(startVoice()),
-      onVoiceStop: queueStopVoice,
       onConversationChanged: (id) {
-        _activeConversationId = id;
         if (id == _requestedConversationId) _requestedConversationId = null;
       },
-      externalThinking: pendingTasks.any(
-        (task) => !task.failed && task.conversationId == _activeConversationId,
-      ),
       onResult: (result) async {
         await refresh();
         if (!mounted) return;
