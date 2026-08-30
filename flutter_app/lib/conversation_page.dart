@@ -269,7 +269,7 @@ class _ConversationPageState extends State<ConversationPage> {
     }
   }
 
-  Future<void> deleteConversation(AiConversation item) async {
+  Future<bool> deleteConversation(AiConversation item) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -290,15 +290,26 @@ class _ConversationPageState extends State<ConversationPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) return false;
     try {
       await widget.api.deleteConversation(item.id);
-      if (!mounted) return;
-      if (conversation?.id == item.id) closeConversation();
-      await load();
+      return true;
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
+      return false;
     }
+  }
+
+  void removeDeletedConversation(AiConversation item) {
+    if (conversation?.id == item.id) {
+      closeConversation();
+      return;
+    }
+    setState(() {
+      conversations = conversations
+          .where((conversation) => conversation.id != item.id)
+          .toList();
+    });
   }
 
   Future<void> respondInvitation(
@@ -916,49 +927,54 @@ class _ConversationPageState extends State<ConversationPage> {
                         child: Text('没有找到相关对话', textAlign: TextAlign.center),
                       ),
                     for (final item in conversations)
-                      ListTile(
-                        dense: true,
-                        visualDensity: const VisualDensity(vertical: -2),
-                        contentPadding: const EdgeInsets.only(
-                          left: 10,
-                          right: 2,
-                        ),
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          unawaited(openConversation(item));
-                        },
-                        title: Text(
-                          item.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13.5,
-                            height: 1.25,
-                            fontWeight: FontWeight.w600,
+                      Dismissible(
+                        key: ValueKey('conversation-${item.id}'),
+                        direction: DismissDirection.endToStart,
+                        confirmDismiss: (_) => deleteConversation(item),
+                        onDismissed: (_) => removeDeletedConversation(item),
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 18),
+                          color: const Color(0xffb42318),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Icon(
+                                Icons.delete_outline_rounded,
+                                color: Colors.white,
+                              ),
+                              SizedBox(width: 7),
+                              Text(
+                                '删除',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        trailing: PopupMenuButton<String>(
-                          tooltip: '对话操作',
-                          onSelected: (value) {
-                            if (value == 'delete') {
-                              unawaited(deleteConversation(item));
-                            }
+                        child: ListTile(
+                          dense: true,
+                          visualDensity: const VisualDensity(vertical: -2),
+                          contentPadding: const EdgeInsets.only(
+                            left: 10,
+                            right: 12,
+                          ),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            unawaited(openConversation(item));
                           },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(
-                              value: 'delete',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.delete_outline_rounded,
-                                    color: Color(0xffb42318),
-                                  ),
-                                  SizedBox(width: 9),
-                                  Text('删除对话'),
-                                ],
-                              ),
+                          title: Text(
+                            item.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              height: 1.25,
+                              fontWeight: FontWeight.w600,
                             ),
-                          ],
+                          ),
                         ),
                       ),
                   ],
