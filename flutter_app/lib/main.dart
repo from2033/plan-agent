@@ -529,16 +529,30 @@ class _PendingVoiceTask {
   _PendingVoiceTask({
     required this.id,
     required this.text,
+    required this.fromHome,
     this.conversationId,
   });
 
   final int id;
   String text;
   final String? conversationId;
+  final bool fromHome;
   String status = '等待处理';
   String? errorMessage;
 
   bool get failed => errorMessage != null;
+}
+
+class _HomeAnswer {
+  const _HomeAnswer({
+    required this.question,
+    required this.answer,
+    this.conversationId,
+  });
+
+  final String question;
+  final String answer;
+  final String? conversationId;
 }
 
 class HomeScreen extends StatefulWidget {
@@ -579,6 +593,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _knowledgeRevision = 0;
   int _conversationRevision = 0;
   String? _activeConversationId;
+  String? _requestedConversationId;
+  _HomeAnswer? _homeAnswer;
   int _startMeetingRecordingRequest = 0;
   bool showCompletedTodos = false;
   DateTime selectedDate = DateUtils.dateOnly(DateTime.now());
@@ -597,7 +613,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ('待办', Icons.checklist_rounded),
     ('对话', Icons.forum_outlined),
     ('资料库', Icons.folder_copy_outlined),
-    ('我的', Icons.person_outline_rounded),
   ];
 
   @override
@@ -797,7 +812,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final task = _PendingVoiceTask(
         id: _nextPendingId++,
         text: '刚刚的语音',
-        conversationId: _activeConversationId,
+        fromHome: tab == 0,
+        conversationId: tab == 2 ? _activeConversationId : null,
       );
       task.status = '识别语音中';
       setState(() {
@@ -900,7 +916,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         } else if (result['kind'] == 'ask') {
           final answer = result['answer'] as String?;
           if (answer != null && answer.isNotEmpty) {
-            setState(() => tab = 2);
+            if (task.fromHome) {
+              setState(() {
+                _homeAnswer = _HomeAnswer(
+                  question: task.text,
+                  answer: answer,
+                  conversationId: result['conversationId'] as String?,
+                );
+              });
+            } else {
+              setState(() => tab = 2);
+            }
           }
         }
       }
@@ -1122,13 +1148,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildPageHeader() {
-    const titles = ['今天', '待办', '对话', '资料库', '我的'];
+    const titles = ['今天', '待办', '对话', '资料库'];
     const subtitles = [
       '说一句，我来记录和查询',
       '把没做完的事情理清楚',
       '每次提问和回答都会保留',
       '长期保存的资料与知识',
-      '心愿与账号',
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
@@ -1156,17 +1181,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
           ),
-          if (tab == 0)
-            IconButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) =>
-                      WorldPulsePage(api: widget.api, initialData: worldPulse),
-                ),
-              ),
-              tooltip: '世界趋势与中国政策',
-              icon: const Icon(Icons.public_rounded),
-            ),
           IconButton(
             onPressed: tab == 0
                 ? refreshHome
@@ -1176,6 +1190,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             tooltip: '刷新',
             icon: const Icon(Icons.refresh_rounded),
           ),
+          if (tab == 0)
+            IconButton(
+              onPressed: _openProfilePage,
+              tooltip: '我的与设置',
+              icon: CircleAvatar(
+                radius: 16,
+                backgroundColor: const Color(0xffffdfb8),
+                child: Icon(
+                  widget.isGuest
+                      ? Icons.person_outline_rounded
+                      : Icons.person_rounded,
+                  size: 19,
+                  color: const Color(0xff9a4f06),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1188,8 +1218,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       1 => _buildReminderPage(),
       2 => _buildConversationPage(),
       3 => _buildLibraryPage(),
-      _ => _buildProfilePage(),
+      _ => _buildHomePage(),
     };
+  }
+
+  Future<void> _openProfilePage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('我的')),
+          body: SafeArea(child: _buildProfilePage()),
+        ),
+      ),
+    );
   }
 
   String _dateKey(DateTime value) => DateFormat('yyyy-MM-dd').format(value);
@@ -1255,11 +1296,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
         children: [
           _buildDateNavigator(dayActions.length),
+          if (_homeAnswer != null) ...[
+            const SizedBox(height: 12),
+            _buildHomeAnswerCard(_homeAnswer!),
+          ],
+          const SizedBox(height: 12),
+          _buildTrendSummaryCard(),
           Padding(
-            padding: const EdgeInsets.only(top: 18, bottom: 8),
-            child: Text(
-              isToday ? '今天要做' : '当天要做',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+            padding: const EdgeInsets.only(top: 16, bottom: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    isToday ? '今天要做' : '当天要做',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (dayActions.length > 3)
+                  TextButton(
+                    onPressed: () => setState(() => tab = 1),
+                    child: Text('查看全部 ${dayActions.length}'),
+                  ),
+              ],
             ),
           ),
           if (dayActions.isEmpty)
@@ -1273,7 +1334,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             )
           else
-            for (final entry in dayActions) ...[
+            for (final entry in dayActions.take(3)) ...[
               EntryCard(
                 entry: entry,
                 reminderScheduled: scheduledReminderIds.contains(entry.id),
@@ -1285,6 +1346,132 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const SizedBox(height: 9),
             ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildHomeAnswerCard(_HomeAnswer value) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xffeadfce)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.auto_awesome_rounded,
+                size: 18,
+                color: Color(0xffb45f06),
+              ),
+              const SizedBox(width: 7),
+              const Expanded(
+                child: Text(
+                  '刚刚的回答',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: () => setState(() => _homeAnswer = null),
+                icon: const Icon(Icons.close_rounded, size: 18),
+              ),
+            ],
+          ),
+          Text(
+            value.question,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, color: Color(0xff8a8680)),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            value.answer,
+            maxLines: 6,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(height: 1.45),
+          ),
+          if (value.conversationId != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _requestedConversationId = value.conversationId;
+                    _conversationRevision += 1;
+                    tab = 2;
+                  });
+                },
+                icon: const Icon(Icons.forum_outlined, size: 17),
+                label: const Text('进入聊天继续追问'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrendSummaryCard() {
+    final briefing = worldPulse?['dailyBriefing'] as Map<String, dynamic>?;
+    final overview = (briefing?['overview'] ?? worldPulse?['overview'])
+        ?.toString()
+        .trim();
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              WorldPulsePage(api: widget.api, initialData: worldPulse),
+        ),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xff1f2937),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.public_rounded, color: Colors.white, size: 22),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '今日趋势',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    overview?.isNotEmpty == true
+                        ? overview!
+                        : worldPulseLoading
+                        ? '正在更新今天的重要变化…'
+                        : '查看政策、楼市、黄金、AI 与国际变化',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xffd1d5db),
+                      fontSize: 11,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xffd1d5db)),
+          ],
+        ),
       ),
     );
   }
@@ -1512,9 +1699,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       revision: _conversationRevision,
       recording: recording,
       recognizing: recognizing,
+      initialConversationId: _requestedConversationId,
       onVoiceStart: () => unawaited(startVoice()),
       onVoiceStop: queueStopVoice,
-      onConversationChanged: (id) => _activeConversationId = id,
+      onConversationChanged: (id) {
+        _activeConversationId = id;
+        if (id == _requestedConversationId) _requestedConversationId = null;
+      },
       externalThinking: pendingTasks.any(
         (task) => !task.failed && task.conversationId == _activeConversationId,
       ),

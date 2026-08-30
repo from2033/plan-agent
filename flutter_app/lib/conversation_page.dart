@@ -38,6 +38,7 @@ class ConversationPage extends StatefulWidget {
     required this.externalThinking,
     required this.recording,
     required this.recognizing,
+    this.initialConversationId,
   });
 
   final ApiClient api;
@@ -50,6 +51,7 @@ class ConversationPage extends StatefulWidget {
   final bool externalThinking;
   final bool recording;
   final bool recognizing;
+  final String? initialConversationId;
 
   @override
   State<ConversationPage> createState() => _ConversationPageState();
@@ -98,7 +100,7 @@ class _ConversationPageState extends State<ConversationPage> {
       final user = currentUser.isEmpty ? await widget.api.me() : currentUser;
       final loadedConversations = await widget.api.conversations();
       final loadedInvitations = await widget.api.conversationInvitations();
-      final selectedId = conversation?.id;
+      final selectedId = widget.initialConversationId ?? conversation?.id;
       AiConversation? selected;
       if (selectedId != null) {
         for (final item in loadedConversations) {
