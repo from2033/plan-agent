@@ -5,7 +5,7 @@ import { z } from "zod";
 // AI 报告：根据用户某一天/某一个月的流水账记录，生成口语化的亮点 / 待改进 / 建议。
 // 只产出文字点评；具体数字（花费、条数等）由前端本地即时算，无需 AI。
 
-export type ReportScope = "day" | "week" | "month";
+export type ReportScope = "day" | "week" | "month" | "tomorrow";
 
 export interface ReportEntry {
   type: string;
@@ -14,9 +14,13 @@ export interface ReportEntry {
   amount?: number;
   timeRange?: { start: string; end: string };
   done?: boolean;
+  date?: string;
 }
 
 const ReportSchema = z.object({
+  overview: z.string().optional().default(""),
+  checklist: z.array(z.string()).optional().default([]),
+  preparations: z.array(z.string()).optional().default([]),
   highlights: z.array(z.string()),
   improvements: z.array(z.string()),
   suggestions: z.array(z.string()),
@@ -35,6 +39,7 @@ function serialize(entries: ReportEntry[]): string {
   return entries
     .map((e) => {
       const bits = [e.type, e.category, e.description];
+      if (e.date) bits.push(`日期:${e.date}`);
       if (e.amount != null) bits.push(`¥${e.amount}`);
       if (e.timeRange) bits.push(`${e.timeRange.start}-${e.timeRange.end}`);
       if (e.type === "memo") bits.push(e.done ? "已完成" : "未完成");
@@ -44,12 +49,19 @@ function serialize(entries: ReportEntry[]): string {
 }
 
 function buildSystemPrompt(scope: ReportScope, dateLabel: string): string {
-  const span = scope === "day"
+  const span = scope === "tomorrow"
+    ? `明天（${dateLabel}）`
+    : scope === "day"
     ? `这一天（${dateLabel}）`
     : scope === "week"
       ? `这一周（${dateLabel}）`
       : `这个月（${dateLabel}）`;
-  const next = scope === "day" ? "明天" : scope === "week" ? "下周" : "下个月";
+  const next = scope === "tomorrow" ? "明天" : scope === "day" ? "明天" : scope === "week" ? "下周" : "下个月";
+  if (scope === "tomorrow") {
+    return `你是一个非常细心的中文个人管家。下面是用户为${span}整理出的事实和事项。
+
+请写一份可以帮助用户提前准备的“明日管家简报”，严格只依据输入，不编造未提供的安排。输出 overview（1段明日总览）、checklist（明天需要完成的具体清单，按重要性排序）、preparations（今天晚上就可以提前准备的物品、资料或确认事项），以及 highlights、improvements、suggestions。日期事实只有在临近或与明天准备直接相关时才列出。如果没有足够信息，明确写“暂无明确安排”，不要凭常识虚构日程。语气像熟悉用户情况的管家，简洁但要细心。`;
+  }
   return `你是一个贴心的中文生活记录助手。下面是用户${span}的流水账记录（每行一条：类型 | 分类 | 描述，可能带金额、时间段、完成状态）。
 
 请据此写一份简短、口语化、带点鼓励的小结，分三部分，各 2~4 条，每条一句话：

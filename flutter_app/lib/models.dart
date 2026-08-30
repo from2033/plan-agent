@@ -110,11 +110,17 @@ class AssistantEntry {
 
 class AssistantReport {
   const AssistantReport({
+    this.overview = '',
+    this.checklist = const [],
+    this.preparations = const [],
     required this.highlights,
     required this.improvements,
     required this.suggestions,
   });
 
+  final String overview;
+  final List<String> checklist;
+  final List<String> preparations;
   final List<String> highlights;
   final List<String> improvements;
   final List<String> suggestions;
@@ -122,6 +128,9 @@ class AssistantReport {
   factory AssistantReport.fromJson(
     Map<String, dynamic> json,
   ) => AssistantReport(
+    overview: json['overview'] as String? ?? '',
+    checklist: List<String>.from(json['checklist'] as List? ?? const []),
+    preparations: List<String>.from(json['preparations'] as List? ?? const []),
     highlights: List<String>.from(json['highlights'] as List? ?? const []),
     improvements: List<String>.from(json['improvements'] as List? ?? const []),
     suggestions: List<String>.from(json['suggestions'] as List? ?? const []),

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
-import { PRIMARY_USER, requireAuth, resolveUserId } from "./auth.js";
+import { PRIMARY_USER, configuredUserIds, requireAuth, resolveUserId } from "./auth.js";
 import {
   listEntries,
   listEntriesForViewer,
@@ -518,6 +518,29 @@ function ensureSummaryJob(
     reportCache: { scope, periodKey, inputHash },
   });
   return { id: job.id, inputHash };
+}
+
+function tomorrowBriefEntries(userId: string, now = new Date()): ReportEntry[] {
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const dateKey = shanghaiDate(tomorrow.toISOString());
+  const entries = listEntriesForViewer(userId, QQ_TASK_SYNC_USER)
+    .filter((entry) => (entry.scheduledDate || entry.reminderAt && shanghaiDate(entry.reminderAt)) === dateKey
+      || (entry.type === "memo" && !entry.done))
+    .map((entry) => ({
+      type: entry.type,
+      category: entry.category,
+      description: entry.description,
+      amount: entry.amount,
+      timeRange: entry.timeRange,
+      done: entry.done,
+      date: entry.scheduledDate || (entry.reminderAt ? shanghaiDate(entry.reminderAt) : undefined),
+    }));
+  const knowledge = listKnowledgeForViewer(userId).slice(0, 80).map((item) => ({
+    type: "knowledge",
+    category: "资料",
+    description: `${item.title}：${item.content}`,
+  }));
+  return [...entries, ...knowledge];
 }
 
 function shanghaiDate(timestamp: string): string {
@@ -2003,7 +2026,9 @@ app.delete(`${API}/knowledge/:id/family`, (req, res) => {
 
 // AI 报告（日报/周报/月报）：只在报告页请求时按需生成；内容未变化则直接命中缓存。
 app.post(`${API}/summary`, requireGuestQuota("summary", 30), async (req, res) => {
-  const scope: ReportScope = req.body?.scope === "month"
+  const scope: ReportScope = req.body?.scope === "tomorrow"
+    ? "tomorrow"
+    : req.body?.scope === "month"
     ? "month"
     : req.body?.scope === "week"
       ? "week"
@@ -2012,7 +2037,8 @@ app.post(`${API}/summary`, requireGuestQuota("summary", 30), async (req, res) =>
   const periodKey = typeof req.body?.periodKey === "string" && req.body.periodKey
     ? req.body.periodKey.slice(0, 40)
     : dateLabel.slice(0, 40);
-  const entries: ReportEntry[] = Array.isArray(req.body?.entries) ? req.body.entries.slice(0, 2000) : [];
+  let entries: ReportEntry[] = Array.isArray(req.body?.entries) ? req.body.entries.slice(0, 2000) : [];
+  if (scope === "tomorrow") entries = tomorrowBriefEntries(req.userId!);
   if (!entries.length) {
     res.status(204).end();
     return;
@@ -2154,6 +2180,26 @@ const worldDiscoveryTimer = setInterval(() => {
   void ensureScheduledWorldDiscovery();
 }, 60_000);
 worldDiscoveryTimer.unref();
+
+// 每天上海时间 18:00 后为已配置账号预生成明日管家简报。若服务重启晚于 18:00，
+// 也会在首次巡检时补生成；内容变化时由 App 请求接口触发刷新。
+let tomorrowBriefScheduledDate = "";
+function ensureScheduledTomorrowBrief(now = new Date()): void {
+  const today = shanghaiDate(now.toISOString());
+  if (shanghaiMinuteOfDay(now) < 18 * 60 || tomorrowBriefScheduledDate === today) return;
+  tomorrowBriefScheduledDate = today;
+  for (const userId of configuredUserIds()) {
+    const entries = tomorrowBriefEntries(userId, now);
+    if (!entries.length) continue;
+    const periodKey = shanghaiDate(new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString());
+    ensureSummaryJob(userId, "tomorrow", periodKey, periodKey, entries);
+  }
+}
+void ensureScheduledTomorrowBrief();
+const tomorrowBriefTimer = setInterval(() => {
+  ensureScheduledTomorrowBrief();
+}, 60_000);
+tomorrowBriefTimer.unref();
 
 // ─── 实时语音识别 WebSocket（流式）：${API}/asr?token=<访问令牌> ───────────────
 const wss = new WebSocketServer({ noServer: true });

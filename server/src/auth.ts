@@ -25,6 +25,14 @@ function buildUsers(): Map<string, string> {
   return map;
 }
 
+export function configuredUserIds(): string[] {
+  return [PRIMARY_USER, ...(process.env.USERS || "").split(",").flatMap((pair) => {
+    const idx = pair.indexOf(":");
+    const name = idx > 0 ? pair.slice(0, idx).trim() : "";
+    return name ? [name] : [];
+  })];
+}
+
 const USERS = buildUsers();
 
 // 恒定时间比较，避免计时攻击。

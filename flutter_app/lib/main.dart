@@ -1296,6 +1296,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _buildHomeAnswerCard(_homeAnswer!),
           ],
           const SizedBox(height: 12),
+          _buildTomorrowBriefCard(),
+          const SizedBox(height: 12),
           _buildTrendSummaryCard(),
           Padding(
             padding: const EdgeInsets.only(top: 16, bottom: 8),
@@ -1344,6 +1346,50 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
   }
+
+  Widget _buildTomorrowBriefCard() => InkWell(
+    borderRadius: BorderRadius.circular(16),
+    onTap: () => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: false,
+      builder: (_) => SizedBox(
+        height: MediaQuery.sizeOf(context).height * .86,
+        child: ReportPane(
+          api: widget.api,
+          entries: entries,
+          selectedDate: selectedDate,
+        ),
+      ),
+    ),
+    child: Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xfff0e7d8),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.nightlight_outlined, color: Color(0xff8b5e34), size: 23),
+          SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('明日管家', style: TextStyle(fontWeight: FontWeight.w800)),
+                SizedBox(height: 3),
+                Text(
+                  '每天 18:00 整理明天的安排、清单和提前准备事项',
+                  style: TextStyle(color: Color(0xff716b63), fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right_rounded, color: Color(0xff8b5e34)),
+        ],
+      ),
+    ),
+  );
 
   Widget _buildHomeAnswerCard(_HomeAnswer value) {
     return Container(
@@ -2063,6 +2109,19 @@ class _ReportPaneState extends State<ReportPane> {
   );
 
   List<AssistantEntry> get relevant => widget.entries.where((entry) {
+    if (scope == 'tomorrow') {
+      final tomorrow = DateUtils.dateOnly(
+        widget.selectedDate.add(const Duration(days: 1)),
+      );
+      final entryDate =
+          entry.scheduledDate ??
+          (entry.reminderAt == null
+              ? null
+              : DateFormat('yyyy-MM-dd').format(entry.reminderAt!));
+      return (entryDate != null &&
+              entryDate == DateFormat('yyyy-MM-dd').format(tomorrow)) ||
+          (entry.type == EntryType.memo && !entry.done && entryDate == null);
+    }
     if (scope == 'day') {
       return DateUtils.isSameDay(entry.timestamp, widget.selectedDate);
     }
@@ -2076,6 +2135,12 @@ class _ReportPaneState extends State<ReportPane> {
   }).toList();
 
   String get dateLabel {
+    if (scope == 'tomorrow') {
+      return DateFormat(
+        'yyyy年M月d日',
+        'zh_CN',
+      ).format(widget.selectedDate.add(const Duration(days: 1)));
+    }
     if (scope == 'day') {
       return DateFormat('yyyy年M月d日', 'zh_CN').format(widget.selectedDate);
     }
@@ -2088,6 +2153,10 @@ class _ReportPaneState extends State<ReportPane> {
 
   String get periodKey => scope == 'day'
       ? DateFormat('yyyy-MM-dd').format(widget.selectedDate)
+      : scope == 'tomorrow'
+      ? DateFormat(
+          'yyyy-MM-dd',
+        ).format(widget.selectedDate.add(const Duration(days: 1)))
       : scope == 'week'
       ? DateFormat('yyyy-MM-dd').format(weekMonday)
       : DateFormat('yyyy-MM').format(widget.selectedDate);
@@ -2191,6 +2260,7 @@ class _ReportPaneState extends State<ReportPane> {
             child: SegmentedButton<String>(
               segments: const [
                 ButtonSegment(value: 'day', label: Text('日报')),
+                ButtonSegment(value: 'tomorrow', label: Text('明日管家')),
                 ButtonSegment(value: 'week', label: Text('周报')),
                 ButtonSegment(value: 'month', label: Text('月报')),
               ],
@@ -2288,6 +2358,24 @@ class _ReportPaneState extends State<ReportPane> {
                     items: [error!],
                   )
                 else if (report != null) ...[
+                  if (scope == 'tomorrow' && report!.overview.isNotEmpty)
+                    _ReportSection(
+                      title: '明日总览',
+                      icon: Icons.wb_sunny_outlined,
+                      items: [report!.overview],
+                    ),
+                  if (scope == 'tomorrow' && report!.checklist.isNotEmpty)
+                    _ReportSection(
+                      title: '明天清单',
+                      icon: Icons.checklist_rounded,
+                      items: report!.checklist,
+                    ),
+                  if (scope == 'tomorrow' && report!.preparations.isNotEmpty)
+                    _ReportSection(
+                      title: '今晚提前准备',
+                      icon: Icons.inventory_2_outlined,
+                      items: report!.preparations,
+                    ),
                   _ReportSection(
                     title: '做得不错',
                     icon: Icons.thumb_up_alt_outlined,

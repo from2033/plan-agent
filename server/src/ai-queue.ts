@@ -102,6 +102,9 @@ const IngestResultSchema = z.discriminatedUnion("kind", [
 
 const CorrectResultSchema = z.object({ fields: EntryFieldsSchema });
 const SummaryResultSchema = z.object({
+  overview: z.string().min(1).max(2_000).optional().default(""),
+  checklist: z.array(z.string().min(1).max(300)).max(12).optional().default([]),
+  preparations: z.array(z.string().min(1).max(300)).max(12).optional().default([]),
   highlights: z.array(z.string().min(1).max(300)).max(8),
   improvements: z.array(z.string().min(1).max(300)).max(8),
   suggestions: z.array(z.string().min(1).max(300)).max(8),
