@@ -5,6 +5,9 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
@@ -1355,7 +1358,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       showDragHandle: false,
       builder: (_) => SizedBox(
         height: MediaQuery.sizeOf(context).height * .86,
-        child: ReportPane(
+        child: TomorrowBriefPane(
           api: widget.api,
           entries: entries,
           selectedDate: selectedDate,
@@ -2072,8 +2075,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   );
 }
 
-class ReportPane extends StatefulWidget {
-  const ReportPane({
+class TomorrowBriefPane extends StatefulWidget {
+  const TomorrowBriefPane({
     super.key,
     required this.api,
     required this.entries,
@@ -2085,11 +2088,11 @@ class ReportPane extends StatefulWidget {
   final DateTime selectedDate;
 
   @override
-  State<ReportPane> createState() => _ReportPaneState();
+  State<TomorrowBriefPane> createState() => _TomorrowBriefPaneState();
 }
 
-class _ReportPaneState extends State<ReportPane> {
-  String scope = 'day';
+class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
+  final String scope = 'tomorrow';
   AssistantReport? report;
   bool loading = false;
   bool stale = false;
@@ -2102,64 +2105,30 @@ class _ReportPaneState extends State<ReportPane> {
     load();
   }
 
-  DateTime get weekMonday => DateUtils.dateOnly(
-    widget.selectedDate.subtract(
-      Duration(days: widget.selectedDate.weekday - 1),
-    ),
-  );
-
   List<AssistantEntry> get relevant => widget.entries.where((entry) {
-    if (scope == 'tomorrow') {
-      final tomorrow = DateUtils.dateOnly(
-        widget.selectedDate.add(const Duration(days: 1)),
-      );
-      final entryDate =
-          entry.scheduledDate ??
-          (entry.reminderAt == null
-              ? null
-              : DateFormat('yyyy-MM-dd').format(entry.reminderAt!));
-      return (entryDate != null &&
-              entryDate == DateFormat('yyyy-MM-dd').format(tomorrow)) ||
-          (entry.type == EntryType.memo && !entry.done && entryDate == null);
-    }
-    if (scope == 'day') {
-      return DateUtils.isSameDay(entry.timestamp, widget.selectedDate);
-    }
-    if (scope == 'week') {
-      final date = DateUtils.dateOnly(entry.timestamp);
-      return !date.isBefore(weekMonday) &&
-          date.isBefore(weekMonday.add(const Duration(days: 7)));
-    }
-    return entry.timestamp.year == widget.selectedDate.year &&
-        entry.timestamp.month == widget.selectedDate.month;
+    final tomorrow = DateUtils.dateOnly(
+      widget.selectedDate.add(const Duration(days: 1)),
+    );
+    final entryDate =
+        entry.scheduledDate ??
+        (entry.reminderAt == null
+            ? null
+            : DateFormat('yyyy-MM-dd').format(entry.reminderAt!));
+    return (entryDate != null &&
+            entryDate == DateFormat('yyyy-MM-dd').format(tomorrow)) ||
+        (entry.type == EntryType.memo && !entry.done && entryDate == null);
   }).toList();
 
   String get dateLabel {
-    if (scope == 'tomorrow') {
-      return DateFormat(
-        'yyyy年M月d日',
-        'zh_CN',
-      ).format(widget.selectedDate.add(const Duration(days: 1)));
-    }
-    if (scope == 'day') {
-      return DateFormat('yyyy年M月d日', 'zh_CN').format(widget.selectedDate);
-    }
-    if (scope == 'week') {
-      final sunday = weekMonday.add(const Duration(days: 6));
-      return '${DateFormat('M月d日', 'zh_CN').format(weekMonday)} 至 ${DateFormat('M月d日', 'zh_CN').format(sunday)}';
-    }
-    return DateFormat('yyyy年M月', 'zh_CN').format(widget.selectedDate);
+    return DateFormat(
+      'yyyy年M月d日',
+      'zh_CN',
+    ).format(widget.selectedDate.add(const Duration(days: 1)));
   }
 
-  String get periodKey => scope == 'day'
-      ? DateFormat('yyyy-MM-dd').format(widget.selectedDate)
-      : scope == 'tomorrow'
-      ? DateFormat(
-          'yyyy-MM-dd',
-        ).format(widget.selectedDate.add(const Duration(days: 1)))
-      : scope == 'week'
-      ? DateFormat('yyyy-MM-dd').format(weekMonday)
-      : DateFormat('yyyy-MM').format(widget.selectedDate);
+  String get periodKey => DateFormat(
+    'yyyy-MM-dd',
+  ).format(widget.selectedDate.add(const Duration(days: 1)));
 
   Future<void> load() async {
     setState(() {
@@ -2210,21 +2179,72 @@ class _ReportPaneState extends State<ReportPane> {
     }
   }
 
-  void changeScope(String value) {
-    if (scope == value) return;
-    setState(() => scope = value);
-    load();
+  Future<void> printBrief() async {
+    final value = report;
+    if (value == null) return;
+    final font = await PdfGoogleFonts.notoSansSCRegular();
+    final document = pw.Document();
+    pw.Widget section(String title, List<String> items) => pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          title,
+          style: pw.TextStyle(
+            font: font,
+            fontSize: 14,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+        pw.SizedBox(height: 6),
+        ...items.map(
+          (item) => pw.Padding(
+            padding: const pw.EdgeInsets.only(bottom: 5),
+            child: pw.Text(
+              '□ $item',
+              style: pw.TextStyle(font: font, fontSize: 10, lineSpacing: 2),
+            ),
+          ),
+        ),
+        pw.SizedBox(height: 8),
+      ],
+    );
+    document.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        theme: pw.ThemeData.withFont(base: font),
+        build: (_) => [
+          pw.Text(
+            '明日管家',
+            style: pw.TextStyle(
+              font: font,
+              fontSize: 24,
+              fontWeight: pw.FontWeight.bold,
+            ),
+          ),
+          pw.Text(
+            dateLabel,
+            style: pw.TextStyle(
+              font: font,
+              fontSize: 11,
+              color: PdfColors.grey700,
+            ),
+          ),
+          pw.SizedBox(height: 18),
+          if (value.overview.isNotEmpty) section('明日总览', [value.overview]),
+          if (value.checklist.isNotEmpty) section('明天清单', value.checklist),
+          if (value.preparations.isNotEmpty)
+            section('今晚提前准备', value.preparations),
+          if (value.improvements.isNotEmpty)
+            section('需要留意', value.improvements),
+          if (value.suggestions.isNotEmpty) section('管家建议', value.suggestions),
+        ],
+      ),
+    );
+    await Printing.layoutPdf(onLayout: (_) async => document.save());
   }
 
   @override
   Widget build(BuildContext context) {
-    final expense = relevant
-        .where((entry) => entry.type == EntryType.expense)
-        .fold<double>(0, (sum, entry) => sum + (entry.amount ?? 0));
-    final memos = relevant
-        .where((entry) => entry.type == EntryType.memo)
-        .toList();
-    final completed = memos.where((entry) => entry.done).length;
     return SafeArea(
       top: false,
       child: Column(
@@ -2244,29 +2264,20 @@ class _ReportPaneState extends State<ReportPane> {
               children: [
                 const Expanded(
                   child: Text(
-                    '生活报告',
+                    '明日管家',
                     style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
                   ),
+                ),
+                IconButton(
+                  tooltip: '打印或导出 PDF',
+                  onPressed: report == null ? null : printBrief,
+                  icon: const Icon(Icons.print_outlined),
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close_rounded),
                 ),
               ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(18, 6, 18, 14),
-            child: SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'day', label: Text('日报')),
-                ButtonSegment(value: 'tomorrow', label: Text('明日管家')),
-                ButtonSegment(value: 'week', label: Text('周报')),
-                ButtonSegment(value: 'month', label: Text('月报')),
-              ],
-              selected: {scope},
-              onSelectionChanged: (value) => changeScope(value.first),
-              style: const ButtonStyle(visualDensity: VisualDensity.compact),
             ),
           ),
           Expanded(
@@ -2276,19 +2287,6 @@ class _ReportPaneState extends State<ReportPane> {
                 Text(
                   dateLabel,
                   style: const TextStyle(color: Color(0xff8a8680)),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    _StatCard(label: '记录', value: '${relevant.length} 条'),
-                    const SizedBox(width: 8),
-                    _StatCard(
-                      label: '花费',
-                      value: '¥${expense.toStringAsFixed(2)}',
-                    ),
-                    const SizedBox(width: 8),
-                    _StatCard(label: '完成', value: '$completed/${memos.length}'),
-                  ],
                 ),
                 const SizedBox(height: 18),
                 if (report != null && (stale || updatedAt != null)) ...[
@@ -2403,33 +2401,6 @@ class _ReportPaneState extends State<ReportPane> {
       ),
     );
   }
-}
-
-class _StatCard extends StatelessWidget {
-  const _StatCard({required this.label, required this.value});
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => Expanded(
-    child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        children: [
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: const TextStyle(fontSize: 11, color: Color(0xff8a8680)),
-          ),
-        ],
-      ),
-    ),
-  );
 }
 
 class _ReportSection extends StatelessWidget {
