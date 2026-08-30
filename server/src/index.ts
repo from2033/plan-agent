@@ -441,7 +441,11 @@ function knowledgeFromRequest(req: express.Request, conversationId = ""): Array<
       });
   }
   if (!isGuestUser(req.userId) || !Array.isArray(req.body?.knowledge)) {
-    return listKnowledgeForViewer(req.userId!);
+    const visible = listKnowledgeForViewer(req.userId!);
+    const qqNotes = listKnowledge(QQ_TASK_SYNC_USER)
+      .filter((item) => item.id.startsWith("qq-message-") && QQ_TASK_SYNC_USER !== req.userId)
+      .map(({ id, title, content, timestamp }) => ({ id, title, content, timestamp }));
+    return [...visible, ...qqNotes.filter((item) => !visible.some((candidate) => candidate.id === item.id))];
   }
   return req.body.knowledge.slice(0, 100).flatMap((value: unknown) => {
     if (!value || typeof value !== "object") return [];
