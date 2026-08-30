@@ -1671,6 +1671,12 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     return;
   }
   let synchronousInteractionId: string | null = null;
+  // 首页没有“继续上个话题”的语义。对明显的提问，为本次请求创建独立
+  // 话题；普通记账/待办仍不生成聊天，避免聊天列表被操作记录污染。
+  const homeQuestion = !conversationId && !isGuestUser(req.userId)
+    && (researchTopic(raw) !== null
+      || /[？?]|(?:怎么|如何|为什么|为何|是什么|什么是|能不能|是否|有没有|哪里|多少|几时|何时)/u.test(raw));
+  const interactionConversationId = conversationId || (homeQuestion ? createConversation(req.userId!, "新对话") : "");
   if (!raw) {
     res.status(400).json({ error: "raw 不能为空" });
     return;
@@ -1696,9 +1702,9 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           locale: "zh-CN",
           audience: "中国普通用户",
           ...(conversationHistory?.length ? { conversationHistory } : {}),
-          ...(conversationId ? { conversationId } : {}),
+          ...(interactionConversationId ? { conversationId: interactionConversationId } : {}),
         }, 70);
-        beginAiInteraction(req.userId!, job.id, raw, inputMode, conversationId || undefined);
+        beginAiInteraction(req.userId!, job.id, raw, inputMode, interactionConversationId || undefined);
         bindDocumentJob(document.id, req.userId!, job.id);
         res.status(201).json({
           kind: "research",
@@ -1722,17 +1728,17 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         context: assistantClock(),
         knowledge,
         ...(conversationHistory?.length ? { conversationHistory } : {}),
-        ...(conversationId ? { conversationId } : {}),
+        ...(interactionConversationId ? { conversationId: interactionConversationId } : {}),
       });
       if (!isGuestUser(req.userId)) {
-        beginAiInteraction(req.userId!, job.id, raw, inputMode, conversationId || undefined);
+        beginAiInteraction(req.userId!, job.id, raw, inputMode, interactionConversationId || undefined);
       }
       res.status(202).json({ kind: "pending", jobId: job.id });
       return;
     }
     if (!isGuestUser(req.userId)) {
       synchronousInteractionId = `sync-${crypto.randomUUID()}`;
-      beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode, conversationId || undefined);
+      beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode, interactionConversationId || undefined);
     }
     if (intentHint === "save") {
       const knowledge = fallbackKnowledge(raw);
