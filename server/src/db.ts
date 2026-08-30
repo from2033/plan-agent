@@ -4,6 +4,7 @@ import type { Entry, ParsedFields, KnowledgeItem } from "./types.js";
 import { encField, encOpt, decField, decOpt } from "./crypto-field.js";
 import { areFamilyMembers, sharedResourceOwner, sharedResourcesForViewer } from "./family-sharing.js";
 import { sharedConversationResourcesForViewer } from "./conversation-store.js";
+import { deleteFinanceAccountData } from "./finance.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 
@@ -407,6 +408,7 @@ export function importClientData(
 // Permanently remove every piece of server-side data tied to an account.
 // Keep this list explicit so newly introduced per-user tables are easy to audit.
 export function deleteAccountData(userId: string): void {
+  deleteFinanceAccountData(userId);
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare("DELETE FROM entries WHERE user_id = ?").run(userId);

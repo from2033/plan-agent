@@ -134,6 +134,7 @@ import {
   listMistakes,
   reviewMistake,
 } from "./mistakes.js";
+import { getFinanceOverview, importAlipayBill } from "./finance.js";
 import {
   buildWorldPulseDiscoveryInput,
   currentWorldPulseDiscovery,
@@ -1137,6 +1138,38 @@ app.get(`${API}/me`, (req, res) => {
     guest: isGuestUser(req.userId),
   });
 });
+
+app.get(`${API}/finance/overview`, (req, res) => {
+  res.json(getFinanceOverview(req.userId!, Number(req.query.months || 3)));
+});
+
+app.post(
+  `${API}/finance/import`,
+  express.raw({ type: () => true, limit: "20mb" }),
+  (req, res) => {
+    if (isGuestUser(req.userId)) {
+      res.status(403).json({ error: "请先登录后再导入账单" });
+      return;
+    }
+    const fileName = path.basename(String(req.query.fileName || "alipay-bill.zip"));
+    if (!/\.(zip|csv)$/i.test(fileName)) {
+      res.status(400).json({ error: "仅支持支付宝导出的 ZIP 或 CSV 账单" });
+      return;
+    }
+    const content = req.body as Buffer;
+    if (!content?.length) {
+      res.status(400).json({ error: "账单文件为空" });
+      return;
+    }
+    try {
+      const result = importAlipayBill(req.userId!, fileName, content);
+      res.status(result.alreadyImported ? 200 : 201).json(result);
+    } catch (error) {
+      console.error("[finance import] 支付宝账单导入失败:", error);
+      res.status(400).json({ error: error instanceof Error ? error.message : "账单导入失败" });
+    }
+  },
+);
 
 app.get(`${API}/family`, (req, res) => {
   if (isGuestUser(req.userId)) {
