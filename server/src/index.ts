@@ -70,6 +70,7 @@ import {
   failAiInteraction,
   inviteConversationMember,
   listConversationInvitations,
+  listConversationContacts,
   listConversationMembers,
   listConversationMessages,
   listConversationResources,
@@ -1508,6 +1509,27 @@ app.get(`${API}/conversation-invitations`, (req, res) => {
     return;
   }
   res.json(listConversationInvitations(req.userId!));
+});
+
+app.get(`${API}/conversation-contacts`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.json([]);
+    return;
+  }
+  const recent = new Set(listConversationContacts(req.userId!));
+  const family = getFamilyState(req.userId!, PRIMARY_USER).family;
+  const familyMembers = new Set(
+    (family?.members || [])
+      .map(member => member.userId)
+      .filter(account => account !== req.userId),
+  );
+  res.json([...new Set([...familyMembers, ...recent])]
+    .sort((first, second) => first.localeCompare(second))
+    .map(account => ({
+      account,
+      familyMember: familyMembers.has(account),
+      contactedBefore: recent.has(account),
+    })));
 });
 
 const ConversationInvitationResponseSchema = z.object({ accept: z.boolean() });

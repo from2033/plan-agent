@@ -80,6 +80,8 @@ test("专题对话可邀请成员，接受后共享群消息和指定资料", ()
     conversationId,
   );
   assert.equal(conversations.listConversationMembers(conversationId, member)?.length, 2);
+  assert.deepEqual(conversations.listConversationContacts(owner), [member]);
+  assert.deepEqual(conversations.listConversationContacts(member), [owner]);
 
   const documentId = crypto.randomUUID();
   assert.equal(conversations.addConversationResource(

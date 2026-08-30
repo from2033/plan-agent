@@ -284,6 +284,27 @@ export function listConversationMembers(
   return rows.map(row => ({ userId: row.user_id, role: row.member_role, joinedAt: row.joined_at }));
 }
 
+export function listConversationContacts(userId: string): string[] {
+  const owner = normalizeUserId(userId);
+  const contacts = new Set<string>();
+  const members = db.prepare(`SELECT DISTINCT other.user_id
+    FROM conversation_members mine
+    JOIN conversation_members other ON other.conversation_id=mine.conversation_id
+    WHERE mine.user_id=? AND other.user_id<>?`)
+    .all(owner, owner) as unknown as Array<{ user_id: string }>;
+  for (const member of members) contacts.add(member.user_id);
+  const invitations = db.prepare(`SELECT invited_by,recipient_user_id FROM conversation_invitations
+    WHERE invited_by=? OR recipient_user_id=?`)
+    .all(owner, owner) as unknown as Array<{ invited_by: string; recipient_user_id: string }>;
+  for (const invitation of invitations) {
+    const contact = invitation.invited_by === owner
+      ? invitation.recipient_user_id
+      : invitation.invited_by;
+    if (contact && contact !== owner) contacts.add(contact);
+  }
+  return [...contacts].sort((first, second) => first.localeCompare(second));
+}
+
 export function inviteConversationMember(
   conversationId: string,
   inviterUserId: string,

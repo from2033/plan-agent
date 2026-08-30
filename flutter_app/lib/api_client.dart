@@ -322,6 +322,12 @@ class ApiClient {
     return value.cast<Map<String, dynamic>>();
   }
 
+  Future<List<Map<String, dynamic>>> conversationContacts() async {
+    final value =
+        await _request('GET', '/conversation-contacts') as List<dynamic>;
+    return value.cast<Map<String, dynamic>>();
+  }
+
   Future<void> inviteConversationMember(String id, String account) async {
     await _request(
       'POST',

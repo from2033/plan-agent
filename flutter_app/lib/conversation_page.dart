@@ -326,74 +326,128 @@ class _ConversationPageState extends State<ConversationPage> {
     final selected = conversation;
     if (selected == null) return;
     try {
-      final members = await widget.api.conversationMembers(selected.id);
+      final results = await Future.wait<dynamic>([
+        widget.api.conversationMembers(selected.id),
+        widget.api.conversationContacts(),
+      ]);
+      final members = results[0] as List<Map<String, dynamic>>;
+      final existingAccounts = members
+          .map((member) => member['userId']?.toString() ?? '')
+          .where((account) => account.isNotEmpty)
+          .toSet();
+      final contacts = (results[1] as List<Map<String, dynamic>>)
+          .where(
+            (contact) => !existingAccounts.contains(
+              contact['account']?.toString() ?? '',
+            ),
+          )
+          .toList();
       if (!mounted) return;
       final account = TextEditingController();
+      final selectedAccounts = <String>{};
       await showDialog<void>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('对话成员'),
-          content: SizedBox(
-            width: 330,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final member in members)
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const CircleAvatar(
-                      child: Icon(Icons.person_outline, size: 18),
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('对话成员'),
+            content: SizedBox(
+              width: 350,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final member in members)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(member['userId']?.toString() ?? '成员'),
+                        trailing: Text(member['role'] == 'owner' ? '群主' : '成员'),
+                      ),
+                    const Divider(),
+                    if (contacts.isNotEmpty) ...[
+                      const Text(
+                        '直接选择',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      for (final contact in contacts)
+                        CheckboxListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          value: selectedAccounts.contains(contact['account']),
+                          title: Text(contact['account']?.toString() ?? ''),
+                          subtitle: Text(
+                            contact['familyMember'] == true ? '家庭成员' : '之前联系过',
+                          ),
+                          onChanged: (checked) => setDialogState(() {
+                            final value = contact['account']?.toString() ?? '';
+                            if (checked == true) {
+                              selectedAccounts.add(value);
+                            } else {
+                              selectedAccounts.remove(value);
+                            }
+                          }),
+                        ),
+                      const SizedBox(height: 6),
+                    ],
+                    const Text(
+                      '对方接受后，可以查看这段对话已有的消息和已发送资料。',
+                      style: TextStyle(fontSize: 12, color: Color(0xffb45f06)),
                     ),
-                    title: Text(member['userId']?.toString() ?? '成员'),
-                    trailing: Text(member['role'] == 'owner' ? '群主' : '成员'),
-                  ),
-                const Divider(),
-                const Text(
-                  '对方接受后，可以查看这段对话已有的消息和已发送资料。',
-                  style: TextStyle(fontSize: 12, color: Color(0xffb45f06)),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: account,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: '其他账号（可选）',
+                        hintText: '输入对方登录邮箱或账号',
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: account,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: '邀请账号',
-                    hintText: '输入对方登录邮箱或账号',
-                  ),
-                ),
-              ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('关闭'),
+              ),
+              FilledButton.icon(
+                onPressed: () async {
+                  final manual = account.text.trim();
+                  final recipients = <String>{
+                    ...selectedAccounts,
+                    if (manual.isNotEmpty) manual,
+                  };
+                  if (recipients.isEmpty) return;
+                  try {
+                    for (final recipient in recipients) {
+                      await widget.api.inviteConversationMember(
+                        selected.id,
+                        recipient,
+                      );
+                    }
+                    if (dialogContext.mounted) Navigator.pop(dialogContext);
+                    if (mounted) {
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        SnackBar(
+                          content: Text('已向 ${recipients.length} 人发送对话邀请'),
+                        ),
+                      );
+                    }
+                  } catch (exception) {
+                    if (dialogContext.mounted) {
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(content: Text(exception.toString())),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.person_add_alt_1),
+                label: const Text('发送邀请'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('关闭'),
-            ),
-            FilledButton.icon(
-              onPressed: () async {
-                final value = account.text.trim();
-                if (value.isEmpty) return;
-                try {
-                  await widget.api.inviteConversationMember(selected.id, value);
-                  if (dialogContext.mounted) Navigator.pop(dialogContext);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('邀请已发送，对方接受后即可进入群聊')),
-                    );
-                  }
-                } catch (exception) {
-                  if (dialogContext.mounted) {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      SnackBar(content: Text(exception.toString())),
-                    );
-                  }
-                }
-              },
-              icon: const Icon(Icons.person_add_alt_1),
-              label: const Text('邀请'),
-            ),
-          ],
         ),
       );
       account.dispose();
