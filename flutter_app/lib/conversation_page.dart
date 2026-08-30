@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:intl/intl.dart';
 
 import 'api_client.dart';
@@ -927,32 +928,26 @@ class _ConversationPageState extends State<ConversationPage> {
                         child: Text('没有找到相关对话', textAlign: TextAlign.center),
                       ),
                     for (final item in conversations)
-                      Dismissible(
+                      Slidable(
                         key: ValueKey('conversation-${item.id}'),
-                        direction: DismissDirection.endToStart,
-                        confirmDismiss: (_) => deleteConversation(item),
-                        onDismissed: (_) => removeDeletedConversation(item),
-                        background: Container(
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.only(right: 18),
-                          color: const Color(0xffb42318),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              Icon(
-                                Icons.delete_outline_rounded,
-                                color: Colors.white,
-                              ),
-                              SizedBox(width: 7),
-                              Text(
-                                '删除',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
+                        endActionPane: ActionPane(
+                          motion: const DrawerMotion(),
+                          extentRatio: .28,
+                          children: [
+                            SlidableAction(
+                              onPressed: (_) async {
+                                final deleted = await deleteConversation(item);
+                                if (deleted && mounted) {
+                                  removeDeletedConversation(item);
+                                }
+                              },
+                              backgroundColor: const Color(0xffb42318),
+                              foregroundColor: Colors.white,
+                              icon: Icons.delete_outline_rounded,
+                              label: '删除',
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ],
                         ),
                         child: ListTile(
                           dense: true,
