@@ -59,6 +59,7 @@ import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import { privacyPageHtml } from "./privacy-page.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
 import { finalizeTomorrowReport, includeEntryInTomorrowBrief } from "./tomorrow-brief.js";
+import { getQqSyncStatus, recordQqCollectorStatus, recordQqMessageSync } from "./qq-sync-status.js";
 import { conversationDocumentAccess, sharedDocumentScopesForViewer } from "./document-access.js";
 import {
   addConversationResource,
@@ -187,16 +188,41 @@ const qqTaskMessageSchema = z.object({
   sentAt: z.string().datetime(),
 });
 
+const qqCollectorStatusSchema = z.object({
+  connected: z.boolean(),
+  accountLabel: z.string().max(100).optional(),
+  checkedAt: z.string().datetime().optional(),
+  detail: z.string().max(300).optional(),
+});
+
+function validQqIntegrationToken(req: express.Request): boolean {
+  if (!QQ_TASK_SYNC_SECRET) return false;
+  const expected = Buffer.from(QQ_TASK_SYNC_SECRET);
+  const actual = Buffer.from(String(req.get("x-integration-token") || ""));
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+app.post(`${API}/integrations/qq-status`, (req, res) => {
+  if (!validQqIntegrationToken(req)) {
+    res.status(QQ_TASK_SYNC_SECRET ? 401 : 503).json({ error: "同步凭证无效" });
+    return;
+  }
+  const parsed = qqCollectorStatusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "状态格式无效" });
+    return;
+  }
+  recordQqCollectorStatus(parsed.data);
+  res.json({ ok: true });
+});
+
 // QQ 采集服务的内部入口：使用独立共享密钥，不经过个人登录态。
 app.post(`${API}/integrations/qq-tasks`, (req, res) => {
   if (!QQ_TASK_SYNC_SECRET) {
     res.status(503).json({ error: "QQ群任务同步尚未配置" });
     return;
   }
-  const token = String(req.get("x-integration-token") || "");
-  const expected = Buffer.from(QQ_TASK_SYNC_SECRET);
-  const actual = Buffer.from(token);
-  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+  if (!validQqIntegrationToken(req)) {
     res.status(401).json({ error: "同步凭证无效" });
     return;
   }
@@ -218,6 +244,7 @@ app.post(`${API}/integrations/qq-tasks`, (req, res) => {
     insertEntry(entry, QQ_TASK_SYNC_USER);
     created.push(entry);
   }
+  recordQqMessageSync(parsed.data.sentAt);
   res.status(201).json({ created: created.length, skipped: candidates.length - created.length, entries: created });
 });
 
@@ -967,6 +994,10 @@ app.post(
 
 // 以下 API 都需要鉴权
 app.use(API, requireAuth);
+
+app.get(`${API}/qq-sync-status`, (_req, res) => {
+  res.json(getQqSyncStatus(Boolean(QQ_TASK_SYNC_SECRET)));
+});
 
 app.get(`${API}/world-pulse`, async (req, res) => {
   try {

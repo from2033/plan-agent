@@ -378,6 +378,13 @@ class ApiClient {
     return await _request('GET', '/family') as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> qqSyncStatus() async {
+    if (_isGuest) {
+      return {'configured': false, 'state': 'unknown'};
+    }
+    return await _request('GET', '/qq-sync-status') as Map<String, dynamic>;
+  }
+
   Future<void> inviteFamilyMember(String account) async {
     await _request(
       'POST',

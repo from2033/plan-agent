@@ -604,6 +604,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _disposing = false;
   bool _recoveringMeetingRecordings = false;
   Map<String, dynamic>? worldPulse;
+  Map<String, dynamic>? qqSyncStatus;
   bool worldPulseLoading = false;
   String? worldPulseError;
   Timer? worldPulseAnalysisTimer;
@@ -621,6 +622,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     shortcutChannel.setMethodCallHandler(_handleShortcutMethod);
     refresh();
+    if (!widget.isGuest) unawaited(refreshQqSyncStatus());
     unawaited(refreshWorldPulse());
     if (!widget.isGuest) unawaited(_recoverMeetingRecordings());
     unawaited(_consumePendingShortcut());
@@ -679,7 +681,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> refreshHome() async {
-    await Future.wait([refresh(), refreshWorldPulse(force: true)]);
+    await Future.wait([
+      refresh(),
+      refreshWorldPulse(force: true),
+      if (!widget.isGuest) refreshQqSyncStatus(),
+    ]);
+  }
+
+  Future<void> refreshQqSyncStatus() async {
+    try {
+      final value = await widget.api.qqSyncStatus();
+      if (mounted) setState(() => qqSyncStatus = value);
+    } catch (_) {
+      // QQ 状态卡不能影响首页其它数据加载。
+    }
   }
 
   Future<void> _recoverMeetingRecordings() async {
@@ -724,6 +739,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(_consumePendingShortcut());
       unawaited(refresh());
+      if (!widget.isGuest) unawaited(refreshQqSyncStatus());
     }
     if (state == AppLifecycleState.resumed && !widget.isGuest) {
       unawaited(_recoverMeetingRecordings());
@@ -1300,6 +1316,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ],
           const SizedBox(height: 12),
           _buildTomorrowBriefCard(),
+          if (!widget.isGuest && qqSyncStatus != null) ...[
+            const SizedBox(height: 12),
+            _buildQqSyncStatusCard(),
+          ],
           const SizedBox(height: 12),
           _buildTrendSummaryCard(),
           Padding(
@@ -1401,6 +1421,87 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     ),
   );
+
+  String _qqStatusTime(dynamic value) {
+    final timestamp = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
+    if (timestamp == null) return '暂无同步记录';
+    final difference = DateTime.now().difference(timestamp);
+    if (difference.inMinutes < 1) return '刚刚';
+    if (difference.inHours < 1) return '${difference.inMinutes} 分钟前';
+    if (difference.inDays < 1) return '${difference.inHours} 小时前';
+    return DateFormat('M月d日 HH:mm').format(timestamp);
+  }
+
+  Widget _buildQqSyncStatusCard() {
+    final value = qqSyncStatus!;
+    final state = value['state']?.toString() ?? 'unknown';
+    final online = state == 'online';
+    final offline = state == 'offline';
+    final color = online
+        ? const Color(0xff15803d)
+        : offline
+        ? const Color(0xffb42318)
+        : const Color(0xff9a6700);
+    final background = online
+        ? const Color(0xffecfdf3)
+        : offline
+        ? const Color(0xffffeeee)
+        : const Color(0xfffff7df);
+    final title = online
+        ? 'QQ群消息同步正常'
+        : offline
+        ? 'QQ群采集需要重新登录'
+        : state == 'stale'
+        ? 'QQ群采集状态长时间未更新'
+        : 'QQ群采集状态尚未确认';
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: color.withValues(alpha: .2)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            online
+                ? Icons.cloud_done_outlined
+                : offline
+                ? Icons.cloud_off_outlined
+                : Icons.sync_problem_outlined,
+            color: color,
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '最后检查：${_qqStatusTime(value['lastCheckedAt'])} · '
+                  '最近消息：${_qqStatusTime(value['lastMessageAt'])}',
+                  style: const TextStyle(
+                    color: Color(0xff716b63),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: '重新检查',
+            onPressed: refreshQqSyncStatus,
+            icon: Icon(Icons.refresh_rounded, color: color, size: 20),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildHomeAnswerCard(_HomeAnswer value) {
     return Container(
