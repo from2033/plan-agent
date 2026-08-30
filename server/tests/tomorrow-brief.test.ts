@@ -18,11 +18,11 @@ function memo(overrides: Partial<Entry>): Entry {
   };
 }
 
-test("明日简报排除昨天和下个月，只保留明天及无日期未完成待办", () => {
+test("明日简报排除昨天、下个月和无日期待办，只保留明确属于明天的事项", () => {
   assert.equal(includeEntryInTomorrowBrief(memo({ scheduledDate: "2026-08-29" }), "2026-08-31"), false);
   assert.equal(includeEntryInTomorrowBrief(memo({ scheduledDate: "2026-09-30" }), "2026-08-31"), false);
   assert.equal(includeEntryInTomorrowBrief(memo({ scheduledDate: "2026-08-31" }), "2026-08-31"), true);
-  assert.equal(includeEntryInTomorrowBrief(memo({}), "2026-08-31"), true);
+  assert.equal(includeEntryInTomorrowBrief(memo({}), "2026-08-31"), false);
 });
 
 test("群消息的必带物品逐项保留", () => {

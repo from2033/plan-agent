@@ -12,8 +12,8 @@ function shanghaiDate(timestamp: string): string {
 
 export function includeEntryInTomorrowBrief(entry: Entry, dateKey: string): boolean {
   const scheduled = entry.scheduledDate || (entry.reminderAt ? shanghaiDate(entry.reminderAt) : undefined);
-  return scheduled === dateKey
-    || (entry.type === "memo" && !entry.done && !entry.scheduledDate && !entry.reminderAt);
+  // 明日简报只接收明确落在明天的记录；无日期待办属于积压事项，不能让模型自行猜测何时处理。
+  return scheduled === dateKey;
 }
 
 export function explicitTomorrowChecklist(entries: ReportEntry[]): string[] {
