@@ -100,6 +100,49 @@ test("runInference falls back to Codex when Ollama is unavailable", async () => 
   assert.equal(inference.result, expected);
 });
 
+test("conversation mode defaults greetings to chat instead of records", async (t) => {
+  let requestBody;
+  const server = http.createServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", chunk => { body += chunk; });
+    request.on("end", () => {
+      requestBody = JSON.parse(body);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        message: {
+          content: JSON.stringify({
+            kind: "ask",
+            fields: [],
+            title: "",
+            content: "",
+            answer: "你好！今天想聊点什么？",
+            sourceIds: [],
+            conversationTitle: "日常问候",
+          }),
+        },
+      }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  const result = await runOllama({
+    kind: "ingest",
+    input: { raw: "你好", interactionMode: "conversation", conversationHistory: [] },
+  }, {
+    url: `http://127.0.0.1:${address.port}`,
+    model: "test-model",
+    timeoutMs: 2_000,
+  });
+
+  assert.equal(result.kind, "ask");
+  assert.match(result.answer, /你好/);
+  assert.match(requestBody.messages[0].content, /默认 kind=ask/);
+  assert.match(requestBody.messages[0].content, /“你好”/);
+});
+
 test("daily input uses the small model while complex jobs use the large model", () => {
   assert.equal(ollamaModelForJob({ kind: "ingest" }), "qwen3:4b");
   assert.equal(ollamaModelForJob({ kind: "world_discovery" }), "qwen3:4b");

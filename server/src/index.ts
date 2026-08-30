@@ -1725,6 +1725,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       const job = enqueueAiJob(req.userId!, "ingest", {
         raw,
         intentHint,
+        interactionMode: interactionConversationId ? "conversation" : "capture",
         context: assistantClock(),
         knowledge,
         ...(conversationHistory?.length ? { conversationHistory } : {}),
