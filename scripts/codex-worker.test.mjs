@@ -8,14 +8,17 @@ import test from "node:test";
 import {
   appendVaultDocumentNote,
   conversationRecordProposal,
-  constrainEvidenceSources,
+  deduplicateEvidenceSources,
   documentAnswerForIngest,
   documentSourcesForAnswer,
+  evidenceWithinBudget,
   extractDocumentText,
+  groundedAnswerFacts,
   hasExplicitTimeRange,
   knowledgeAnswerForIngest,
   ollamaModelForJob,
   resolveKnowledgeSpaceRoot,
+  rerankKnowledgeSources,
   retrievalQuestionForIngest,
   runInference,
   runOllama,
@@ -67,16 +70,47 @@ test("knowledge evidence answer maps model source indexes back to source ids", (
   );
 });
 
-test("explicit teacher subject excludes other teachers and old chat answers", () => {
+test("semantic reranking is generic and prefers original evidence", async () => {
   const sources = [
     { id: "qq-message-chinese", title: "QQ群消息｜四8班｜语文-王老师13800138001", content: "原文：英语作业已发" },
     { id: "qq-message-english", title: "QQ群消息｜四8班英语学习群｜英语-王老师13800138002", content: "发送者：英语-王老师13800138002" },
     { id: "conversation-old", title: "聊天记录｜助手", content: "英语老师电话是13800138003" },
   ];
+  const fakeInference = async job => {
+    assert.equal(job.kind, "knowledge_rerank");
+    return { result: { sourceIndexes: [1], sufficientEvidence: true }, provider: "test-local" };
+  };
   assert.deepEqual(
-    constrainEvidenceSources("英语老师号码给我下", sources).map(source => source.id),
+    (await rerankKnowledgeSources("英语老师号码给我下", sources, fakeInference)).map(source => source.id),
     ["qq-message-english"],
   );
+});
+
+test("derived chat evidence is excluded when reranking also selects an original source", async () => {
+  const sources = [
+    { id: "original-note", title: "原始资料", content: "项目截止日为9月8日" },
+    { id: "conversation-old", title: "聊天记录｜助手", content: "项目截止日为9月9日" },
+  ];
+  const fakeInference = async () => ({
+    result: { sourceIndexes: [0, 1], sufficientEvidence: false },
+    provider: "test-local",
+  });
+  assert.deepEqual(
+    (await rerankKnowledgeSources("项目什么时候截止", sources, fakeInference)).map(source => source.id),
+    ["original-note"],
+  );
+});
+
+test("program controls evidence deduplication, budget and exact-fact grounding", () => {
+  const sources = [
+    { id: "a", title: "资料", content: "联系电话13800138000" },
+    { id: "b", title: "资料", content: "联系电话13800138000" },
+    { id: "c", title: "其他", content: "另一个事实" },
+  ];
+  assert.deepEqual(deduplicateEvidenceSources(sources).map(source => source.id), ["a", "c"]);
+  assert.equal(evidenceWithinBudget(sources, 1).length, 1);
+  assert.equal(groundedAnswerFacts("电话是13800138000", [sources[0]]), true);
+  assert.equal(groundedAnswerFacts("电话是13900139000", [sources[0]]), false);
 });
 
 test("runOllama sends a constrained non-thinking request and parses JSON", async (t) => {
