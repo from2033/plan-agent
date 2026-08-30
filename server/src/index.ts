@@ -65,6 +65,7 @@ import {
   completeAiInteraction,
   conversationContextForAi,
   createConversation,
+  deleteConversation,
   deleteConversationAccountData,
   failAiInteraction,
   inviteConversationMember,
@@ -1486,6 +1487,18 @@ app.post(`${API}/conversations`, (req, res) => {
   }
   const id = createConversation(req.userId!, parsed.data.title);
   res.status(201).json({ id });
+});
+
+app.delete(`${API}/conversations/:id`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录后再删除对话" });
+    return;
+  }
+  if (!deleteConversation(req.params.id, req.userId!)) {
+    res.status(404).json({ error: "对话不存在或当前账号无权访问" });
+    return;
+  }
+  res.status(204).end();
 });
 
 app.get(`${API}/conversation-invitations`, (req, res) => {

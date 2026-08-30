@@ -247,6 +247,30 @@ export function createConversation(userId: string, title = "新对话"): string 
   }
 }
 
+export function deleteConversation(conversationId: string, userId: string): boolean {
+  const member = normalizeUserId(userId);
+  const role = conversationRole(conversationId, member);
+  if (!role) return false;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (role === "owner") {
+      db.prepare("DELETE FROM conversation_invitations WHERE conversation_id=?").run(conversationId);
+      db.prepare("DELETE FROM conversation_resources WHERE conversation_id=?").run(conversationId);
+      db.prepare("DELETE FROM conversation_messages WHERE conversation_id=?").run(conversationId);
+      db.prepare("DELETE FROM conversation_members WHERE conversation_id=?").run(conversationId);
+      db.prepare("DELETE FROM conversations WHERE id=?").run(conversationId);
+    } else {
+      db.prepare("DELETE FROM conversation_members WHERE conversation_id=? AND user_id=?")
+        .run(conversationId, member);
+    }
+    db.exec("COMMIT");
+    return true;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export function listConversationMembers(
   conversationId: string,
   userId: string,

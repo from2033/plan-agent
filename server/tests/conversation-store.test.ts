@@ -147,3 +147,18 @@ test("新对话在首次 AI 回答后自动生成标题，私人对话也可中�
   );
   assert.ok(invitation);
 });
+
+test("创建者可删除整段对话，成员删除时只退出", () => {
+  const owner = "delete-owner@example.com";
+  const member = "delete-member@example.com";
+  const ownedConversation = conversations.createConversation(owner, "待删除对话");
+  const invitation = conversations.inviteConversationMember(ownedConversation, owner, member)!;
+  conversations.respondToConversationInvitation(invitation.id, member, true);
+  assert.equal(conversations.deleteConversation(ownedConversation, member), true);
+  assert.equal(conversations.listConversationMessages(ownedConversation, member), null);
+  assert.notEqual(conversations.listConversationMessages(ownedConversation, owner), null);
+
+  assert.equal(conversations.deleteConversation(ownedConversation, owner), true);
+  assert.equal(conversations.listConversationMessages(ownedConversation, owner), null);
+  assert.equal(conversations.deleteConversation(ownedConversation, owner), false);
+});

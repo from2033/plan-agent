@@ -277,6 +277,11 @@ class ApiClient {
     return value['id'] as String;
   }
 
+  Future<void> deleteConversation(String id) async {
+    if (_isGuest) throw const ApiException('请先登录后再删除对话');
+    await _request('DELETE', '/conversations/${Uri.encodeComponent(id)}');
+  }
+
   Future<List<ConversationInvitation>> conversationInvitations() async {
     if (_isGuest) return const [];
     final value =

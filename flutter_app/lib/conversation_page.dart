@@ -58,6 +58,7 @@ class ConversationPage extends StatefulWidget {
 }
 
 class _ConversationPageState extends State<ConversationPage> {
+  final scaffoldKey = GlobalKey<ScaffoldState>();
   final input = TextEditingController();
   final scroll = ScrollController();
   List<AiConversation> conversations = const [];
@@ -193,6 +194,38 @@ class _ConversationPageState extends State<ConversationPage> {
       final selected = loaded.firstWhere((item) => item.id == id);
       setState(() => conversations = loaded);
       await openConversation(selected);
+    } catch (exception) {
+      if (mounted) setState(() => error = exception.toString());
+    }
+  }
+
+  Future<void> deleteConversation(AiConversation item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这段对话？'),
+        content: Text('“${item.title}”的聊天记录将不再显示。此操作无法撤销。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xffb42318),
+            ),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.api.deleteConversation(item.id);
+      if (!mounted) return;
+      if (conversation?.id == item.id) closeConversation();
+      await load();
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
     }
@@ -506,10 +539,76 @@ class _ConversationPageState extends State<ConversationPage> {
         ),
       );
     }
-    return conversation == null
-        ? _buildConversationList()
-        : _buildConversationDetail();
+    return Scaffold(
+      key: scaffoldKey,
+      backgroundColor: Colors.transparent,
+      drawer: Drawer(
+        backgroundColor: const Color(0xfffbfaf7),
+        child: SafeArea(child: _buildConversationList()),
+      ),
+      body: conversation == null
+          ? _buildEmptyConversation()
+          : _buildConversationDetail(),
+    );
   }
+
+  Widget _buildEmptyConversation() => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(8, 2, 12, 8),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: () => scaffoldKey.currentState?.openDrawer(),
+              tooltip: '聊天记录',
+              icon: const Icon(Icons.menu_rounded),
+            ),
+            const Expanded(
+              child: Text('新对话', style: TextStyle(fontWeight: FontWeight.w800)),
+            ),
+            IconButton(
+              onPressed: createNewConversation,
+              tooltip: '新建对话',
+              icon: const Icon(Icons.edit_square),
+            ),
+          ],
+        ),
+      ),
+      Expanded(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 42,
+                  color: Color(0xffd97706),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  '开始一段新对话',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  '聊天记录收在左侧，随时可以回来继续。',
+                  style: TextStyle(color: Color(0xff8a8680)),
+                ),
+                const SizedBox(height: 18),
+                FilledButton.icon(
+                  onPressed: createNewConversation,
+                  icon: const Icon(Icons.add_comment_outlined),
+                  label: const Text('新建聊天'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
 
   Widget _buildConversationList() => Column(
     children: [
@@ -579,7 +678,10 @@ class _ConversationPageState extends State<ConversationPage> {
                     for (final item in conversations)
                       Card(
                         child: ListTile(
-                          onTap: () => openConversation(item),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            unawaited(openConversation(item));
+                          },
                           leading: CircleAvatar(
                             backgroundColor: item.type == 'direct_ai'
                                 ? const Color(0xffffead5)
@@ -603,7 +705,29 @@ class _ConversationPageState extends State<ConversationPage> {
                                 : '私人对话 · 仅你与 AI 可见',
                             style: const TextStyle(fontSize: 11),
                           ),
-                          trailing: const Icon(Icons.chevron_right_rounded),
+                          trailing: PopupMenuButton<String>(
+                            tooltip: '对话操作',
+                            onSelected: (value) {
+                              if (value == 'delete') {
+                                unawaited(deleteConversation(item));
+                              }
+                            },
+                            itemBuilder: (_) => const [
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.delete_outline_rounded,
+                                      color: Color(0xffb42318),
+                                    ),
+                                    SizedBox(width: 9),
+                                    Text('删除对话'),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                   ],
@@ -631,8 +755,9 @@ class _ConversationPageState extends State<ConversationPage> {
           child: Row(
             children: [
               IconButton(
-                onPressed: closeConversation,
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19),
+                onPressed: () => scaffoldKey.currentState?.openDrawer(),
+                tooltip: '聊天记录',
+                icon: const Icon(Icons.menu_rounded),
               ),
               Expanded(
                 child: Column(
