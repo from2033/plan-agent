@@ -195,6 +195,15 @@ const qqCollectorStatusSchema = z.object({
   detail: z.string().max(300).optional(),
 });
 
+const qqMediaMetadataSchema = z.object({
+  externalId: z.string().min(1).max(200),
+  groupId: z.string().min(1).max(100),
+  groupName: z.string().min(1).max(200),
+  sender: z.string().min(1).max(200),
+  fileName: z.string().min(1).max(240),
+  sentAt: z.string().datetime(),
+});
+
 function validQqIntegrationToken(req: express.Request): boolean {
   if (!QQ_TASK_SYNC_SECRET) return false;
   const expected = Buffer.from(QQ_TASK_SYNC_SECRET);
@@ -247,6 +256,55 @@ app.post(`${API}/integrations/qq-tasks`, (req, res) => {
   recordQqMessageSync(parsed.data.sentAt);
   res.status(201).json({ created: created.length, skipped: candidates.length - created.length, entries: created });
 });
+
+// QQ 图片和文件单独以二进制上传，交给 Mac 端资料处理器提取文字、归档并建立向量索引。
+// 元数据使用 base64url 编码，避免中文文件名直接进入 HTTP header。
+app.post(
+  `${API}/integrations/qq-media`,
+  express.raw({ type: () => true, limit: "20mb" }),
+  (req, res) => {
+    if (!validQqIntegrationToken(req)) {
+      res.status(QQ_TASK_SYNC_SECRET ? 401 : 503).json({ error: "同步凭证无效" });
+      return;
+    }
+    let metadata: unknown;
+    try {
+      metadata = JSON.parse(Buffer.from(String(req.get("x-qq-media-metadata") || ""), "base64url").toString("utf8"));
+    } catch {
+      res.status(400).json({ error: "附件元数据无效" });
+      return;
+    }
+    const parsed = qqMediaMetadataSchema.safeParse(metadata);
+    const content = req.body as Buffer;
+    const mimeType = String(req.get("content-type") || "application/octet-stream").split(";", 1)[0].toLowerCase();
+    if (!parsed.success || !content?.length || !DOCUMENT_MIME_TYPES.has(mimeType)) {
+      res.status(400).json({ error: "附件格式无效" });
+      return;
+    }
+    const value = parsed.data;
+    const userNote = [
+      "来源：QQ群原始消息附件",
+      `群：${value.groupName}（${value.groupId}）`,
+      `发送人：${value.sender}`,
+      `发送时间：${value.sentAt}`,
+      `消息标识：${value.externalId}`,
+    ].join("\n");
+    try {
+      const accepted = acceptDocumentUpload(
+        QQ_TASK_SYNC_USER,
+        value.fileName.replace(/[\\/\0]/g, "_").slice(0, 240),
+        mimeType,
+        content,
+        userNote,
+      );
+      recordQqMessageSync(value.sentAt);
+      res.status(accepted.status).json(accepted.body);
+    } catch (error) {
+      console.error("[qq media] 附件入库失败:", error);
+      res.status(500).json({ error: "附件入库失败" });
+    }
+  },
+);
 
 app.post(`${API}/auth/email/code`, async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
