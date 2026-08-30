@@ -3131,28 +3131,54 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                     ),
                   ),
                   if (document['canEdit'] != false)
-                    IconButton(
-                      tooltip: document['sharedWithFamily'] == true
-                          ? '停止家庭共享'
-                          : '设为家庭可见',
-                      onPressed: () {
-                        Navigator.pop(context);
-                        unawaited(toggleDocumentFamilyShare(document));
-                      },
-                      icon: Icon(
+                    FilterChip(
+                      selected: document['sharedWithFamily'] == true,
+                      showCheckmark: true,
+                      selectedColor: const Color(0xffede9fe),
+                      checkmarkColor: const Color(0xff6d28d9),
+                      side: BorderSide(
+                        color: document['sharedWithFamily'] == true
+                            ? const Color(0xff8b5cf6)
+                            : const Color(0xffd8d2c9),
+                      ),
+                      avatar: Icon(
                         document['sharedWithFamily'] == true
                             ? Icons.family_restroom_rounded
                             : Icons.family_restroom_outlined,
+                        size: 18,
+                        color: document['sharedWithFamily'] == true
+                            ? const Color(0xff6d28d9)
+                            : const Color(0xff716b63),
                       ),
+                      label: Text(
+                        document['sharedWithFamily'] == true
+                            ? '已家庭共享'
+                            : '共享给家庭',
+                        style: TextStyle(
+                          color: document['sharedWithFamily'] == true
+                              ? const Color(0xff5b21b6)
+                              : const Color(0xff625d55),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      onSelected: (_) {
+                        Navigator.pop(context);
+                        unawaited(toggleDocumentFamilyShare(document));
+                      },
                     )
                   else if (document['sharedWithFamily'] == true ||
                       document['sharedInConversation'] == true)
-                    Padding(
-                      padding: EdgeInsets.only(right: 6),
-                      child: Icon(
+                    Chip(
+                      avatar: Icon(
                         document['sharedWithFamily'] == true
                             ? Icons.family_restroom_rounded
                             : Icons.forum_outlined,
+                        size: 17,
+                      ),
+                      label: Text(
+                        document['sharedWithFamily'] == true ? '家庭共享' : '对话共享',
+                        style: const TextStyle(fontSize: 12),
                       ),
                     ),
                   IconButton(
