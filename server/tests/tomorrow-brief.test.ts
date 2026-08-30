@@ -31,8 +31,11 @@ test("群消息的必带物品逐项保留", () => {
     category: "资料",
     description: "明天报到请带好收纳箱和桌垫。语文包括打印的暑假作业、练字帖、默写本、气象研学的工程日志（选择气象实验的请将制作的模型带来）。",
   }]);
-  assert.ok(items.includes("练字帖"));
-  assert.ok(items.includes("默写本"));
-  assert.ok(items.includes("打印的暑假作业"));
+  assert.ok(items.includes("语文：练字帖"));
+  assert.ok(items.includes("语文：默写本"));
+  assert.ok(items.includes("语文：打印的暑假作业"));
   assert.ok(items.some((item) => item.includes("工程日志")));
+  assert.ok(items.includes("收纳箱"));
+  assert.ok(items.includes("桌垫"));
+  assert.ok(!items.some((item) => item.includes("谢谢配合")));
 });
