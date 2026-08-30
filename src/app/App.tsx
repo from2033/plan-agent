@@ -24,6 +24,7 @@ import {
   LogOut,
   Lightbulb,
   GraduationCap,
+  MoreHorizontal,
   X,
 } from "lucide-react";
 import * as api from "./api";
@@ -759,6 +760,7 @@ export default function App() {
   const [savedNote, setSavedNote] = useState<api.KnowledgeItem | null>(null);
   const [loading, setLoading] = useState(true); // 首次加载记录时显示骨架，避免空白
   const [tab, setTab] = useState<Tab>("today");
+  const [moreTabsOpen, setMoreTabsOpen] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   // 当前查看的日期（默认今天，可往前翻看历史）。心愿是长期清单，不受此限制。
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
@@ -1250,23 +1252,17 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div
-          className="flex gap-1 px-5 pb-3"
-          style={{ flexShrink: 0, overflowX: "auto", scrollbarWidth: "none" }}
-        >
-          {[
-            { key: "today" as Tab, label: "行程", icon: <Clock size={11} />, count: activityEntries.length },
-            { key: "ledger" as Tab, label: "账单", icon: <CreditCard size={11} />, count: expenseEntries.length },
-            { key: "finance" as Tab, label: "消费", icon: <BarChart2 size={11} />, count: 0 },
-            { key: "memo" as Tab, label: "备忘", icon: <BookOpen size={11} />, count: memoEntries.filter(m => !m.done).length },
-            { key: "wish" as Tab, label: "心愿", icon: <Star size={11} />, count: wishEntries.length },
-            { key: "knowledge" as Tab, label: "知识", icon: <Lightbulb size={11} />, count: knowledge.length },
-            { key: "mistakes" as Tab, label: "错题", icon: <GraduationCap size={11} />, count: mistakes.filter((item) => item.mastery !== "mastered").length },
-          ].map(({ key, label, icon, count }) => (
+        {/* Tabs：首页只保留最常用入口，其它功能收进“更多”，避免首屏堆满按钮。 */}
+        <div className="relative px-5 pb-3" style={{ flexShrink: 0 }}>
+          <div className="flex gap-1">
+            {[
+              { key: "today" as Tab, label: "行程", icon: <Clock size={11} />, count: activityEntries.length },
+              { key: "ledger" as Tab, label: "账单", icon: <CreditCard size={11} />, count: expenseEntries.length },
+              { key: "finance" as Tab, label: "消费分析", icon: <BarChart2 size={11} />, count: 0 },
+            ].map(({ key, label, icon, count }) => (
             <button
               key={key}
-              onClick={() => { setTab(key); setShowSummary(false); }}
+              onClick={() => { setTab(key); setShowSummary(false); setMoreTabsOpen(false); }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-[11px] font-medium flex-shrink-0"
               style={{
                 background: tab === key && !showSummary ? "#d97706" : "#ede9e1",
@@ -1287,7 +1283,44 @@ export default function App() {
                 </span>
               )}
             </button>
-          ))}
+            ))}
+            <button
+              onClick={() => setMoreTabsOpen((open) => !open)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full transition-all text-[11px] font-medium flex-shrink-0"
+              style={{
+                background: moreTabsOpen || ["memo", "wish", "knowledge", "mistakes"].includes(tab) ? "#d97706" : "#ede9e1",
+                color: moreTabsOpen || ["memo", "wish", "knowledge", "mistakes"].includes(tab) ? "#ffffff" : "#8a8680",
+              }}
+              aria-expanded={moreTabsOpen}
+            >
+              <MoreHorizontal size={12} />
+              更多
+            </button>
+          </div>
+          {moreTabsOpen && (
+            <div
+              className="absolute z-20 right-5 top-9 rounded-xl p-1.5 grid grid-cols-2 gap-1 shadow-lg"
+              style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.08)", minWidth: 176 }}
+            >
+              {[
+                { key: "memo" as Tab, label: "备忘", icon: <BookOpen size={12} />, count: memoEntries.filter(m => !m.done).length },
+                { key: "wish" as Tab, label: "心愿", icon: <Star size={12} />, count: wishEntries.length },
+                { key: "knowledge" as Tab, label: "知识库", icon: <Lightbulb size={12} />, count: knowledge.length },
+                { key: "mistakes" as Tab, label: "错题本", icon: <GraduationCap size={12} />, count: mistakes.filter((item) => item.mastery !== "mastered").length },
+              ].map(({ key, label, icon, count }) => (
+                <button
+                  key={key}
+                  onClick={() => { setTab(key); setShowSummary(false); setMoreTabsOpen(false); }}
+                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] text-left"
+                  style={{ background: tab === key ? "#fff7ed" : "#faf9f6", color: tab === key ? "#d97706" : "#5a5650" }}
+                >
+                  {icon}
+                  <span className="flex-1">{label}</span>
+                  {count > 0 && <span className="text-[9px] rounded-full px-1" style={{ background: "#ede9e1", color: "#8a8680" }}>{count}</span>}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Content area */}
