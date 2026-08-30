@@ -14,6 +14,7 @@ const family = await import("../src/family-sharing.js");
 const database = await import("../src/db.js");
 const documents = await import("../src/document-store.js");
 const access = await import("../src/document-access.js");
+const conversations = await import("../src/conversation-store.js");
 
 test("家庭邀请只由目标账号接受，接受后成为家庭成员", () => {
   const invitation = family.inviteFamilyMember("primary", "Parent@Example.com", "primary");
@@ -65,4 +66,36 @@ test("共享文档在家庭资料库可见，但成员不能取得编辑权限",
 
   assert.equal(family.unshareResourceFromFamily("primary", "document", document.id), true);
   assert.deepEqual(access.sharedDocumentScopesForViewer("parent@example.com"), []);
+});
+
+test("对话里的附件不会被标记成家庭共享", () => {
+  const document = documents.storeDocumentUpload(
+    "primary",
+    "聊天照片.jpg",
+    "image/jpeg",
+    Buffer.from("conversation-only-photo"),
+  );
+  const conversationId = conversations.createConversation("primary", "照片对话");
+  const invitation = conversations.inviteConversationMember(
+    conversationId,
+    "primary",
+    "parent@example.com",
+  )!;
+  conversations.respondToConversationInvitation(invitation.id, "parent@example.com", true);
+  conversations.addConversationResource(
+    conversationId,
+    "primary",
+    "document",
+    document.id,
+    "primary",
+    "聊天照片",
+  );
+  const ownerView = documents.listDocumentsForViewer("primary")
+    .find(item => item.id === document.id)!;
+  const memberView = documents.listDocumentsForViewer("parent@example.com")
+    .find(item => item.id === document.id)!;
+  assert.equal(ownerView.sharedWithFamily, false);
+  assert.equal(ownerView.sharedInConversation, true);
+  assert.equal(memberView.sharedWithFamily, false);
+  assert.equal(memberView.sharedInConversation, true);
 });

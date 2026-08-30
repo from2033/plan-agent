@@ -3076,10 +3076,15 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                             : Icons.family_restroom_outlined,
                       ),
                     )
-                  else if (document['sharedWithFamily'] == true)
-                    const Padding(
+                  else if (document['sharedWithFamily'] == true ||
+                      document['sharedInConversation'] == true)
+                    Padding(
                       padding: EdgeInsets.only(right: 6),
-                      child: Icon(Icons.family_restroom_rounded),
+                      child: Icon(
+                        document['sharedWithFamily'] == true
+                            ? Icons.family_restroom_rounded
+                            : Icons.forum_outlined,
+                      ),
                     ),
                   IconButton(
                     tooltip: '关闭',
@@ -3312,9 +3317,16 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                 ),
                 const SizedBox(height: 10),
               ] else ...[
-                const Chip(
-                  avatar: Icon(Icons.family_restroom_rounded, size: 17),
-                  label: Text('家庭共享资料'),
+                Chip(
+                  avatar: Icon(
+                    document['sharedWithFamily'] == true
+                        ? Icons.family_restroom_rounded
+                        : Icons.forum_outlined,
+                    size: 17,
+                  ),
+                  label: Text(
+                    document['sharedWithFamily'] == true ? '家庭共享资料' : '仅当前对话共享',
+                  ),
                 ),
                 const SizedBox(height: 10),
               ],

@@ -62,6 +62,7 @@ export interface StoredDocument {
   updatedAt: string;
   ownerUserId: string;
   sharedWithFamily: boolean;
+  sharedInConversation: boolean;
   canEdit: boolean;
 }
 
@@ -97,7 +98,11 @@ export function findDuplicateDocument(userId: string, content: Buffer): StoredDo
 
 function rowToDocument(
   row: DocumentRow,
-  metadata?: { sharedWithFamily?: boolean; canEdit?: boolean },
+  metadata?: {
+    sharedWithFamily?: boolean;
+    sharedInConversation?: boolean;
+    canEdit?: boolean;
+  },
 ): StoredDocument {
   return {
     id: row.id,
@@ -118,6 +123,7 @@ function rowToDocument(
     updatedAt: row.updated_at,
     ownerUserId: row.user_id,
     sharedWithFamily: metadata?.sharedWithFamily || false,
+    sharedInConversation: metadata?.sharedInConversation || false,
     canEdit: metadata?.canEdit ?? true,
   };
 }
@@ -234,21 +240,27 @@ export function getDocument(id: string, userId: string): StoredDocument | null {
 }
 
 export function getDocumentForViewer(id: string, userId: string): StoredDocument | null {
+  const familyOwner = sharedResourceOwner(userId, "document", id);
+  const conversationOwner = sharedConversationResourcesForViewer(userId, "document")
+    .find(item => item.resourceId === id)?.ownerUserId || null;
   const own = db.prepare("SELECT * FROM documents WHERE id=? AND user_id=?")
     .get(id, userId) as unknown as DocumentRow | undefined;
   if (own) {
     return rowToDocument(own, {
-      sharedWithFamily: sharedResourceOwner(userId, "document", id) === userId,
+      sharedWithFamily: familyOwner === userId,
+      sharedInConversation: conversationOwner === userId,
       canEdit: true,
     });
   }
-  const owner = sharedResourceOwner(userId, "document", id)
-    || sharedConversationResourcesForViewer(userId, "document")
-      .find(item => item.resourceId === id)?.ownerUserId || null;
+  const owner = familyOwner || conversationOwner;
   if (!owner) return null;
   const row = db.prepare("SELECT * FROM documents WHERE id=? AND user_id=?")
     .get(id, owner) as unknown as DocumentRow | undefined;
-  return row ? rowToDocument(row, { sharedWithFamily: true, canEdit: false }) : null;
+  return row ? rowToDocument(row, {
+    sharedWithFamily: familyOwner === owner,
+    sharedInConversation: conversationOwner === owner,
+    canEdit: false,
+  }) : null;
 }
 
 export function resolveDocumentEvidence(
@@ -270,22 +282,45 @@ export function listDocuments(userId: string): StoredDocument[] {
 }
 
 export function listDocumentsForViewer(userId: string): StoredDocument[] {
-  const shared = [...sharedResourcesForViewer(userId, "document"),
-    ...sharedConversationResourcesForViewer(userId, "document")]
-    .filter((item, index, items) => items.findIndex(candidate => candidate.resourceId === item.resourceId) === index);
-  const sharedById = new Map(shared.map((item) => [item.resourceId, item.ownerUserId]));
+  const familyShared = sharedResourcesForViewer(userId, "document");
+  const conversationShared = sharedConversationResourcesForViewer(userId, "document");
+  const sharedById = new Map<string, {
+    ownerUserId: string;
+    family: boolean;
+    conversation: boolean;
+  }>();
+  for (const item of familyShared) {
+    sharedById.set(item.resourceId, {
+      ownerUserId: item.ownerUserId,
+      family: true,
+      conversation: false,
+    });
+  }
+  for (const item of conversationShared) {
+    const existing = sharedById.get(item.resourceId);
+    sharedById.set(item.resourceId, {
+      ownerUserId: item.ownerUserId,
+      family: existing?.family || false,
+      conversation: true,
+    });
+  }
   const own = (db.prepare("SELECT * FROM documents WHERE user_id=? ORDER BY created_at DESC LIMIT 200")
     .all(userId) as unknown as DocumentRow[])
     .map((row) => rowToDocument(row, {
-      sharedWithFamily: sharedById.get(row.id) === userId,
+      sharedWithFamily: sharedById.get(row.id)?.family || false,
+      sharedInConversation: sharedById.get(row.id)?.conversation || false,
       canEdit: true,
     }));
-  const visibleShared = shared
-    .filter((item) => item.ownerUserId !== userId)
-    .flatMap((item) => {
+  const visibleShared = [...sharedById.entries()]
+    .filter(([, item]) => item.ownerUserId !== userId)
+    .flatMap(([resourceId, item]) => {
       const row = db.prepare("SELECT * FROM documents WHERE id=? AND user_id=?")
-        .get(item.resourceId, item.ownerUserId) as unknown as DocumentRow | undefined;
-      return row ? [rowToDocument(row, { sharedWithFamily: true, canEdit: false })] : [];
+        .get(resourceId, item.ownerUserId) as unknown as DocumentRow | undefined;
+      return row ? [rowToDocument(row, {
+        sharedWithFamily: item.family,
+        sharedInConversation: item.conversation,
+        canEdit: false,
+      })] : [];
     });
   return [...own, ...visibleShared]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
