@@ -726,26 +726,6 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     let knowledgeSources = (input.knowledge || [])
       .filter((item) => wanted.has(item.id))
       .map((item) => ({ ...item, sourceType: "knowledge" as const }));
-    // Contact lookups are deterministic only for evidence selection: never let
-    // this post-processing path replace the model's answer with raw source text.
-    const queryText = [input.raw, ...(input.conversationHistory || []).map((m) => m.content)].join(" ");
-    if (/(电话|手机号|联系方式)/u.test(queryText)) {
-      const matches = (input.knowledge || []).filter((item) => /1[3-9]\d{9}/.test(`${item.title} ${item.content}`));
-      if (matches.length) {
-        const existing = new Set(knowledgeSources.map((item) => item.id));
-        knowledgeSources = [
-          ...knowledgeSources,
-          ...matches
-            .filter((item) => !existing.has(item.id))
-            .map((item) => ({ ...item, sourceType: "knowledge" as const })),
-        ];
-        result.sourceIds = [...new Set([...(result.sourceIds || []), ...matches.map((item) => item.id)])];
-        if (!String(result.answer || "").trim()) {
-          const numbers = [...new Set(matches.flatMap((item) => `${item.title} ${item.content}`.match(/1[3-9]\d{9}/g) || []))];
-          result.answer = `找到了：${numbers.join("、")}。`;
-        }
-      }
-    }
     const documentSources = (result.documentSources || []).map((source) => {
       const resolved = resolveDocumentEvidence(
         job.userId,

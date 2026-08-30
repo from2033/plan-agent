@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   appendVaultDocumentNote,
   conversationRecordProposal,
+  constrainEvidenceSources,
   documentAnswerForIngest,
   documentSourcesForAnswer,
   extractDocumentText,
@@ -63,6 +64,18 @@ test("knowledge evidence answer maps model source indexes back to source ids", (
       sourceIds: ["qq-english-teacher"],
       conversationTitle: "老师联系方式",
     },
+  );
+});
+
+test("explicit teacher subject excludes other teachers and old chat answers", () => {
+  const sources = [
+    { id: "qq-message-chinese", title: "QQ群消息｜四8班｜语文-王老师13800138001", content: "原文：英语作业已发" },
+    { id: "qq-message-english", title: "QQ群消息｜四8班英语学习群｜英语-王老师13800138002", content: "发送者：英语-王老师13800138002" },
+    { id: "conversation-old", title: "聊天记录｜助手", content: "英语老师电话是13800138003" },
+  ];
+  assert.deepEqual(
+    constrainEvidenceSources("英语老师号码给我下", sources).map(source => source.id),
+    ["qq-message-english"],
   );
 });
 

@@ -114,6 +114,24 @@ export function retrievalQuestionForIngest(job) {
   return [...history, raw].filter(Boolean).join("\n").slice(-6_000);
 }
 
+export function constrainEvidenceSources(question, sources) {
+  const text = compactSearchText(question);
+  const subject = text.match(/(语文|数学|英语|英文|科学|体育|音乐|美术|道法|信息技术)(?:课)?(?:老师|教师)/u)?.[1];
+  if (!subject) return sources;
+  const aliases = subject === "英文" ? ["英文", "英语"] : [subject];
+  const phonePattern = /1[3-9](?:[ -]?\d){9}/u;
+  const qqMatches = sources.filter(source => {
+    if (!String(source.id || "").startsWith("qq-message-")) return false;
+    const title = String(source.title || "");
+    const identityLines = String(source.content || "").split("\n")
+      .filter(line => /^(?:来源群|发送者)[：:]/u.test(line.trim()))
+      .join(" ");
+    return aliases.some(alias => title.includes(alias) || identityLines.includes(alias))
+      && phonePattern.test(`${title} ${identityLines}`);
+  });
+  return qqMatches.length ? qqMatches : sources;
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -1507,7 +1525,8 @@ export async function processIngestJob(job) {
   // All server-authorized evidence shares one retrieval layer. Permission filtering
   // happens on the server before this point; ranking never broadens that scope.
   const retrievalQuestion = retrievalQuestionForIngest(job);
-  const unifiedSources = await unifiedHybridSearch(job.input?.knowledge, retrievalQuestion, 20);
+  const searchedSources = await unifiedHybridSearch(job.input?.knowledge, retrievalQuestion, 20);
+  const unifiedSources = constrainEvidenceSources(raw, searchedSources);
   const rankedJob = unifiedSources.length || Array.isArray(job.input?.knowledge)
     ? { ...job, input: { ...job.input, knowledge: unifiedSources } }
     : job;
