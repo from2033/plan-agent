@@ -46,3 +46,9 @@ test("显式研究指令提取主题但不拦截个人资料查询", () => {
 test("短语式联系人查询识别为资料查找", () => {
   assert.equal(knowledgeIntentHint("英语老师电话号码"), "ask");
 });
+
+test("物品日期事实保存为知识，明确行动时才是备忘", () => {
+  assert.equal(knowledgeIntentHint("新买的巧克力保质期到2027年5月18日"), "save");
+  assert.equal(knowledgeIntentHint("桂圆肉生产日期是2026年1月"), "save");
+  assert.equal(knowledgeIntentHint("提醒我在巧克力到期前吃完"), undefined);
+});
