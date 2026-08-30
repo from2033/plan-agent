@@ -2169,7 +2169,7 @@ class _ReportPaneState extends State<ReportPane> {
       updatedAt = null;
       error = null;
     });
-    if (relevant.isEmpty) return;
+    if (relevant.isEmpty && scope != 'tomorrow') return;
     try {
       final value = await widget.api.report(
         scope: scope,
