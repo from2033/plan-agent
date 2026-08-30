@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   appendVaultDocumentNote,
+  conversationRecordProposal,
   documentAnswerForIngest,
   documentSourcesForAnswer,
   extractDocumentText,
@@ -141,6 +142,57 @@ test("conversation mode defaults greetings to chat instead of records", async (t
   assert.match(result.answer, /你好/);
   assert.match(requestBody.messages[0].content, /默认 kind=ask/);
   assert.match(requestBody.messages[0].content, /“你好”/);
+});
+
+test("conversation mode asks before saving inferred long-term information", async (t) => {
+  let requestBody;
+  const server = http.createServer((request, response) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", chunk => { body += chunk; });
+    request.on("end", () => {
+      requestBody = JSON.parse(body);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        message: {
+          content: JSON.stringify({
+            kind: "ask",
+            fields: [],
+            title: "",
+            content: "",
+            answer: "知道了，之后聊到吃饭时我会注意。这个偏好可能以后会用到，需要我帮你记录为‘不吃香菜’吗？",
+            sourceIds: [],
+            conversationTitle: "饮食偏好",
+          }),
+        },
+      }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address();
+  const result = await runOllama({
+    kind: "ingest",
+    input: { raw: "我不吃香菜", interactionMode: "conversation", conversationHistory: [] },
+  }, {
+    url: `http://127.0.0.1:${address.port}`,
+    model: "test-model",
+    timeoutMs: 2_000,
+  });
+
+  assert.equal(result.kind, "ask");
+  assert.match(result.answer, /需要我帮你记录/);
+  assert.match(requestBody.messages[0].content, /用户确认前绝不能生成 record\/save/);
+});
+
+test("conversation record proposals are limited to useful long-term or actionable facts", () => {
+  assert.equal(conversationRecordProposal("你好"), null);
+  assert.equal(conversationRecordProposal("我今天挺累"), null);
+  assert.equal(conversationRecordProposal("我不吃香菜")?.kind, "save");
+  assert.equal(conversationRecordProposal("明天要去医院")?.kind, "record");
+  assert.equal(conversationRecordProposal("午饭花了38元")?.kind, "record");
+  assert.equal(conversationRecordProposal("帮我记一下我不吃香菜"), null);
 });
 
 test("daily input uses the small model while complex jobs use the large model", () => {

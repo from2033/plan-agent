@@ -555,6 +555,7 @@ const systemPrompt = `你是 Personal Assistant 的受限中文数据处理器�
 
 任务规则：
 0. input.interactionMode="conversation" 表示用户正在聊天。此时默认 kind=ask，并在 answer 中像正常助手一样自然回应；问候、寒暄、观点、感受、普通陈述和没有明确记录意图的内容都不得生成 record，例如“你好”“我今天挺累”“刚才去了公园”都应正常对话。可以使用一般常识回答；与 input.knowledge 或 input.documentSources 有关时优先依据这些资料。只有用户明确要求“记一下/记录/保存/加入待办/提醒我”，或明确要求记账时，才进入 save 或 record。不得仅因为一句话不是问句就把它记录下来。input.interactionMode="capture" 才是独立记录入口，按后续规则分类。
+   在 conversation 模式中，如果用户没有明确要求记录，但内容明显适合作为跨对话长期信息或可执行事项，例如稳定偏好、长期习惯、重要决定、未来承诺、明确日期事项或带金额消费：仍然返回 kind=ask，先在 answer 中完整自然地回应，再在末尾另起一句简短询问“这件事可能以后会用到，需要我帮你记录为……吗？”或“需要我帮你加入待办/记一笔吗？”。用户确认前绝不能生成 record/save。问候、一次性闲聊、随口情绪和不明确内容不要建议记录；健康、财务、身份和家庭矛盾等敏感信息必须询问，绝不能静默保存。若 conversationHistory 显示上一轮助手刚询问是否记录，而用户本轮明确回答“要、可以、记下来、帮我记”之类，应结合上一轮内容执行相应 save 或 record，不要再次询问。
 1. input.intentHint="save" 是服务器已验证的强制意图，必须 kind=save，生成简洁 title 和完整 content。用户明确要求“记到知识库、保存这个方法/经验/配方”时也必须 kind=save。即使没说“知识库”，一句话若在陈述可重复查阅的做法、配方、步骤、技巧或经验，也应 kind=save。“以后提醒我做某事”是 memo，不是知识。
 2. input.conversationHistory 是当前对话按时间排列的近期消息，只用于理解“这个资料、刚才那个、继续、它”等上下文指代，不得把旧话题强行套到新问题上。最近一条“分享了资料：…”表示用户当前发送到对话的资料；用户随后要求“总结这个资料/分析一下/它讲了什么”时必须判定为 kind=ask，绝不能生成待办或复用无关个人知识。
 3. 用户提问时，kind=ask。input.knowledge 是当前对话有权使用的知识笔记，input.documentSources 是从 Mac 本地资料检索出的证据片段；回答必须优先依据两者，不能因为知识笔记为空就忽略资料证据。金额、日期、合同条款、药名和剂量必须逐字依据资料。询问药品通常用途时，可以在准确列出资料中的药名后补充一般医学常识，但要明确这是一般用途、不能代替医嘱，不能据此推断诊断或用法用量。证据仍不足时明确说明没有找到足够信息。sourceIds 只能使用实际引用条目的 id；其它字段为空。
@@ -1345,6 +1346,58 @@ export function shouldSearchDocumentsForIngest(raw, classifiedResult) {
   return asksForAnswer && mentionsDocuments;
 }
 
+export function conversationRecordProposal(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  if (/(?:记一下|记录|保存|加入待办|提醒我|帮我记|记账)/u.test(text)) return null;
+  if (/(?:花了|消费|付了|买了).{0,16}\d+(?:\.\d+)?\s*(?:元|块|块钱|rmb|￥)/iu.test(text)) {
+    return { kind: "record", prompt: "需要我帮你把这笔消费记下来吗？" };
+  }
+  if (/(?:明天|后天|下周|下个月|\d{1,2}月\d{1,2}[日号]|(?:今天|今晚).*(?:要|得|需要)|我(?:计划|准备|决定要))/u.test(text)) {
+    return { kind: "record", prompt: "需要我帮你把这件事加入待办吗？" };
+  }
+  if (/(?:我(?:不吃|不喝|不喜欢|喜欢|偏好|习惯|通常|一直|对.{1,12}过敏)|以后.{0,20}(?:注意|别|不要)|我决定)/u.test(text)) {
+    return { kind: "save", prompt: "这件事以后可能会用到，需要我帮你记录下来吗？" };
+  }
+  return null;
+}
+
+function confirmedConversationProposal(job) {
+  if (job.input?.interactionMode !== "conversation"
+    || !/^(?:要|可以|好(?:的)?|行|是的|嗯|记(?:下来)?|帮我记)(?:[，,。！!\s]|$)/u.test(String(job.input?.raw || "").trim())) return null;
+  const history = Array.isArray(job.input?.conversationHistory) ? job.input.conversationHistory : [];
+  const lastAssistantIndex = history.findLastIndex(item => item?.role === "assistant"
+    && /需要我帮你(?:记录下来|把这件事加入待办|把这笔消费记下来)吗？/u.test(String(item?.content || "")));
+  if (lastAssistantIndex < 1) return null;
+  for (let index = lastAssistantIndex - 1; index >= 0; index -= 1) {
+    if (history[index]?.role !== "user") continue;
+    const sourceText = String(history[index]?.content || "").trim();
+    const proposal = conversationRecordProposal(sourceText);
+    return proposal ? { ...proposal, sourceText } : null;
+  }
+  return null;
+}
+
+function appendConversationRecordProposal(job, result) {
+  if (job.input?.interactionMode !== "conversation") return result;
+  const proposal = conversationRecordProposal(job.input?.raw);
+  if (!proposal) return result;
+  const modelAnswer = String(result?.answer || "").trim();
+  const falselyClaimsSaved = /(?:已|已经)(?:帮你)?(?:记录|保存|加入|记下)|我会提醒/u.test(modelAnswer);
+  const naturalAnswer = result?.kind === "ask" && modelAnswer && !falselyClaimsSaved
+    ? modelAnswer
+    : `好的，我知道了：${String(job.input?.raw || "").trim()}。`;
+  return {
+    kind: "ask",
+    answer: naturalAnswer.includes(proposal.prompt)
+      ? naturalAnswer
+      : `${naturalAnswer}\n\n${proposal.prompt}`,
+    sourceIds: Array.isArray(result?.sourceIds) ? result.sourceIds : [],
+    conversationTitle: String(result?.conversationTitle || job.input?.raw || "新对话")
+      .trim().slice(0, 30) || "新对话",
+  };
+}
+
 export function documentAnswerForIngest(classifiedResult, answeredResult, candidates) {
   return {
     kind: "ask",
@@ -1356,16 +1409,34 @@ export function documentAnswerForIngest(classifiedResult, answeredResult, candid
   };
 }
 
-async function processIngestJob(job) {
+export async function processIngestJob(job) {
   const raw = String(job.input?.raw || "").trim();
   if (!raw) return runInference(job);
-  const classified = await runInference(job);
+  const confirmedProposal = confirmedConversationProposal(job);
+  const inferenceJob = confirmedProposal ? {
+    ...job,
+    input: {
+      ...job.input,
+      raw: confirmedProposal.sourceText,
+      interactionMode: "capture",
+      ...(confirmedProposal.kind === "save" ? { intentHint: "save" } : {}),
+    },
+  } : job;
+  const inference = await runInference(inferenceJob);
+  const classified = confirmedProposal ? inference : {
+    ...inference,
+    result: appendConversationRecordProposal(job, inference.result),
+  };
   if (!shouldSearchDocumentsForIngest(raw, classified.result)) return classified;
   const candidates = searchAccessibleDocuments(raw, job, vaultRoot, 3);
   if (!candidates.length) {
     if (classified.result?.kind !== "ask") return classified;
-    if (classified.result.answer !== "__QUESTION_CLASSIFIED__") return classified;
-    return runInference(job, { model: ollamaLargeModel });
+    if (!String(classified.result.answer || "").startsWith("__QUESTION_CLASSIFIED__")) return classified;
+    const fallback = await runInference(job, { model: ollamaLargeModel });
+    return {
+      ...fallback,
+      result: appendConversationRecordProposal(job, fallback.result),
+    };
   }
   const answered = await runInference({
     kind: "document_question",
