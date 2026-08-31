@@ -12,11 +12,28 @@ STATE = Path(os.getenv("STATE_PATH", "/data/qq-monitor-state.json"))
 ASSISTANT_STATUS_URL = os.getenv("ASSISTANT_STATUS_URL", "").strip()
 ASSISTANT_STATUS_SECRET = os.getenv("ASSISTANT_STATUS_SECRET", "").strip()
 
-def login_ok():
-    req = urllib.request.Request(API + "/get_login_info", data=b"{}", headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"})
+def napcat_api(action):
+    req = urllib.request.Request(API + "/" + action, data=b"{}", headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as r:
-        data = json.load(r).get("data") or {}
-    return bool(data.get("user_id")), str(data.get("nickname") or data.get("user_id") or "QQ")
+        response = json.load(r)
+    if response.get("status") != "ok" or int(response.get("retcode") or 0) != 0:
+        raise RuntimeError(f"NapCat {action} failed")
+    return response.get("data") or {}
+
+def login_ok():
+    """Return the real connection state, not cached account information.
+
+    NapCat keeps returning user_id from get_login_info after QQ has emitted a
+    KickedOffLine event. get_status.online is the authoritative signal used by
+    OneBot clients and correctly becomes false in that state.
+    """
+    status = napcat_api("get_status")
+    try:
+        account = napcat_api("get_login_info")
+    except Exception:
+        account = {}
+    name = str(account.get("nickname") or account.get("user_id") or "QQ")
+    return status.get("online") is True, name
 
 def mail(subject, text, attach=False):
     if not TO or not os.getenv("SMTP_PASS"):
