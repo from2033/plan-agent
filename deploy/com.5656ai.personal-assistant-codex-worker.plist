@@ -6,7 +6,7 @@
   <string>com.5656ai.personal-assistant-codex-worker</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/dcw/.nvm/versions/node/v20.20.2/bin/node</string>
+    <string>/Users/dcw/.nvm/versions/node/v24.19.0/bin/node</string>
     <string>/Users/dcw/Desktop/projects/Personal Assistant App/scripts/codex-worker.mjs</string>
   </array>
   <key>WorkingDirectory</key>

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24-bookworm-slim AS build
+FROM node:24.19.0-bookworm-slim AS build
 WORKDIR /app
 COPY server/package.json server/package-lock.json ./
 RUN npm ci
@@ -7,7 +7,7 @@ COPY server/tsconfig.json ./
 COPY server/src ./src
 RUN npm run build && npm prune --omit=dev
 
-FROM node:24-bookworm-slim AS web-build
+FROM node:24.19.0-bookworm-slim AS web-build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -16,7 +16,7 @@ COPY src ./src
 COPY public ./public
 RUN npm run build
 
-FROM node:24-bookworm-slim
+FROM node:24.19.0-bookworm-slim
 ENV NODE_ENV=production
 ENV WEB_DIST=/app/web-dist
 WORKDIR /app
