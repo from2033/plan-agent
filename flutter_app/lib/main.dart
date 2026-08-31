@@ -1196,15 +1196,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
           ),
-          IconButton(
-            onPressed: tab == 0
-                ? refreshHome
-                : tab == 2
-                ? () => setState(() => _conversationRevision += 1)
-                : refresh,
-            tooltip: '刷新',
-            icon: const Icon(Icons.refresh_rounded),
-          ),
           if (tab == 0)
             IconButton(
               onPressed: _openTrendPage,
@@ -1215,7 +1206,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             IconButton(
               onPressed: _openTomorrowBrief,
               tooltip: '明日管家',
-              icon: const Icon(Icons.nightlight_outlined, size: 21),
+              icon: const Icon(Icons.event_note_outlined, size: 21),
             ),
           if (tab == 0)
             IconButton(
@@ -2428,13 +2419,18 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                   ),
                 ],
                 if (relevant.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 100),
-                    child: Center(
-                      child: Text(
-                        '这个时间段还没有记录',
-                        style: TextStyle(color: Color(0xff8a8680)),
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 70),
+                    child: Column(
+                      children: [
+                        const Icon(Icons.event_available_outlined, size: 42, color: Color(0xffd97706)),
+                        const SizedBox(height: 14),
+                        const Text('明天还没有安排', style: TextStyle(fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 7),
+                        const Text('在首页或待办中记录明天的事项后，管家会自动整理清单和准备建议', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Color(0xff8a8680))),
+                        const SizedBox(height: 16),
+                        OutlinedButton.icon(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.checklist_rounded, size: 17), label: const Text('去待办添加安排')),
+                      ],
                     ),
                   )
                 else if (loading)
