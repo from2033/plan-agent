@@ -135,6 +135,8 @@ import {
   MAX_CHUNKED_DOCUMENT_SIZE,
 } from "./chunked-upload.js";
 import { confirmAssistantAction, dismissAssistantAction, listAssistantActions, proposeDocumentActions } from "./assistant-actions.js";
+import { createPersistentAgentTask, getPersistentAgentTask, listPersistentAgentTasks, transitionPersistentAgentTask, verifyPersistentAgentTask } from "./agent-runtime.js";
+import { registeredCapabilities } from "./agent-contract.js";
 import {
   deleteMistake,
   insertMistake,
@@ -1487,6 +1489,36 @@ app.get(`${API}/documents`, (req, res) => {
 app.get(`${API}/assistant-actions`, (req, res) => {
   if (isGuestUser(req.userId)) { res.json([]); return; }
   res.json(listAssistantActions(req.userId!));
+});
+
+app.get(`${API}/agent/capabilities`, (req, res) => { res.json(registeredCapabilities()); });
+app.get(`${API}/agent/tasks`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.json([]); return; }
+  res.json(listPersistentAgentTasks(req.userId!));
+});
+app.get(`${API}/agent/tasks/:id`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const task = getPersistentAgentTask(req.params.id, req.userId!);
+  if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
+  res.json(task);
+});
+app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const task = transitionPersistentAgentTask(req.userId!, req.params.id, "retrying" as never, "user_requested_retry");
+  if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
+  res.json(task);
+});
+app.post(`${API}/agent/tasks/:id/follow-up`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const task = transitionPersistentAgentTask(req.userId!, req.params.id, "follow_up", "user_requested_follow_up");
+  if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
+  res.json(task);
+});
+app.post(`${API}/agent/tasks/:id/dismiss`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const task = transitionPersistentAgentTask(req.userId!, req.params.id, "follow_up", "user_dismissed");
+  if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
+  res.json(task);
 });
 app.post(`${API}/assistant-actions/:id/confirm`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
