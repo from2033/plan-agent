@@ -1135,7 +1135,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildPageHeader() {
-    const titles = ['今天', '待办', '对话', '资料库'];
+    final homeTitle = DateUtils.isSameDay(selectedDate, DateTime.now())
+        ? '今天'
+        : DateUtils.isSameDay(
+            selectedDate,
+            DateUtils.dateOnly(DateTime.now()).add(const Duration(days: 1)),
+          )
+        ? '明天'
+        : DateFormat('M月d日').format(selectedDate);
+    final titles = [homeTitle, '待办', '对话', '资料库'];
     const subtitles = [
       '说一句，我来记录和查询',
       '把没做完的事情理清楚',
@@ -1299,6 +1307,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
         children: [
+          _buildHomeDateSelector(),
           if (_homeAnswer != null) ...[
             const SizedBox(height: 12),
             _buildHomeAnswerCard(_homeAnswer!),
@@ -1353,6 +1362,87 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 9),
             ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHomeDateSelector() {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final label = DateUtils.isSameDay(selectedDate, today)
+        ? '今天'
+        : DateUtils.isSameDay(selectedDate, today.add(const Duration(days: 1)))
+        ? '明天'
+        : DateUtils.isSameDay(
+            selectedDate,
+            today.subtract(const Duration(days: 1)),
+          )
+        ? '昨天'
+        : DateFormat('M月d日').format(selectedDate);
+    Future<void> choose() async {
+      final picked = await showDatePicker(
+        context: context,
+        initialDate: selectedDate,
+        firstDate: today.subtract(const Duration(days: 365)),
+        lastDate: today.add(const Duration(days: 365)),
+        helpText: '选择首页日期',
+        cancelText: '取消',
+        confirmText: '确定',
+      );
+      if (picked != null && mounted) {
+        setState(() => selectedDate = DateUtils.dateOnly(picked));
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xffeadfce)),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: '前一天',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(
+              () =>
+                  selectedDate = selectedDate.subtract(const Duration(days: 1)),
+            ),
+            icon: const Icon(Icons.chevron_left_rounded),
+          ),
+          Expanded(
+            child: Center(
+              child: Text(
+                label,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: '后一天',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(
+              () => selectedDate = selectedDate.add(const Duration(days: 1)),
+            ),
+            icon: const Icon(Icons.chevron_right_rounded),
+          ),
+          IconButton(
+            tooltip: '选择日期',
+            visualDensity: VisualDensity.compact,
+            onPressed: choose,
+            icon: const Icon(
+              Icons.calendar_month_outlined,
+              color: Color(0xff9a4f06),
+            ),
+          ),
+          if (!DateUtils.isSameDay(selectedDate, today))
+            TextButton(
+              onPressed: () => setState(() => selectedDate = today),
+              child: const Text('回今天'),
+            ),
         ],
       ),
     );
@@ -2972,13 +3062,23 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     try {
       await widget.api.confirmAssistantAction(action['id'] as String);
       await load();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已执行并加入待办')));
-    } catch (e) { if (mounted) setState(() => error = e.toString()); }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('已执行并加入待办')));
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    }
   }
 
   Future<void> _dismissAction(Map<String, dynamic> action) async {
-    try { await widget.api.dismissAssistantAction(action['id'] as String); await load(); }
-    catch (e) { if (mounted) setState(() => error = e.toString()); }
+    try {
+      await widget.api.dismissAssistantAction(action['id'] as String);
+      await load();
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    }
   }
 
   Future<void> upload() async {
@@ -3897,17 +3997,65 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                 if (assistantActions.any((a) => a['status'] == 'PENDING')) ...[
                   Container(
                     padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(color: const Color(0xffeef2ff), borderRadius: BorderRadius.circular(15)),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Row(children: [Icon(Icons.auto_awesome, color: Color(0xff4f46e5)), SizedBox(width: 8), Text('待你确认的后续动作', style: TextStyle(fontWeight: FontWeight.w800))]),
-                      const SizedBox(height: 10),
-                      for (final action in assistantActions.where((a) => a['status'] == 'PENDING'))
-                        Padding(padding: const EdgeInsets.only(bottom: 8), child: Row(children: [
-                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(action['title'] as String? ?? '待处理动作', style: const TextStyle(fontWeight: FontWeight.w700)), Text(action['details'] as String? ?? '', style: const TextStyle(fontSize: 12, color: Color(0xff57534e)))])),
-                          TextButton(onPressed: () => _dismissAction(action), child: const Text('忽略')),
-                          FilledButton(onPressed: () => _confirmAction(action), child: const Text('确认执行')),
-                        ])),
-                    ]),
+                    decoration: BoxDecoration(
+                      color: const Color(0xffeef2ff),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.auto_awesome, color: Color(0xff4f46e5)),
+                            SizedBox(width: 8),
+                            Text(
+                              '待你确认的后续动作',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        for (final action in assistantActions.where(
+                          (a) => a['status'] == 'PENDING',
+                        ))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        action['title'] as String? ?? '待处理动作',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      Text(
+                                        action['details'] as String? ?? '',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Color(0xff57534e),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () => _dismissAction(action),
+                                  child: const Text('忽略'),
+                                ),
+                                FilledButton(
+                                  onPressed: () => _confirmAction(action),
+                                  child: const Text('确认执行'),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                 ],
