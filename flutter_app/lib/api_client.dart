@@ -278,6 +278,19 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<Map<String, dynamic>>> assistantActions() async {
+    if (_isGuest) return const [];
+    final value = await _request('GET', '/assistant-actions') as List<dynamic>;
+    return value.whereType<Map>().map((item) => item.cast<String, dynamic>()).toList();
+  }
+
+  Future<Map<String, dynamic>> confirmAssistantAction(String id) async =>
+      (await _request('POST', '/assistant-actions/${Uri.encodeComponent(id)}/confirm')) as Map<String, dynamic>;
+
+  Future<void> dismissAssistantAction(String id) async {
+    await _request('POST', '/assistant-actions/${Uri.encodeComponent(id)}/dismiss');
+  }
+
   Future<Map<String, dynamic>> financeOverview({int months = 3}) async {
     return await _request('GET', '/finance/overview?months=$months')
         as Map<String, dynamic>;

@@ -2845,6 +2845,7 @@ class KnowledgePane extends StatefulWidget {
 class _KnowledgePaneState extends State<KnowledgePane> {
   List<KnowledgeItem> items = [];
   List<Map<String, dynamic>> documents = [];
+  List<Map<String, dynamic>> assistantActions = [];
   bool loading = true;
   bool uploading = false;
   bool meetingRecording = false;
@@ -2926,6 +2927,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
       final values = await Future.wait([
         widget.api.knowledge(),
         widget.api.documents(),
+        widget.api.assistantActions(),
         widget.meetingRecorder.pendingCount(),
       ]);
       if (mounted) {
@@ -2947,7 +2949,8 @@ class _KnowledgePaneState extends State<KnowledgePane> {
         setState(() {
           items = values[0] as List<KnowledgeItem>;
           documents = values[1] as List<Map<String, dynamic>>;
-          pendingRecordingCount = values[2] as int;
+          assistantActions = values[2] as List<Map<String, dynamic>>;
+          pendingRecordingCount = values[3] as int;
           error = null;
           hasLoadedDocuments = true;
         });
@@ -2963,6 +2966,19 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     } finally {
       if (mounted) setState(() => loading = false);
     }
+  }
+
+  Future<void> _confirmAction(Map<String, dynamic> action) async {
+    try {
+      await widget.api.confirmAssistantAction(action['id'] as String);
+      await load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已执行并加入待办')));
+    } catch (e) { if (mounted) setState(() => error = e.toString()); }
+  }
+
+  Future<void> _dismissAction(Map<String, dynamic> action) async {
+    try { await widget.api.dismissAssistantAction(action['id'] as String); await load(); }
+    catch (e) { if (mounted) setState(() => error = e.toString()); }
   }
 
   Future<void> upload() async {
@@ -3878,6 +3894,23 @@ class _KnowledgePaneState extends State<KnowledgePane> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (assistantActions.any((a) => a['status'] == 'PENDING')) ...[
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(color: const Color(0xffeef2ff), borderRadius: BorderRadius.circular(15)),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Row(children: [Icon(Icons.auto_awesome, color: Color(0xff4f46e5)), SizedBox(width: 8), Text('待你确认的后续动作', style: TextStyle(fontWeight: FontWeight.w800))]),
+                      const SizedBox(height: 10),
+                      for (final action in assistantActions.where((a) => a['status'] == 'PENDING'))
+                        Padding(padding: const EdgeInsets.only(bottom: 8), child: Row(children: [
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(action['title'] as String? ?? '待处理动作', style: const TextStyle(fontWeight: FontWeight.w700)), Text(action['details'] as String? ?? '', style: const TextStyle(fontSize: 12, color: Color(0xff57534e)))])),
+                          TextButton(onPressed: () => _dismissAction(action), child: const Text('忽略')),
+                          FilledButton(onPressed: () => _confirmAction(action), child: const Text('确认执行')),
+                        ])),
+                    ]),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(

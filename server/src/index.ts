@@ -134,6 +134,7 @@ import {
   chunkedUploadStore,
   MAX_CHUNKED_DOCUMENT_SIZE,
 } from "./chunked-upload.js";
+import { confirmAssistantAction, dismissAssistantAction, listAssistantActions, proposeDocumentActions } from "./assistant-actions.js";
 import {
   deleteMistake,
   insertMistake,
@@ -844,6 +845,8 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const documentId = String((job.input as { documentId?: unknown })?.documentId || "");
     if (!documentId) throw new Error("document_id_missing");
     completeDocument(documentId, job.userId, value);
+    const note = String((job.input as { userNote?: unknown }).userNote || "");
+    proposeDocumentActions(job.userId, documentId, note, String((value as { title?: unknown }).title || "资料"));
     return value;
   }
   if (job.kind === "document_note") {
@@ -1474,6 +1477,23 @@ app.get(`${API}/documents`, (req, res) => {
     return;
   }
   res.json(listDocumentsForViewer(req.userId!));
+});
+
+// Agent loop: explicit requests found in an uploaded note become reviewable actions.
+app.get(`${API}/assistant-actions`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.json([]); return; }
+  res.json(listAssistantActions(req.userId!));
+});
+app.post(`${API}/assistant-actions/:id/confirm`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const action = confirmAssistantAction(req.userId!, req.params.id);
+  if (!action) { res.status(404).json({ error: "动作不存在或已处理" }); return; }
+  res.json(action);
+});
+app.post(`${API}/assistant-actions/:id/dismiss`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  if (!dismissAssistantAction(req.userId!, req.params.id)) { res.status(404).json({ error: "动作不存在或已处理" }); return; }
+  res.status(204).end();
 });
 
 app.get(`${API}/documents/:id/content`, (req, res) => {
