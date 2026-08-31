@@ -1871,6 +1871,31 @@ app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
     res.status(202).json({ ...getPersistentAgentTask(existing.id, req.userId!)!, jobId: job.id, reportId: report.id });
     return;
   }
+  if (existing.capability === "input_processing") {
+    const input = existing.input as {
+      raw?: unknown;
+      title?: unknown;
+      inputMode?: unknown;
+      conversationId?: unknown;
+      intentHint?: unknown;
+    };
+    const raw = String(input.raw || input.title || "").trim();
+    if (!raw) { res.status(409).json({ error: "原始问题缺失，请重新提交" }); return; }
+    if (!codexWorkerOnline()) { res.status(503).json({ error: "后台处理服务尚未就绪，请稍后重试" }); return; }
+    transitionPersistentAgentTask(req.userId!, existing.id, "retrying", "user_requested_retry");
+    transitionPersistentAgentTask(req.userId!, existing.id, "executing", "input_processing_retry_started");
+    const job = enqueueAiJob(req.userId!, "ingest", {
+      raw,
+      agentTaskId: existing.id,
+      inputMode: input.inputMode === "text" ? "text" : "voice",
+      interactionMode: "home",
+      context: assistantClock(),
+      intentHint: input.intentHint === "save" ? "save" : undefined,
+      knowledge: knowledgeFromRequest(req, ""),
+    });
+    res.status(202).json({ ...getPersistentAgentTask(existing.id, req.userId!)!, jobId: job.id });
+    return;
+  }
   res.status(409).json({ error: "该任务需要补充信息后重新提交，不能直接重复执行" });
 });
 app.post(`${API}/agent/tasks/:id/follow-up`, (req, res) => {
