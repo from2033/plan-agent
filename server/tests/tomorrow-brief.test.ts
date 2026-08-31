@@ -71,3 +71,13 @@ test("清单验收使用群消息原文，不能漏掉数量物品和家长书",
   assert.ok(items.some((item) => /2本作业记录本/.test(item)));
   assert.ok(items.some((item) => /告家长书/.test(item)));
 });
+
+test("近期学校通知中的携带要求逐项保留", () => {
+  const items = explicitTomorrowChecklist([{
+    type: "knowledge",
+    category: "资料",
+    description: "QQ群消息",
+    raw: "新学期请每位家长给孩子带好作业记录本。",
+  }]);
+  assert.ok(items.includes("作业记录本"));
+});

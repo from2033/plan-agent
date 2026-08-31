@@ -707,7 +707,10 @@ function tomorrowBriefEntries(userId: string, now = new Date()): ReportEntry[] {
         ? `${sent[1]}-${String(Number(sent[2])).padStart(2, "0")}-${String(Number(sent[3])).padStart(2, "0")}`
         : "";
       // “明天”必须以消息发送日为基准，昨天的“明天”不能继续污染今天的简报。
-      return (sentKey === todayKey && /明天|明晚/.test(text)) || targetLabels.some((label) => text.includes(label));
+      // 当天发布的学校/家庭通知，即使省略“明天”二字，也可能是次日开学准备（如“请带好作业记录本”）。
+      // 这类消息必须进入明日管家，再由逐项验收决定是否列入清单。
+      const sameDayCarryNotice = sentKey === todayKey && /(?:带好|带齐|带上|携带)/u.test(text);
+      return (sentKey === todayKey && /明天|明晚/.test(text)) || sameDayCarryNotice || targetLabels.some((label) => text.includes(label));
     }
     return targetLabels.some((label) => text.includes(label));
   }).slice(0, 80).map((item) => ({
