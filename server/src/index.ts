@@ -1488,6 +1488,16 @@ app.post(`${API}/assistant-actions/:id/confirm`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
   const action = confirmAssistantAction(req.userId!, req.params.id);
   if (!action) { res.status(404).json({ error: "动作不存在或已处理" }); return; }
+  if (action.kind === "research") {
+    const report = createResearchDocument(req.userId!, action.title);
+    const job = enqueueAiJob(req.userId!, "research", {
+      reportId: report.id,
+      query: action.title,
+      originalRequest: action.details,
+    }, 100);
+    res.status(202).json({ ...action, jobId: job.id, reportId: report.id });
+    return;
+  }
   res.json(action);
 });
 app.post(`${API}/assistant-actions/:id/dismiss`, (req, res) => {
