@@ -67,7 +67,7 @@ export function finalizeTomorrowReport(report: Report, entries: ReportEntry[]): 
   const unsafeGenerated = /(?:\bWait\b|\bNeed exact\b|\bI must\b|不能引入等价|模型提示|^带上[：:]?(?:过来|作业的|明天补交来)$)/i;
   const required = explicitTomorrowChecklist(entries).filter((item) => !forbiddenDate.test(item));
   const requiredNormalized = required.map(normalizedChecklistItem);
-  const generated = (report.checklist || []).filter((item) => {
+  const generated = (report.checklist || []).map((item) => item.split(/[；;。]/)[0].trim()).filter((item) => {
     if (forbiddenDate.test(item) || unsafeGenerated.test(item) || item.length > 120) return false;
     const normalized = normalizedChecklistItem(item);
     // 明确物品由程序逐项列出，丢弃模型生成的合并或改写版本，避免重复和截断。

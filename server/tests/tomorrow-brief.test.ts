@@ -113,3 +113,15 @@ test("明日清单过滤误拆动词和模型过程文字，并确定性保留�
   assert.ok(report.checklist.includes("带上：告家长书"));
   assert.ok(!report.checklist.some((item) => /过来|作业的|Wait|每天的作业/.test(item)));
 });
+
+test("模型把建议拼入清单时只保留首个可执行事项", () => {
+  const report = finalizeTomorrowReport({
+    overview: "",
+    checklist: ["如在名单中，补交听写本；建议单独装袋，明天到校后确认登记。"],
+    preparations: [],
+    highlights: [],
+    improvements: [],
+    suggestions: [],
+  }, []);
+  assert.deepEqual(report.checklist, ["如在名单中，补交听写本"]);
+});
