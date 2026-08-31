@@ -81,3 +81,15 @@ test("近期学校通知中的携带要求逐项保留", () => {
   }]);
   assert.ok(items.includes("作业记录本"));
 });
+
+test("没有事项时明日管家也产生明确空状态，不返回空白报告", () => {
+  const report = finalizeTomorrowReport({
+    overview: "",
+    checklist: [],
+    preparations: [],
+    highlights: [],
+    improvements: [],
+    suggestions: [],
+  }, []);
+  assert.equal(report.overview, "明天暂无明确安排。");
+});

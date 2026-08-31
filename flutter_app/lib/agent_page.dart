@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'api_client.dart';
 
 class AgentPage extends StatefulWidget {
@@ -13,20 +14,37 @@ class _AgentPageState extends State<AgentPage> {
   String? error;
   List<Map<String, dynamic>> tasks = [];
   static const groups = <(String, String, IconData)>[
+    ('received', '刚刚收到', Icons.inbox_outlined),
+    ('classified', '正在判断', Icons.account_tree_outlined),
+    ('extracted', '已提取目标', Icons.filter_alt_outlined),
     ('awaiting_confirmation', '待确认', Icons.pan_tool_outlined),
     ('executing', '执行中', Icons.sync_rounded),
     ('verifying', '验收中', Icons.fact_check_outlined),
+    ('retrying', '重试中', Icons.refresh_rounded),
+    ('awaiting_user', '等待补充', Icons.help_outline_rounded),
     ('failed', '验收失败', Icons.error_outline_rounded),
     ('follow_up', '待跟进', Icons.notifications_active_outlined),
     ('verified', '已完成', Icons.check_circle_outline_rounded),
   ];
+  Timer? refreshTimer;
   @override
   void initState() {
     super.initState();
     load();
+    refreshTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => load(silent: true),
+    );
   }
 
-  Future<void> load() async {
+  @override
+  void dispose() {
+    refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> load({bool silent = false}) async {
+    if (!silent && mounted) setState(() => loading = true);
     try {
       final value = await widget.api.agentTasks();
       if (mounted) {
@@ -64,6 +82,33 @@ class _AgentPageState extends State<AgentPage> {
             children: [
               if (error != null)
                 Text(error!, style: const TextStyle(color: Colors.red)),
+              if (tasks.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(top: 80),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.auto_awesome_outlined,
+                        size: 42,
+                        color: Color(0xffd97706),
+                      ),
+                      SizedBox(height: 12),
+                      Text(
+                        '还没有 Agent 处理记录',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        '下一次提问或录入后，这里会实时显示识别、执行和验收过程。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xff8a8680),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               for (final group in groups) ..._section(group),
             ],
           ),
@@ -95,7 +140,7 @@ class _AgentPageState extends State<AgentPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  task['capability']?.toString() ?? 'Agent 任务',
+                  _capabilityLabel(task['capability']?.toString()),
                   style: const TextStyle(
                     fontSize: 11,
                     color: Color(0xff8a8680),
@@ -151,4 +196,14 @@ class _AgentPageState extends State<AgentPage> {
         ),
     ];
   }
+
+  String _capabilityLabel(String? capability) => switch (capability) {
+    'input_processing' => '提问与录入',
+    'tomorrow_brief' => '明日管家',
+    'document_action' => '资料后续动作',
+    'todo' => '待办',
+    'reminder' => '提醒',
+    'research' => '研究',
+    _ => capability ?? 'Agent 任务',
+  };
 }

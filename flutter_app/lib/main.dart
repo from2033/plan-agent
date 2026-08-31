@@ -611,13 +611,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool worldPulseLoading = false;
   String? worldPulseError;
   Timer? worldPulseAnalysisTimer;
+  Timer? agentProgressTimer;
+  List<Map<String, dynamic>> agentTasks = [];
 
   static const List<(String, IconData)> tabs = [
     ('首页', Icons.mic_none_rounded),
     ('待办', Icons.checklist_rounded),
     ('对话', Icons.forum_outlined),
     ('资料库', Icons.folder_copy_outlined),
-    ('Agent', Icons.auto_awesome_rounded),
   ];
 
   @override
@@ -627,9 +628,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     shortcutChannel.setMethodCallHandler(_handleShortcutMethod);
     refresh();
     if (!widget.isGuest) unawaited(refreshQqSyncStatus());
+    if (!widget.isGuest) {
+      unawaited(_refreshAgentProgress());
+      agentProgressTimer = Timer.periodic(
+        const Duration(seconds: 2),
+        (_) => unawaited(_refreshAgentProgress()),
+      );
+    }
     unawaited(refreshWorldPulse());
     if (!widget.isGuest) unawaited(_recoverMeetingRecordings());
     unawaited(_consumePendingShortcut());
+  }
+
+  Future<void> _refreshAgentProgress() async {
+    try {
+      final value = await widget.api.agentTasks();
+      if (mounted && !_disposing) setState(() => agentTasks = value);
+    } catch (_) {
+      // 首页继续显示本地处理状态；网络恢复后下一次轮询会自动补齐。
+    }
   }
 
   Future<dynamic> _handleShortcutMethod(MethodCall call) async {
@@ -1103,6 +1120,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     shortcutChannel.setMethodCallHandler(null);
     worldPulseAnalysisTimer?.cancel();
+    agentProgressTimer?.cancel();
     voice.dispose();
     meetingRecorder.dispose();
     super.dispose();
@@ -1145,13 +1163,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           )
         ? '明天'
         : DateFormat('M月d日').format(selectedDate);
-    final titles = [homeTitle, '待办', '对话', '资料库', 'Agent'];
+    final titles = [homeTitle, '待办', '对话', '资料库'];
     const subtitles = [
       '说一句，我来记录和查询',
       '把没做完的事情理清楚',
       '每次提问和回答都会保留',
       '长期保存的资料与知识',
-      '所有任务、验收和后续跟进',
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
@@ -1225,7 +1242,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       1 => _buildReminderPage(),
       2 => _buildConversationPage(),
       3 => _buildLibraryPage(),
-      4 => AgentPage(api: widget.api),
       _ => _buildHomePage(),
     };
   }
@@ -1239,6 +1255,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  Future<void> _openAgentHistory() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Agent 处理记录')),
+          body: AgentPage(api: widget.api),
+        ),
+      ),
+    );
+    unawaited(_refreshAgentProgress());
   }
 
   Future<void> _openDesktopPairingScanner() async {
@@ -1980,6 +2008,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       children: [
+        if (!widget.isGuest)
+          _settingsTile(
+            Icons.auto_awesome_rounded,
+            'Agent 处理记录',
+            '查看每次输入的处理、验收与失败原因',
+            _openAgentHistory,
+          ),
         _settingsTile(
           Icons.bar_chart_rounded,
           '消费分析',
@@ -2185,7 +2220,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   );
 
   Widget _buildPendingTasks() {
-    if (pendingTasks.isEmpty) return const SizedBox.shrink();
+    const activeStages = {
+      'received',
+      'classified',
+      'extracted',
+      'executing',
+      'verifying',
+      'retrying',
+    };
+    final activeAgentTasks = agentTasks
+        .where((task) => activeStages.contains(task['stage']))
+        .take(3)
+        .toList();
+    if (pendingTasks.isEmpty && activeAgentTasks.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       padding: const EdgeInsets.all(10),
@@ -2195,7 +2244,58 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         border: Border.all(color: const Color(0xffe5ded4)),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          InkWell(
+            onTap: _openAgentHistory,
+            child: const Padding(
+              padding: EdgeInsets.fromLTRB(10, 3, 6, 5),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 17,
+                    color: Color(0xffb45f06),
+                  ),
+                  SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      'Agent 实时处理',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Text(
+                    '查看过程',
+                    style: TextStyle(fontSize: 11, color: Color(0xff8a8680)),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 18,
+                    color: Color(0xff8a8680),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          for (final task in activeAgentTasks)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              title: Text(
+                (task['input'] as Map?)?['title']?.toString() ?? '正在处理输入',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                task['nextAction']?.toString() ?? '正在处理',
+                style: const TextStyle(color: Color(0xffb45f06)),
+              ),
+            ),
           for (final task in pendingTasks.take(3))
             ListTile(
               dense: true,
@@ -2356,7 +2456,7 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
 
   Future<void> load() async {
     setState(() {
-      loading = relevant.isNotEmpty;
+      loading = true;
       report = null;
       stale = false;
       updatedAt = null;
@@ -2549,40 +2649,7 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                     ),
                   ),
                 ],
-                if (relevant.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 70),
-                    child: Column(
-                      children: [
-                        const Icon(
-                          Icons.event_available_outlined,
-                          size: 42,
-                          color: Color(0xffd97706),
-                        ),
-                        const SizedBox(height: 14),
-                        const Text(
-                          '明天还没有安排',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 7),
-                        const Text(
-                          '在首页或待办中记录明天的事项后，管家会自动整理清单和准备建议',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Color(0xff8a8680),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        OutlinedButton.icon(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.checklist_rounded, size: 17),
-                          label: const Text('去待办添加安排'),
-                        ),
-                      ],
-                    ),
-                  )
-                else if (loading)
+                if (loading)
                   const Padding(
                     padding: EdgeInsets.only(top: 70),
                     child: Column(
@@ -2590,7 +2657,7 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                         CircularProgressIndicator(),
                         SizedBox(height: 14),
                         Text(
-                          '正在整理记录并生成报告…',
+                          '正在核对 QQ 消息、待办和原始通知…',
                           style: TextStyle(color: Color(0xff8a8680)),
                         ),
                       ],
@@ -2598,8 +2665,8 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                   )
                 else if (error != null)
                   _ReportSection(
-                    title: '暂时没有生成分析',
-                    icon: Icons.info_outline_rounded,
+                    title: '明日管家加载失败',
+                    icon: Icons.error_outline_rounded,
                     items: [error!],
                   )
                 else if (hasReportContent) ...[
@@ -2632,17 +2699,44 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                     items: report!.improvements,
                   ),
                   _ReportSection(
-                    title: scope == 'tomorrow'
-                        ? '管家建议'
-                        : scope == 'day'
-                        ? '明天建议'
-                        : scope == 'week'
-                        ? '下周建议'
-                        : '下月建议',
+                    title: '管家建议',
                     icon: Icons.lightbulb_outline_rounded,
                     items: report!.suggestions,
                   ),
-                ] else
+                ] else if (relevant.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 70),
+                    child: Column(
+                      children: [
+                        const Icon(
+                          Icons.event_available_outlined,
+                          size: 42,
+                          color: Color(0xffd97706),
+                        ),
+                        const SizedBox(height: 14),
+                        const Text(
+                          '明天还没有安排',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 7),
+                        const Text(
+                          '在首页或待办中记录明天的事项后，管家会自动整理清单和准备建议',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xff8a8680),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        OutlinedButton.icon(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.checklist_rounded, size: 17),
+                          label: const Text('去待办添加安排'),
+                        ),
+                      ],
+                    ),
+                  )
+                else
                   const Padding(
                     padding: EdgeInsets.only(top: 70),
                     child: Center(

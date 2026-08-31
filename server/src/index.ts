@@ -143,7 +143,7 @@ import {
   listMistakes,
   reviewMistake,
 } from "./mistakes.js";
-import { getFinanceOverview, importAlipayBill } from "./finance.js";
+import { getFinanceCategoryTransactions, getFinanceOverview, importAlipayBill } from "./finance.js";
 import {
   buildWorldPulseDiscoveryInput,
   currentWorldPulseDiscovery,
@@ -162,6 +162,54 @@ const STUDY_APP_URL = process.env.STUDY_APP_URL || "https://sutyd.5656ai.com/app
 const STUDY_SSO_SECRET = process.env.STUDY_SSO_SECRET || "";
 const QQ_TASK_SYNC_SECRET = process.env.QQ_TASK_SYNC_SECRET || "";
 const QQ_TASK_SYNC_USER = process.env.QQ_TASK_SYNC_USER || process.env.PRIMARY_USER || "我";
+
+function isFinanceSubscriptionQuestion(raw: string): boolean {
+  return /(账单|消费|支出|支付宝)/.test(raw)
+    && /(数码|数字资料|数字订阅|互联网.*订阅|订阅.*互联网)/.test(raw);
+}
+
+function financeSubscriptionAnswer(userId: string): string {
+  const overview = getFinanceOverview(userId, 24);
+  const category = overview.categories.find((item) => item.category === "数码订阅");
+  const transactions = getFinanceCategoryTransactions(userId, "数码订阅", 24, 100);
+  if (!category || !transactions.length) {
+    return "我检查了最近 24 个月的账单，目前没有找到被归为“数码订阅”的成功支出。";
+  }
+  const grouped = new Map<string, { count: number; amount: number }>();
+  for (const item of transactions) {
+    const label = item.itemName || item.counterparty || "未标明项目";
+    const current = grouped.get(label) || { count: 0, amount: 0 };
+    current.count += 1;
+    current.amount += Math.max(0, item.amount - item.refundedAmount);
+    grouped.set(label, current);
+  }
+  const details = [...grouped.entries()]
+    .sort((left, right) => right[1].amount - left[1].amount)
+    .slice(0, 8)
+    .map(([label, value]) => `${label}（${value.count} 笔，¥${value.amount.toFixed(2)}）`)
+    .join("；");
+  return `账单里的“数码订阅”是系统按商户和商品关键词归出的消费类别，不代表每一笔都是自动续费。最近 24 个月共有 ${category.count} 笔，净支出 ¥${category.amount.toFixed(2)}。主要包括：${details}。归类规则会把 Apple/App Store/iTunes/GiftCard、云服务、服务器、软件、会员或充值类交易放进这一类。`;
+}
+
+function beginInputAgentTask(userId: string, raw: string, inputMode: "voice" | "text") {
+  const task = createPersistentAgentTask(
+    userId,
+    "input_processing",
+    { title: raw.slice(0, 80), raw, inputMode },
+    inputMode,
+  );
+  transitionPersistentAgentTask(userId, task.id, "classified", "input_classified");
+  transitionPersistentAgentTask(userId, task.id, "extracted", "goal_extracted");
+  return transitionPersistentAgentTask(userId, task.id, "executing", "processing_started")!;
+}
+
+function finishInputAgentTask(userId: string, taskId: string | undefined, result: unknown): void {
+  if (!taskId) return;
+  const task = getPersistentAgentTask(taskId, userId);
+  if (!task || task.stage !== "executing") return;
+  transitionPersistentAgentTask(userId, taskId, "verifying", "result_ready", result);
+  verifyPersistentAgentTask(userId, taskId, result);
+}
 
 const app = express();
 app.set("trust proxy", 1);
@@ -903,6 +951,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
   const result = value as WorkerIngestResult;
   const input = job.input as {
     raw: string;
+    agentTaskId?: string;
     intentHint?: IntentHint;
     interactionMode?: "conversation" | "home" | "capture";
     inputMode?: "voice" | "text";
@@ -918,7 +967,9 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const item = isGuestUser(job.userId)
       ? { id: `ai-${job.id}`, title, content, timestamp: new Date().toISOString() }
       : insertKnowledge(job.userId, title, content, `ai-${job.id}`);
-    return { kind: "save", item, conversationTitle: result.conversationTitle };
+    const response = { kind: "save", item, conversationTitle: result.conversationTitle };
+    finishInputAgentTask(job.userId, input.agentTaskId, response);
+    return response;
   }
   if (result.kind === "save") {
     const item = isGuestUser(job.userId)
@@ -929,7 +980,9 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
           timestamp: new Date().toISOString(),
         }
       : insertKnowledge(job.userId, result.title!, result.content!, `ai-${job.id}`);
-    return { kind: "save", item, conversationTitle: result.conversationTitle };
+    const response = { kind: "save", item, conversationTitle: result.conversationTitle };
+    finishInputAgentTask(job.userId, input.agentTaskId, response);
+    return response;
   }
   if (result.kind === "ask") {
     const wanted = new Set(result.sourceIds || []);
@@ -968,7 +1021,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
         resultConversationId,
       );
     }
-    return {
+    const response = {
       kind: "ask",
       answer: result.answer,
       sources: [...documentSources, ...knowledgeSources],
@@ -978,6 +1031,8 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
       conversationTitle: result.conversationTitle,
       ...(resultConversationId ? { conversationId: resultConversationId } : {}),
     };
+    finishInputAgentTask(job.userId, input.agentTaskId, response);
+    return response;
   }
 
   const now = new Date();
@@ -1033,7 +1088,9 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
       }
     }
   }
-  return { kind: "record", entries, via: "codex-desktop", conversationTitle: result.conversationTitle };
+  const response = { kind: "record", entries, via: "codex-desktop", conversationTitle: result.conversationTitle };
+  finishInputAgentTask(job.userId, input.agentTaskId, response);
+  return response;
 }
 
 app.post(`${WORKER_API}/jobs/:id/result`, requireWorker, (req, res) => {
@@ -1082,7 +1139,19 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
     }
   }
   const current = leased ? getAiJob(leased.id, leased.userId) : null;
-  if (leased && current?.status === "FAILED") failAiInteraction(leased.userId, leased.id);
+  if (leased && current?.status === "FAILED") {
+    failAiInteraction(leased.userId, leased.id);
+    const agentTaskId = String((leased.input as { agentTaskId?: unknown })?.agentTaskId || "");
+    const agentTask = agentTaskId ? getPersistentAgentTask(agentTaskId, leased.userId) : null;
+    if (agentTask?.stage === "executing") {
+      transitionPersistentAgentTask(
+        leased.userId,
+        agentTaskId,
+        "failed",
+        current.error || "worker_failed",
+      );
+    }
+  }
   res.json({ ok: true });
 });
 
@@ -2100,6 +2169,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     return;
   }
   let synchronousInteractionId: string | null = null;
+  let inputAgentTaskId: string | undefined;
   const interactionConversationId = conversationId;
   if (!raw) {
     res.status(400).json({ error: "raw 不能为空" });
@@ -2145,11 +2215,32 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       }
       return;
     }
+    if (!isGuestUser(req.userId)) {
+      inputAgentTaskId = beginInputAgentTask(req.userId!, raw, inputMode).id;
+    }
+    if (isFinanceSubscriptionQuestion(raw) && !isGuestUser(req.userId)) {
+      const resultConversationId = interactionConversationId || createConversation(req.userId!, "新对话");
+      synchronousInteractionId = `sync-${crypto.randomUUID()}`;
+      beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode, resultConversationId);
+      const response = {
+        kind: "ask",
+        answer: financeSubscriptionAnswer(req.userId!),
+        sources: [],
+        retrievalStatus: "answered_from_finance_data",
+        conversationTitle: "数码订阅账单明细",
+        conversationId: resultConversationId,
+      };
+      completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
+      finishInputAgentTask(req.userId!, inputAgentTaskId, response);
+      res.json(response);
+      return;
+    }
     const intentHint = knowledgeIntentHint(raw);
     if (codexWorkerOnline()) {
       const knowledge = knowledgeFromRequest(req, conversationId);
       const job = enqueueAiJob(req.userId!, "ingest", {
         raw,
+        ...(inputAgentTaskId ? { agentTaskId: inputAgentTaskId } : {}),
         intentHint,
         interactionMode: interactionConversationId ? "conversation" : "home",
         inputMode,
@@ -2161,7 +2252,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       if (!isGuestUser(req.userId) && interactionConversationId) {
         beginAiInteraction(req.userId!, job.id, raw, inputMode, interactionConversationId || undefined);
       }
-      res.status(202).json({ kind: "pending", jobId: job.id });
+      res.status(202).json({ kind: "pending", jobId: job.id, agentTaskId: inputAgentTaskId });
       return;
     }
     if (!isGuestUser(req.userId) && interactionConversationId) {
@@ -2181,6 +2272,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       if (synchronousInteractionId) {
         completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
       }
+      finishInputAgentTask(req.userId!, inputAgentTaskId, response);
       res.status(201).json(response);
       return;
     }
@@ -2200,6 +2292,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       if (synchronousInteractionId) {
         completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
       }
+      finishInputAgentTask(req.userId!, inputAgentTaskId, response);
       res.status(201).json(response);
       return;
     }
@@ -2210,6 +2303,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       const ans = await answerQuestion(notes, result.query);
       if (!ans) {
         if (synchronousInteractionId) failAiInteraction(req.userId!, synchronousInteractionId);
+        if (inputAgentTaskId) transitionPersistentAgentTask(req.userId!, inputAgentTaskId, "failed", "answer_unavailable");
         res.status(503).json({ kind: "ask", answer: "未配置 AI，无法查询知识库。", sources: [] });
         return;
       }
@@ -2228,6 +2322,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       if (synchronousInteractionId) {
         completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
       }
+      finishInputAgentTask(req.userId!, inputAgentTaskId, response);
       res.json(response);
       return;
     }
@@ -2281,9 +2376,16 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     if (synchronousInteractionId) {
       completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
     }
+    finishInputAgentTask(req.userId!, inputAgentTaskId, response);
     res.status(201).json(response);
   } catch (err) {
     if (synchronousInteractionId) failAiInteraction(req.userId!, synchronousInteractionId);
+    if (inputAgentTaskId) {
+      const task = getPersistentAgentTask(inputAgentTaskId, req.userId!);
+      if (task && ["received", "classified", "extracted", "executing"].includes(task.stage)) {
+        try { transitionPersistentAgentTask(req.userId!, inputAgentTaskId, "failed", "input_processing_failed"); } catch { /* keep original error */ }
+      }
+    }
     console.error("[POST entries] 失败:", err);
     res.status(500).json({ error: "记录失败" });
   }
@@ -2341,6 +2443,19 @@ app.post(`${API}/summary`, requireGuestQuota("summary", 30), async (req, res) =>
   let entries: ReportEntry[] = Array.isArray(req.body?.entries) ? req.body.entries.slice(0, 2000) : [];
   if (scope === "tomorrow") entries = tomorrowBriefEntries(req.userId!);
   if (!entries.length) {
+    if (scope === "tomorrow") {
+      res.json({
+        overview: "明天暂无明确安排。",
+        checklist: [],
+        preparations: [],
+        highlights: [],
+        improvements: [],
+        suggestions: [],
+        cached: false,
+        stale: false,
+      });
+      return;
+    }
     res.status(204).end();
     return;
   }
@@ -2358,13 +2473,19 @@ app.post(`${API}/summary`, requireGuestQuota("summary", 30), async (req, res) =>
       const inputHash = reportFingerprint(entries);
       const cached = getCachedReport(req.userId!, scope, periodKey);
       if (cached?.inputHash === inputHash) {
-        res.json({ ...cached.report, cached: true, stale: false, updatedAt: cached.updatedAt });
+        const report = scope === "tomorrow"
+          ? finalizeTomorrowReport(cached.report, entries)
+          : cached.report;
+        res.json({ ...report, cached: true, stale: false, updatedAt: cached.updatedAt });
         return;
       }
       const job = ensureSummaryJob(req.userId!, scope, periodKey, dateLabel, entries);
       if (cached) {
+        const report = scope === "tomorrow"
+          ? finalizeTomorrowReport(cached.report, entries)
+          : cached.report;
         res.json({
-          ...cached.report,
+          ...report,
           cached: true,
           stale: true,
           updatedAt: cached.updatedAt,

@@ -14,6 +14,7 @@ process.env.DB_ENCRYPTION_KEY = crypto.randomBytes(32).toString("base64");
 
 const {
   deleteFinanceAccountData,
+  getFinanceCategoryTransactions,
   getFinanceOverview,
   importAlipayBill,
   parseAlipayBill,
@@ -103,6 +104,18 @@ test("支付宝 ZIP 账单可解析、分类，并按交易号增量去重", () 
   deleteFinanceAccountData("owner");
   assert.equal(getFinanceOverview("owner", 12).summary.netExpense, 0);
   assert.equal(getFinanceOverview("other", 12).summary.netExpense, 110);
+});
+
+test("可按分类取得账单明细，供 Agent 回答具体消费问题", () => {
+  const digitalRows = [
+    row(["D1", "DO1", "2026-08-17 07:48:18", "2026-08-17 07:48:19", "2026-08-17 07:48:19", "支付宝", "即时到账交易", "Yuansfer Inc", "App Store & iTunes US - Pockyt GiftCard", "135.37", "支出", "交易成功", "0.00", "0.00", "", "已支出"]),
+    row(["D2", "DO2", "2026-08-18 07:48:18", "2026-08-18 07:48:19", "2026-08-18 07:48:19", "支付宝", "即时到账交易", "Apple", "软件订阅", "20.00", "支出", "交易关闭", "0.00", "0.00", "", "已支出"]),
+  ];
+  importAlipayBill("digital-owner", "数码账单.zip", billZip(digitalRows));
+  const details = getFinanceCategoryTransactions("digital-owner", "数码订阅", 24);
+  assert.equal(details.length, 1);
+  assert.equal(details[0]?.itemName, "App Store & iTunes US - Pockyt GiftCard");
+  assert.equal(getFinanceCategoryTransactions("other-owner", "数码订阅", 24).length, 0);
 });
 
 test.after(() => {

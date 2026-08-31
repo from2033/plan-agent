@@ -32,3 +32,25 @@ test("Agent 任务拒绝非法状态跳转", () => {
   const task = createPersistentAgentTask("agent-test-user", "todo", { text: "测试" }, "test", "source-2");
   assert.throws(() => transitionPersistentAgentTask("agent-test-user", task.id, "verified", "非法"), /agent_invalid_transition/);
 });
+
+test("普通提问必须产生可用答案，空泛的未找到回答不能通过验收", () => {
+  const failedTask = createPersistentAgentTask("agent-input-user", "input_processing", { title: "查询账单" });
+  transitionPersistentAgentTask("agent-input-user", failedTask.id, "classified", "classified");
+  transitionPersistentAgentTask("agent-input-user", failedTask.id, "extracted", "extracted");
+  transitionPersistentAgentTask("agent-input-user", failedTask.id, "executing", "executing");
+  transitionPersistentAgentTask("agent-input-user", failedTask.id, "verifying", "result_ready");
+  assert.equal(verifyPersistentAgentTask("agent-input-user", failedTask.id, {
+    kind: "ask",
+    answer: "我找到了相关来源，但里面没有明确写出你问的这项信息。",
+  })?.stage, "failed");
+
+  const passedTask = createPersistentAgentTask("agent-input-user", "input_processing", { title: "查询账单" });
+  transitionPersistentAgentTask("agent-input-user", passedTask.id, "classified", "classified");
+  transitionPersistentAgentTask("agent-input-user", passedTask.id, "extracted", "extracted");
+  transitionPersistentAgentTask("agent-input-user", passedTask.id, "executing", "executing");
+  transitionPersistentAgentTask("agent-input-user", passedTask.id, "verifying", "result_ready");
+  assert.equal(verifyPersistentAgentTask("agent-input-user", passedTask.id, {
+    kind: "ask",
+    answer: "数码订阅包含 App Store 礼品卡交易。",
+  })?.stage, "verified");
+});

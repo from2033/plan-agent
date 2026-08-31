@@ -18,6 +18,30 @@ registerCapabilityStandard({
   }],
 });
 
+registerCapabilityStandard({
+  capability: "input_processing",
+  version: "1.0",
+  description: "用户输入必须被正确分类，并产生可用答案、记录或保存结果",
+  requiresConfirmation: false,
+  allowedSideEffects: ["create_conversation", "create_entry", "save_knowledge"],
+  failurePolicy: "retry",
+  acceptance: () => [{
+    id: "usable-result",
+    description: "输入处理产生了可用且非答非所问的结果",
+    check: (result) => {
+      const value = result as { kind?: string; answer?: string; entries?: unknown[]; item?: unknown } | null;
+      if (!value) return false;
+      if (value.kind === "ask") {
+        const answer = String(value.answer || "").trim();
+        return answer.length > 0 && !/没有明确写出|无法查询|没有找到相关|未配置 AI/.test(answer);
+      }
+      if (value.kind === "record") return Array.isArray(value.entries) && value.entries.length > 0;
+      if (value.kind === "save") return value.item != null;
+      return false;
+    },
+  }],
+});
+
 for (const capability of ["document_action", "research", "todo", "reminder", "qq_task_sync", "desktop_action"]) {
   registerCapabilityStandard({
     capability,

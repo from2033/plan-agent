@@ -637,6 +637,24 @@ export function getFinanceOverview(userId: string, requestedMonths = 3): Finance
   };
 }
 
+export function getFinanceCategoryTransactions(
+  userId: string,
+  category: string,
+  requestedMonths = 24,
+  requestedLimit = 100,
+): Array<ParsedFinanceTransaction & { id: string }> {
+  const rangeMonths = Math.max(1, Math.min(24, Math.round(requestedMonths || 24)));
+  const limit = Math.max(1, Math.min(200, Math.round(requestedLimit || 100)));
+  const rows = db.prepare(`SELECT * FROM finance_transactions
+    WHERE user_id=? AND created_at>=? ORDER BY created_at DESC LIMIT 20000`)
+    .all(userId, monthCutoff(rangeMonths)) as unknown as FinanceTransactionRow[];
+  return rows.map(readableTransaction).filter((transaction) =>
+    transaction.direction === "支出"
+      && /^(交易成功|支付成功)$/.test(transaction.status)
+      && transaction.category === category,
+  ).slice(0, limit);
+}
+
 export function deleteFinanceAccountData(userId: string): void {
   const archives = db.prepare("SELECT archive_file FROM finance_imports WHERE user_id=?")
     .all(userId) as unknown as Array<{ archive_file: string }>;

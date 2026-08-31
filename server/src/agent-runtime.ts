@@ -65,7 +65,20 @@ export function transitionPersistentAgentTask(userId: string, id: string, toStag
   if (task.stage !== toStage && !allowed[task.stage].includes(toStage)) throw new Error(`agent_invalid_transition:${task.stage}->${toStage}`);
   const now = new Date().toISOString();
   const failures = toStage === "failed" ? (Array.isArray(result) ? result : [reason]) : task.failures;
-  const nextAction = toStage === "failed" ? "请重试或查看失败原因" : toStage === "verified" ? "已完成，等待后续跟进" : toStage === "awaiting_confirmation" ? "等待用户确认" : null;
+  const nextActions: Partial<Record<AgentStage, string>> = {
+    received: "已收到，正在识别输入",
+    classified: "已判断类型，正在提取目标",
+    extracted: "目标已提取，准备执行",
+    awaiting_confirmation: "等待用户确认",
+    executing: "正在处理",
+    verifying: "结果已产生，正在验收",
+    verified: "已完成并通过验收",
+    failed: "请重试或查看失败原因",
+    retrying: "正在重试",
+    follow_up: "等待后续处理",
+    awaiting_user: "等待用户补充信息",
+  };
+  const nextAction = nextActions[toStage] || null;
   db.prepare("UPDATE agent_tasks SET stage=?,result_json=?,failure_json=?,next_action=?,updated_at=? WHERE id=? AND user_id=?").run(toStage, result == null ? task.result == null ? null : encField(JSON.stringify(task.result)) : encField(JSON.stringify(result)), encField(JSON.stringify(failures)), nextAction, now, id, userId);
   const updated = getPersistentAgentTask(id, userId)!; event(updated, task.stage, toStage, reason, result); return updated;
 }
