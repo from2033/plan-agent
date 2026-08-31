@@ -134,7 +134,7 @@ import {
   chunkedUploadStore,
   MAX_CHUNKED_DOCUMENT_SIZE,
 } from "./chunked-upload.js";
-import { confirmAssistantAction, dismissAssistantAction, listAssistantActions, proposeDocumentActions } from "./assistant-actions.js";
+import { confirmAssistantAction, confirmAssistantActionByAgentTaskId, dismissAssistantAction, listAssistantActions, proposeDocumentActions } from "./assistant-actions.js";
 import { createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, listPersistentAgentTasks, transitionPersistentAgentTask, verifyPersistentAgentTask } from "./agent-runtime.js";
 import { registeredCapabilities } from "./agent-contract.js";
 import {
@@ -1504,6 +1504,15 @@ app.get(`${API}/agent/tasks/:id/events`, (req, res) => {
   const task = getPersistentAgentTask(req.params.id, req.userId!);
   if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
   res.json(listAgentTaskEvents(req.userId!, req.params.id));
+});
+app.post(`${API}/agent/tasks/:id/confirm`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const action = confirmAssistantActionByAgentTaskId(req.userId!, req.params.id);
+  if (action) { res.json(action); return; }
+  const task = getPersistentAgentTask(req.params.id, req.userId!);
+  if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
+  if (task.stage !== "awaiting_confirmation") { res.json(task); return; }
+  res.json(transitionPersistentAgentTask(req.userId!, task.id, "executing", "user_confirmed"));
 });
 app.get(`${API}/agent/tasks/:id`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }

@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { encField, decField } from "./crypto-field.js";
 import { insertEntry } from "./db.js";
 import type { Entry } from "./types.js";
-import { createPersistentAgentTask, transitionPersistentAgentTask } from "./agent-runtime.js";
+import { createPersistentAgentTask, transitionPersistentAgentTask, verifyPersistentAgentTask } from "./agent-runtime.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
 db.exec(`
@@ -56,7 +56,10 @@ export function confirmAssistantAction(userId: string, id: string): AssistantAct
   if (row.kind === "todo") {
     const entry: Entry = { id: crypto.randomUUID(), type: "memo", raw: decField(row.details), time: now, description: payload.description || decField(row.title), category: payload.category || "待办", priority: payload.priority || "medium", done: false, timestamp: now };
     insertEntry(entry, userId);
-    if (row.agent_task_id) transitionPersistentAgentTask(userId, row.agent_task_id, "verified", "todo_created", entry);
+    if (row.agent_task_id) {
+      transitionPersistentAgentTask(userId, row.agent_task_id, "verifying", "todo_created", entry);
+      verifyPersistentAgentTask(userId, row.agent_task_id, entry);
+    }
   }
   if (row.agent_task_id) transitionPersistentAgentTask(userId, row.agent_task_id, "executing", "action_confirmed");
   db.prepare("UPDATE assistant_actions SET status='CONFIRMED',updated_at=? WHERE id=? AND user_id=?").run(now, id, userId);
@@ -66,4 +69,9 @@ export function confirmAssistantAction(userId: string, id: string): AssistantAct
 export function dismissAssistantAction(userId: string, id: string): boolean {
   const result = db.prepare("UPDATE assistant_actions SET status='DISMISSED',updated_at=? WHERE id=? AND user_id=? AND status='PENDING'").run(new Date().toISOString(), id, userId);
   return Number(result.changes) > 0;
+}
+
+export function confirmAssistantActionByAgentTaskId(userId: string, taskId: string): AssistantAction | null {
+  const row = db.prepare("SELECT id FROM assistant_actions WHERE user_id=? AND agent_task_id=? AND status='PENDING'").get(userId, taskId) as { id?: string } | undefined;
+  return row?.id ? confirmAssistantAction(userId, row.id) : null;
 }
