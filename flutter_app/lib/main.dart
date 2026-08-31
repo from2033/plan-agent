@@ -1331,19 +1331,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildTomorrowBriefCard() => InkWell(
     borderRadius: BorderRadius.circular(16),
-    onTap: () => showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: false,
-      builder: (_) => SizedBox(
-        height: MediaQuery.sizeOf(context).height * .86,
-        child: TomorrowBriefPane(
-          api: widget.api,
-          entries: entries,
-          selectedDate: selectedDate,
-        ),
-      ),
-    ),
+    onTap: _openTomorrowBrief,
     child: Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1957,7 +1945,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openTomorrowBrief() async {
-    await showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (_) => SizedBox(height: MediaQuery.sizeOf(context).height * .86, child: TomorrowBriefPane(api: widget.api, entries: entries, selectedDate: selectedDate)));
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Scaffold(appBar: AppBar(title: const Text('明日管家')), body: TomorrowBriefPane(api: widget.api, entries: entries, selectedDate: selectedDate))));
   }
 
   Future<void> _openHousekeepingPage() async {
