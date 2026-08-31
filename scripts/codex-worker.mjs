@@ -1448,13 +1448,21 @@ function enrichDocumentSearchResult(source, searchRoot) {
 }
 
 function temporalDocumentComparison(question, job, left, right) {
-  if (!/(?:今天|今晚|今夜|刚才|刚刚|最近|最新|这次|本次)/.test(question)) return 0;
+  const currentDayReference = /(?:今天|今晚|今夜|今早|今晨)/.test(question);
+  const explicitRecency = /(?:刚才|刚刚|最近|最新|这次|本次)/.test(question);
+  if (!currentDayReference && !explicitRecency) return 0;
   const currentDate = String(job?.input?.context?.currentDate || "");
   if (/^\d{4}-\d{2}-\d{2}$/.test(currentDate)) {
-    const dateDifference = Number(right.documentDate === currentDate)
-      - Number(left.documentDate === currentDate);
+    const leftIsCurrent = left.documentDate === currentDate;
+    const rightIsCurrent = right.documentDate === currentDate;
+    const dateDifference = Number(rightIsCurrent) - Number(leftIsCurrent);
     if (dateDifference) return dateDifference;
+    // “Today” is a date filter, not an instruction to prefer the last recording
+    // made that day. Once both sources are on the requested date, topic relevance
+    // should decide unless the user explicitly asks for the latest/recent item.
+    if (currentDayReference && leftIsCurrent && rightIsCurrent && !explicitRecency) return 0;
   }
+  if (!explicitRecency) return 0;
   const rightTime = Date.parse(String(right.archivedAt || ""));
   const leftTime = Date.parse(String(left.archivedAt || ""));
   if (Number.isFinite(rightTime) || Number.isFinite(leftTime)) {

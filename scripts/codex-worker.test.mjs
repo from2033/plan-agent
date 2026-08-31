@@ -575,6 +575,25 @@ test("family document search includes only explicitly granted document ids", () 
   }
 });
 
+test("same-day meeting search ranks topic relevance ahead of archive time", () => {
+  const temporaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "assistant-meeting-ranking-test-"));
+  try {
+    const root = resolveKnowledgeSpaceRoot({ spaceId: spaceOne }, temporaryDir);
+    const noteDir = path.join(root, "资料", "会议录音");
+    fs.mkdirSync(noteDir, { recursive: true });
+    fs.writeFileSync(path.join(noteDir, "较早的app会议.md"), `---\ndocument_id: "4b472924-15cc-4676-8d3d-f5f947e574fa"\ntitle: "关于app开发和打包部署的会议"\ncategory: "会议录音"\ndocument_date: "2026-08-31"\narchived_at: "2026-08-31T02:50:00.000Z"\n---\n讨论app开发、代码审查以及打包部署流程。\n`, "utf8");
+    fs.writeFileSync(path.join(noteDir, "较新的其他会议.md"), `---\ndocument_id: "5b472924-15cc-4676-8d3d-f5f947e574fa"\ntitle: "关于AI小票处理的会议"\ncategory: "会议录音"\ndocument_date: "2026-08-31"\narchived_at: "2026-08-31T03:18:00.000Z"\n---\n讨论小票上传、数据质检和人工确认流程。\n`, "utf8");
+
+    const results = searchAccessibleDocuments("总结今天早上会议里关于app开发的部分", {
+      spaceId: spaceOne,
+      input: { context: { currentDate: "2026-08-31" } },
+    }, temporaryDir, 2, { vectorSearch: false });
+    assert.equal(results[0].documentId, "4b472924-15cc-4676-8d3d-f5f947e574fa");
+  } finally {
+    fs.rmSync(temporaryDir, { recursive: true, force: true });
+  }
+});
+
 test("explicit family document questions override an incorrect record classification", () => {
   assert.equal(shouldSearchDocumentsForIngest(
     "帮我总结今日家长会，总结成一二三这样的点，不能遗漏。",
