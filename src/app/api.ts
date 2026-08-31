@@ -109,6 +109,21 @@ export function getEntries(): Promise<Entry[]> {
   return request<Entry[]>("/entries");
 }
 
+export interface AgentTask {
+  id: string;
+  capability: string;
+  standardVersion: string;
+  stage: string;
+  sourceType?: string;
+  input: { title?: string; details?: string };
+  failures: string[];
+  nextAction?: string;
+  updatedAt: string;
+}
+export const getAgentTasks = (): Promise<AgentTask[]> => request<AgentTask[]>("/agent/tasks");
+export const confirmAgentTask = (id: string): Promise<AgentTask> => request<AgentTask>(`/agent/tasks/${encodeURIComponent(id)}/confirm`, { method: "POST" });
+export const retryAgentTask = (id: string): Promise<AgentTask> => request<AgentTask>(`/agent/tasks/${encodeURIComponent(id)}/retry`, { method: "POST" });
+
 export interface FinanceImportResult {
   importId: string;
   alreadyImported: boolean;

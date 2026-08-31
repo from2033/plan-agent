@@ -57,6 +57,21 @@ interface Entry {
 
 type Tab = "today" | "ledger" | "finance" | "memo" | "wish" | "knowledge" | "mistakes";
 
+function AgentDesktopCenter({ onExit }: { onExit: () => void }) {
+  const [tasks, setTasks] = useState<api.AgentTask[]>([]);
+  const [error, setError] = useState("");
+  const load = async () => { try { setTasks(await api.getAgentTasks()); setError(""); } catch { setError("任务读取失败，请稍后重试"); } };
+  useEffect(() => { load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, []);
+  const act = async (task: api.AgentTask) => { try { if (task.stage === "awaiting_confirmation") await api.confirmAgentTask(task.id); else if (task.stage === "failed") await api.retryAgentTask(task.id); await load(); } catch { setError("操作失败，任务状态已保留"); } };
+  const active = tasks.filter(task => task.stage !== "verified");
+  return <div className="min-h-screen bg-stone-100 p-6"><div className="mx-auto max-w-5xl">
+    <div className="mb-6 flex items-center justify-between"><div><h1 className="text-2xl font-bold">电脑 Agent 工作台</h1><p className="text-sm text-stone-500">手机扫码后的任务、验收与后续操作</p></div><button onClick={onExit} className="rounded-lg border px-3 py-2 text-sm">进入完整应用</button></div>
+    {error && <div className="mb-4 rounded-lg bg-red-50 p-3 text-red-700">{error}</div>}
+    <div className="grid gap-4 md:grid-cols-3"><div className="rounded-xl bg-white p-4"><div className="text-sm text-stone-500">待处理任务</div><div className="mt-2 text-3xl font-bold">{active.length}</div></div><div className="rounded-xl bg-white p-4"><div className="text-sm text-stone-500">验收失败</div><div className="mt-2 text-3xl font-bold text-red-600">{tasks.filter(t => t.stage === "failed").length}</div></div><div className="rounded-xl bg-white p-4"><div className="text-sm text-stone-500">已完成</div><div className="mt-2 text-3xl font-bold text-green-700">{tasks.filter(t => t.stage === "verified").length}</div></div></div>
+    <div className="mt-6 space-y-3">{tasks.length === 0 ? <div className="rounded-xl bg-white p-10 text-center text-stone-500">目前没有 Agent 任务</div> : tasks.map(task => <div key={task.id} className="rounded-xl bg-white p-4"><div className="flex items-start justify-between gap-4"><div><div className="text-xs text-stone-500">{task.capability} · 标准 {task.standardVersion}</div><div className="mt-1 font-semibold">{task.input?.title || "Agent 任务"}</div><div className="mt-1 text-sm text-stone-600">{task.nextAction || task.stage}</div>{task.failures?.length > 0 && <div className="mt-2 text-sm text-red-600">{task.failures.join("；")}</div>}</div>{["awaiting_confirmation", "failed"].includes(task.stage) && <button onClick={() => act(task)} className="rounded-lg bg-amber-600 px-3 py-2 text-sm text-white">{task.stage === "failed" ? "重试" : "确认执行"}</button>}</div></div>)}</div>
+  </div></div>;
+}
+
 interface SpeechRecognitionResultEventLike {
   resultIndex: number;
   results: {
@@ -903,6 +918,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const [lastAdded, setLastAdded] = useState<string | null>(null);
   const scanEntry = window.location.pathname === "/scan" || window.location.pathname === "/scan/";
+  const [desktopAgentMode, setDesktopAgentMode] = useState(scanEntry);
   const [token, setTokenState] = useState<string>(() => scanEntry ? "" : api.getToken());
   const [me, setMe] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -1277,6 +1293,8 @@ export default function App() {
       setTokenState(t);
     }} />;
   }
+
+  if (desktopAgentMode) return <AgentDesktopCenter onExit={() => setDesktopAgentMode(false)} />;
 
   const totalExpense = expenseEntries.reduce((s, e) => s + (e.amount || 0), 0);
 
