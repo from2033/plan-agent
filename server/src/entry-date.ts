@@ -198,7 +198,9 @@ export function isFutureObligation(
   explicitTime: string | undefined,
   clock: AssistantClock,
 ): boolean {
-  const obligation = /(?:需要|必须|务必|得要|得去|一定要|别忘|记得|提醒我)/.test(raw);
+  // 用药类短句经常省略“提醒我/记得”等祈使词（例如“8点30拿药”），
+  // 但带有明确时刻时应按提醒处理，不能只作为普通活动保存。
+  const obligation = /(?:需要|必须|务必|得要|得去|一定要|别忘|记得|提醒我|拿药|取药|吃药|服药|喂药)/.test(raw);
   const explicitlyPending = /(?:待办|待使用|待领取|待兑换|待处理|待办理|待支付|待缴费|待提交|待回复|待确认|未使用|未领取|未兑换|还没使用|还没处理)/.test(raw)
     || /(?:优惠券|礼包|权益).*(?:没有用|没用|没使用)/.test(raw);
   if (!obligation && !explicitlyPending) return false;

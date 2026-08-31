@@ -46,6 +46,22 @@ test("绝对时间提醒保持原有行为", () => {
   assert.equal(reminderTimeAt(timestamp!), "15:00");
 });
 
+test("明确时刻的拿药短句自动作为提醒", () => {
+  assert.equal(isFutureObligation("8点30拿药", undefined, "08:30", {
+    currentDate: "2026-08-18",
+    currentTime: "07:00",
+    timeZone: "Asia/Shanghai",
+  }), true);
+  assert.equal(
+    reminderTimestamp("8点30拿药", undefined, "08:30", {
+      currentDate: "2026-08-18",
+      currentTime: "07:00",
+      timeZone: "Asia/Shanghai",
+    }),
+    "2026-08-18T00:30:00.000Z",
+  );
+});
+
 test("明确未完成的权益即使没日期也是待办", () => {
   assert.equal(
     isFutureObligation("平安好车主有优惠券待使用", undefined, undefined, clock),
