@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { encField, decField } from "./crypto-field.js";
-import { insertEntry, type Entry } from "./db.js";
+import { insertEntry } from "./db.js";
+import type { Entry } from "./types.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
 db.exec(`
