@@ -93,3 +93,23 @@ test("没有事项时明日管家也产生明确空状态，不返回空白报�
   }, []);
   assert.equal(report.overview, "明天暂无明确安排。");
 });
+
+test("明日清单过滤误拆动词和模型过程文字，并确定性保留告家长书", () => {
+  const entries = [{
+    type: "knowledge" as const,
+    category: "资料",
+    description: "QQ群消息",
+    raw: "新学期请每位家长给孩子带好作业记录本，每天的作业都会写在黑板上。今天发的教辅告家长书请家长签好，明天带过来。请今天没带齐作业的，明天补交来。",
+  }];
+  const report = finalizeTomorrowReport({
+    overview: "",
+    checklist: ["带上：过来", "带上：作业的", "听写本 > Wait Need exact. I must ensure strict."],
+    preparations: [],
+    highlights: [],
+    improvements: [],
+    suggestions: [],
+  }, entries);
+  assert.ok(report.checklist.includes("带上：作业记录本"));
+  assert.ok(report.checklist.includes("带上：告家长书"));
+  assert.ok(!report.checklist.some((item) => /过来|作业的|Wait|每天的作业/.test(item)));
+});

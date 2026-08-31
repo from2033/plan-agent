@@ -25,7 +25,8 @@ export function explicitTomorrowChecklist(entries: ReportEntry[]): string[] {
       .replace(/（来源：[^）]+）/g, "")
       .replace(/(?:上交|提交|谢谢配合|家长督促)+[！!。,.，\s]*$/g, "")
       .trim();
-    if (!item || /^(?:谢谢配合|家长督促)$/.test(item)) return;
+    if (!item || /^(?:谢谢配合|家长督促|过来|作业的|明天补交来)$/.test(item)) return;
+    if (/^(?:每天|前一个月|一个月后)/.test(item) || /(?:都会|将收上来|继续检查)$/.test(item)) return;
     if (prefix && !item.startsWith(prefix)) item = `${prefix}${item}`;
     if (item.length >= 2 && item.length <= 100 && !items.includes(item)) items.push(item);
   };
@@ -51,6 +52,8 @@ export function explicitTomorrowChecklist(entries: ReportEntry[]): string[] {
     for (const match of text.matchAll(/(?:还要|还需|需要|记得|务必)?\s*(?:带好|带齐|带上|携带|带)\s*([^。！？\n]+)/g)) {
       for (const part of String(match[1] || "").split(/[、，,；;和与及]/)) add(part);
     }
+    // “告家长书请签好，明天带过来”里的宾语出现在“带”之前，需要单独保留。
+    if (/告家长书[^。！？\n]{0,40}(?:明天|次日)[^。！？\n]{0,12}带/.test(text)) add("告家长书");
   }
   return items.slice(0, 12);
 }
@@ -61,10 +64,11 @@ function normalizedChecklistItem(value: string): string {
 
 export function finalizeTomorrowReport(report: Report, entries: ReportEntry[]): Report {
   const forbiddenDate = /昨天|昨日|下个月|下月/;
+  const unsafeGenerated = /(?:\bWait\b|\bNeed exact\b|\bI must\b|不能引入等价|模型提示|^带上[：:]?(?:过来|作业的|明天补交来)$)/i;
   const required = explicitTomorrowChecklist(entries).filter((item) => !forbiddenDate.test(item));
   const requiredNormalized = required.map(normalizedChecklistItem);
   const generated = (report.checklist || []).filter((item) => {
-    if (forbiddenDate.test(item)) return false;
+    if (forbiddenDate.test(item) || unsafeGenerated.test(item) || item.length > 120) return false;
     const normalized = normalizedChecklistItem(item);
     // 明确物品由程序逐项列出，丢弃模型生成的合并或改写版本，避免重复和截断。
     return !requiredNormalized.some((requiredItem) =>
