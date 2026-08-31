@@ -138,6 +138,28 @@ export function deduplicateEvidenceSources(sources) {
   });
 }
 
+const genericEvidenceBigrams = new Set([
+  "今天", "明天", "昨天", "早上", "晚上", "最近", "最新", "这个", "那个",
+  "这些", "那些", "总结", "一下", "内容", "资料", "帮我", "关于", "部分",
+]);
+
+/**
+ * Insufficient evidence is shown to the user only when it has a concrete lexical
+ * connection to the question. Semantic reranking may keep weak candidates so a
+ * later document search can expand the scope, but those candidates must not be
+ * presented as “related sources” on their own.
+ */
+export function hasConcreteEvidenceOverlap(question, source) {
+  const query = compactSearchText(question).toLowerCase().replace(/\s/g, "");
+  const text = compactSearchText(`${source?.title || ""}\n${source?.content || ""}`)
+    .toLowerCase().replace(/\s/g, "");
+  if (!query || !text) return false;
+  if (text.includes(query)) return true;
+  return searchBigrams(query)
+    .filter(gram => !genericEvidenceBigrams.has(gram))
+    .some(gram => text.includes(gram));
+}
+
 export function evidenceWithinBudget(sources, maximum = 8, characterBudget = 12_000) {
   const selected = [];
   let used = 0;
@@ -1683,7 +1705,9 @@ export async function processIngestJob(job) {
         provider: evidenceAnswer.provider,
       };
     } else {
-      insufficientKnowledgeSources = evidenceSources.slice(0, 3);
+      insufficientKnowledgeSources = evidenceSources
+        .filter(source => hasConcreteEvidenceOverlap(retrievalQuestion, source))
+        .slice(0, 3);
     }
   }
   if (!shouldSearchDocumentsForIngest(raw, classified.result)) return classified;

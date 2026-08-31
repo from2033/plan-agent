@@ -70,9 +70,10 @@ test("专题对话可邀请成员，接受后共享群消息和指定资料", ()
   const owner = "owner@example.com";
   const member = "member@example.com";
   const conversationId = conversations.createConversation(owner, "孩子入学");
-  assert.deepEqual(conversations.conversationDocumentGrants(conversationId, owner), []);
+  assert.equal(conversations.conversationDocumentGrants(conversationId, owner), null);
   const invitation = conversations.inviteConversationMember(conversationId, owner, member);
   assert.ok(invitation);
+  assert.equal(conversations.conversationDocumentGrants(conversationId, owner), null);
   assert.equal(conversations.listConversationMessages(conversationId, member), null);
   assert.equal(conversations.listConversationInvitations(member).length, 1);
   assert.equal(
@@ -80,6 +81,8 @@ test("专题对话可邀请成员，接受后共享群消息和指定资料", ()
     conversationId,
   );
   assert.equal(conversations.listConversationMembers(conversationId, member)?.length, 2);
+  assert.deepEqual(conversations.conversationDocumentGrants(conversationId, owner), []);
+  assert.deepEqual(conversations.conversationDocumentGrants(conversationId, member), []);
   assert.deepEqual(conversations.listConversationContacts(owner), [member]);
   assert.deepEqual(conversations.listConversationContacts(member), [owner]);
 

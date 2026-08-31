@@ -14,6 +14,7 @@ import {
   evidenceWithinBudget,
   extractDocumentText,
   groundedAnswerFacts,
+  hasConcreteEvidenceOverlap,
   hasExplicitTimeRange,
   knowledgeAnswerForIngest,
   needsConversationContextForRetrieval,
@@ -141,6 +142,18 @@ test("program controls evidence deduplication, budget and exact-fact grounding",
   assert.equal(evidenceWithinBudget(sources, 1).length, 1);
   assert.equal(groundedAnswerFacts("电话是13800138000", [sources[0]]), true);
   assert.equal(groundedAnswerFacts("电话是13900139000", [sources[0]]), false);
+});
+
+test("insufficient evidence hides unrelated sources but keeps concrete topic matches", () => {
+  const question = "总结下今天早上开会关于app开发的部分";
+  assert.equal(hasConcreteEvidenceOverlap(question, {
+    title: "巧克力保质期",
+    content: "新买的巧克力，保质期至2027年5月18日。",
+  }), false);
+  assert.equal(hasConcreteEvidenceOverlap(question, {
+    title: "关于app开发及部署流程的会议记录",
+    content: "需要把打包部署流程标准化并补充代码审查。",
+  }), true);
 });
 
 test("runOllama sends a constrained non-thinking request and parses JSON", async (t) => {

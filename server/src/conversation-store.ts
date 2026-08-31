@@ -447,12 +447,20 @@ export function conversationDocumentGrants(
 ): Array<{ resourceId: string; ownerUserId: string }> | null {
   const members = listConversationMembers(conversationId, userId);
   if (!members) return null;
-  const conversation = db.prepare("SELECT conversation_type FROM conversations WHERE id=?")
-    .get(conversationId) as { conversation_type: ConversationType } | undefined;
+  const conversation = db.prepare("SELECT conversation_type,owner_user_id FROM conversations WHERE id=?")
+    .get(conversationId) as {
+      conversation_type: ConversationType;
+      owner_user_id: string | null;
+    } | undefined;
   // The permanent “我与 AI” thread keeps account-wide private retrieval.
-  // Every explicitly created topic/group is scoped to resources sent into it,
-  // even before another member joins.
+  // A private topic owned by its sole member is equally private, so it may search
+  // the owner's complete vault. As soon as another member joins, retrieval is
+  // narrowed to resources explicitly shared into the conversation.
   if (!conversation || conversation.conversation_type === "direct_ai") return null;
+  if (conversation.conversation_type === "topic"
+    && members.length === 1
+    && conversation.owner_user_id === normalizeUserId(userId)
+    && members[0]?.role === "owner") return null;
   return (listConversationResources(conversationId, userId) || [])
     .filter(resource => resource.resourceType === "document")
     .map(resource => ({ resourceId: resource.resourceId, ownerUserId: resource.ownerUserId }));
