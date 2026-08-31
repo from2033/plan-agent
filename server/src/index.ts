@@ -2360,21 +2360,28 @@ app.delete(`${API}/entries/:id`, (req, res) => {
   res.status(204).end();
 });
 
-// ─── 静态前端（构建产物 dist/），挂在 BASE_PATH 下 ─────────────────────────────
+// ─── 静态前端（构建产物 dist/）───────────────────────────────────────────────
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIST = process.env.WEB_DIST
   ? path.resolve(process.env.WEB_DIST)
   : path.resolve(__dirname, "../../dist");
-const WEB_BASE = BASE_PATH || "/";
+// API 默认在 /api，而 Vite 的网页资源固定以 /app/ 为 base。生产环境的
+// BASE_PATH 通常为空，因此不能用它推导网页路径，否则 /app/assets 会被
+// SPA fallback 错误返回为 HTML，浏览器会因 nosniff 拒绝执行脚本。
+const WEB_BASE = BASE_PATH || "/app";
 
 if (existsSync(WEB_DIST)) {
-  // 仅把不带斜杠的 /app 重定向到 /app/（用 req.path 精确判断，避免 /app/ 也被匹配导致死循环）
   app.get(WEB_BASE, (req, res, next) => {
     if (req.path === WEB_BASE) return res.redirect(`${WEB_BASE}/`);
     next();
   });
   app.use(WEB_BASE, express.static(WEB_DIST));
-  // SPA 回退：BASE_PATH 下的其它路径都返回 index.html
+  // /scan 是电脑端的明确扫码入口，成功后前端会切换到 /app/ 工作台。
+  app.get(["/scan", "/scan/"], (_req, res) => {
+    res.sendFile(path.join(WEB_DIST, "index.html"));
+  });
+  app.get("/", (_req, res) => res.redirect("/scan"));
+  // SPA 回退：工作台内的其它路径都返回 index.html。
   app.get(`${WEB_BASE}*`, (_req, res) => {
     res.sendFile(path.join(WEB_DIST, "index.html"));
   });

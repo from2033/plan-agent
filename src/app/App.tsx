@@ -902,7 +902,8 @@ export default function App() {
   // 当前查看的日期（默认今天，可往前翻看历史）。心愿是长期清单，不受此限制。
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const [lastAdded, setLastAdded] = useState<string | null>(null);
-  const [token, setTokenState] = useState<string>(api.getToken());
+  const scanEntry = window.location.pathname === "/scan" || window.location.pathname === "/scan/";
+  const [token, setTokenState] = useState<string>(() => scanEntry ? "" : api.getToken());
   const [me, setMe] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
@@ -1268,7 +1269,13 @@ export default function App() {
 
   // 未输入访问令牌时，先显示令牌录入界面。
   if (!token) {
-    return <TokenGate onSubmit={(t) => { api.setToken(t); setTokenState(t); }} />;
+    return <TokenGate onSubmit={(t) => {
+      api.setToken(t);
+      if (window.location.pathname === "/scan" || window.location.pathname === "/scan/") {
+        window.history.replaceState({}, "", "/app/");
+      }
+      setTokenState(t);
+    }} />;
   }
 
   const totalExpense = expenseEntries.reduce((s, e) => s + (e.amount || 0), 0);
