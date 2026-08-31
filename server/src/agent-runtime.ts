@@ -21,15 +21,22 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_agent_task_events_task ON agent_task_events(task_id, created_at);
 `);
+for (const definition of [
+  "ALTER TABLE agent_tasks ADD COLUMN passed_checks_json TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE agent_tasks ADD COLUMN failed_checks_json TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE agent_tasks ADD COLUMN next_action TEXT",
+]) { try { db.exec(definition); } catch (_) { /* existing database already migrated */ } }
 
 export interface PersistedAgentTask {
   id: string; userId: string; capability: string; standardVersion: string;
   sourceType: string | null; sourceId: string | null; input: unknown; stage: AgentStage;
   requiresConfirmation: boolean; result: unknown | null; failures: string[];
-  nextFollowUpAt: string | null; createdAt: string; updatedAt: string;
+  passedChecks: string[]; failedChecks: string[]; acceptanceStatus: "pending" | "running" | "passed" | "failed";
+  nextAction: string | null; nextFollowUpAt: string | null; createdAt: string; updatedAt: string;
 }
-type Row = { id:string; user_id:string; capability:string; standard_version:string; source_type:string|null; source_id:string|null; input_json:string; stage:AgentStage; requires_confirmation:number; result_json:string|null; failure_json:string|null; next_follow_up_at:string|null; created_at:string; updated_at:string };
-const decode = (row: Row): PersistedAgentTask => ({ id: row.id, userId: row.user_id, capability: row.capability, standardVersion: row.standard_version, sourceType: row.source_type, sourceId: row.source_id, input: JSON.parse(decField(row.input_json)), stage: row.stage, requiresConfirmation: row.requires_confirmation === 1, result: row.result_json ? JSON.parse(decField(row.result_json)) : null, failures: row.failure_json ? JSON.parse(decField(row.failure_json)) : [], nextFollowUpAt: row.next_follow_up_at, createdAt: row.created_at, updatedAt: row.updated_at });
+type Row = { id:string; user_id:string; capability:string; standard_version:string; source_type:string|null; source_id:string|null; input_json:string; stage:AgentStage; requires_confirmation:number; result_json:string|null; failure_json:string|null; passed_checks_json:string; failed_checks_json:string; next_action:string|null; next_follow_up_at:string|null; created_at:string; updated_at:string };
+const decodeJson = (value: string | null, fallback: unknown) => { if (!value) return fallback; try { return JSON.parse(decField(value)); } catch (_) { try { return JSON.parse(value); } catch (_) { return fallback; } } };
+const decode = (row: Row): PersistedAgentTask => ({ id: row.id, userId: row.user_id, capability: row.capability, standardVersion: row.standard_version, sourceType: row.source_type, sourceId: row.source_id, input: JSON.parse(decField(row.input_json)), stage: row.stage, requiresConfirmation: row.requires_confirmation === 1, result: decodeJson(row.result_json, null), failures: decodeJson(row.failure_json, []), passedChecks: decodeJson(row.passed_checks_json, []), failedChecks: decodeJson(row.failed_checks_json, []), acceptanceStatus: row.stage === "verified" ? "passed" : row.stage === "failed" ? "failed" : row.stage === "verifying" ? "running" : "pending", nextAction: row.next_action, nextFollowUpAt: row.next_follow_up_at, createdAt: row.created_at, updatedAt: row.updated_at });
 
 function event(task: PersistedAgentTask, fromStage: AgentStage | null, toStage: AgentStage, reason: string, payload?: unknown): void {
   db.prepare("INSERT INTO agent_task_events (id,task_id,user_id,from_stage,to_stage,reason,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?)").run(crypto.randomUUID(), task.id, task.userId, fromStage, toStage, reason.slice(0, 500), payload == null ? null : encField(JSON.stringify(payload)), new Date().toISOString());
@@ -52,9 +59,14 @@ export function listPersistentAgentTasks(userId: string): PersistedAgentTask[] {
 
 export function transitionPersistentAgentTask(userId: string, id: string, toStage: AgentStage, reason: string, result?: unknown): PersistedAgentTask | null {
   const task = getPersistentAgentTask(id, userId); if (!task) return null;
+  const allowed: Record<AgentStage, AgentStage[]> = {
+    received: ["classified", "failed"], classified: ["extracted", "failed"], extracted: ["awaiting_confirmation", "executing", "failed"], awaiting_confirmation: ["executing", "follow_up", "failed"], executing: ["verifying", "failed", "retrying"], verifying: ["verified", "failed"], verified: ["follow_up"], follow_up: ["executing", "awaiting_user"], failed: ["retrying", "awaiting_user", "follow_up"], retrying: ["executing", "failed"], awaiting_user: ["retrying", "follow_up"],
+  };
+  if (task.stage !== toStage && !allowed[task.stage].includes(toStage)) throw new Error(`agent_invalid_transition:${task.stage}->${toStage}`);
   const now = new Date().toISOString();
   const failures = toStage === "failed" ? (Array.isArray(result) ? result : [reason]) : task.failures;
-  db.prepare("UPDATE agent_tasks SET stage=?,result_json=?,failure_json=?,updated_at=? WHERE id=? AND user_id=?").run(toStage, result == null ? task.result == null ? null : encField(JSON.stringify(task.result)) : encField(JSON.stringify(result)), encField(JSON.stringify(failures)), now, id, userId);
+  const nextAction = toStage === "failed" ? "请重试或查看失败原因" : toStage === "verified" ? "已完成，等待后续跟进" : toStage === "awaiting_confirmation" ? "等待用户确认" : null;
+  db.prepare("UPDATE agent_tasks SET stage=?,result_json=?,failure_json=?,next_action=?,updated_at=? WHERE id=? AND user_id=?").run(toStage, result == null ? task.result == null ? null : encField(JSON.stringify(task.result)) : encField(JSON.stringify(result)), encField(JSON.stringify(failures)), nextAction, now, id, userId);
   const updated = getPersistentAgentTask(id, userId)!; event(updated, task.stage, toStage, reason, result); return updated;
 }
 
@@ -63,5 +75,11 @@ export function verifyPersistentAgentTask(userId: string, id: string, result: un
   const standard = capabilityStandard(task.capability); if (!standard) return transitionPersistentAgentTask(userId, id, "failed", "agent_standard_missing", ["能力标准不存在"]);
   const memoryTask = createCapabilityTask({ id: task.id, capability: task.capability, input: task.input, requiresConfirmation: task.requiresConfirmation });
   const checked = verifyAgentTask(memoryTask, result);
+  db.prepare("UPDATE agent_tasks SET passed_checks_json=?,failed_checks_json=? WHERE id=? AND user_id=?").run(encField(JSON.stringify(checked.acceptance.filter((item) => !checked.failures.includes(item.description)).map((item) => item.description))), encField(JSON.stringify(checked.failures)), id, userId);
   return transitionPersistentAgentTask(userId, id, checked.stage === "verified" ? "verified" : "failed", checked.stage === "verified" ? "acceptance_passed" : "acceptance_failed", checked.stage === "verified" ? result : checked.failures);
+}
+
+export function listAgentTaskEvents(userId: string, taskId: string): unknown[] {
+  if (!getPersistentAgentTask(taskId, userId)) return [];
+  return db.prepare("SELECT id,from_stage as fromStage,to_stage as toStage,reason,payload_json as payload,created_at as createdAt FROM agent_task_events WHERE task_id=? AND user_id=? ORDER BY created_at ASC").all(taskId, userId);
 }

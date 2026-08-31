@@ -135,7 +135,7 @@ import {
   MAX_CHUNKED_DOCUMENT_SIZE,
 } from "./chunked-upload.js";
 import { confirmAssistantAction, dismissAssistantAction, listAssistantActions, proposeDocumentActions } from "./assistant-actions.js";
-import { createPersistentAgentTask, getPersistentAgentTask, listPersistentAgentTasks, transitionPersistentAgentTask, verifyPersistentAgentTask } from "./agent-runtime.js";
+import { createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, listPersistentAgentTasks, transitionPersistentAgentTask, verifyPersistentAgentTask } from "./agent-runtime.js";
 import { registeredCapabilities } from "./agent-contract.js";
 import {
   deleteMistake,
@@ -1494,7 +1494,16 @@ app.get(`${API}/assistant-actions`, (req, res) => {
 app.get(`${API}/agent/capabilities`, (req, res) => { res.json(registeredCapabilities()); });
 app.get(`${API}/agent/tasks`, (req, res) => {
   if (isGuestUser(req.userId)) { res.json([]); return; }
-  res.json(listPersistentAgentTasks(req.userId!));
+  const status = typeof req.query.status === "string" ? req.query.status : "";
+  const capability = typeof req.query.capability === "string" ? req.query.capability : "";
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit || 100)));
+  res.json(listPersistentAgentTasks(req.userId!).filter((task) => (!status || task.stage === status) && (!capability || task.capability === capability)).slice(0, limit));
+});
+app.get(`${API}/agent/tasks/:id/events`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const task = getPersistentAgentTask(req.params.id, req.userId!);
+  if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
+  res.json(listAgentTaskEvents(req.userId!, req.params.id));
 });
 app.get(`${API}/agent/tasks/:id`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }

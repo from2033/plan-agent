@@ -2,7 +2,7 @@
  * Personal Agent 的统一任务契约。
  * 每项能力都必须把“做什么”和“怎样算完成”显式化，避免只生成文字却没有闭环。
  */
-export type AgentStage = "received" | "classified" | "extracted" | "awaiting_confirmation" | "executing" | "verifying" | "verified" | "follow_up" | "failed" | "retrying";
+export type AgentStage = "received" | "classified" | "extracted" | "awaiting_confirmation" | "executing" | "verifying" | "verified" | "follow_up" | "failed" | "retrying" | "awaiting_user";
 
 export interface AcceptanceCheck {
   id: string;
