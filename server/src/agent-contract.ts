@@ -43,3 +43,35 @@ export function verifyAgentTask<TInput, TResult>(task: AgentTask<TInput, TResult
   const failures = task.acceptance.filter((item) => !item.check(result)).map((item) => item.description);
   return { ...task, result, failures, stage: failures.length ? "failed" : "verified" };
 }
+
+export interface CapabilityStandard {
+  capability: string;
+  description: string;
+  acceptance: (input: unknown) => AcceptanceCheck[];
+}
+
+const standards = new Map<string, CapabilityStandard>();
+
+export function registerCapabilityStandard(standard: CapabilityStandard): void {
+  if (standards.has(standard.capability)) throw new Error(`agent_standard_already_registered:${standard.capability}`);
+  standards.set(standard.capability, standard);
+}
+
+export function capabilityStandard(capability: string): CapabilityStandard | undefined {
+  return standards.get(capability);
+}
+
+export function createCapabilityTask<TInput, TResult>(params: {
+  id: string;
+  capability: string;
+  input: TInput;
+  requiresConfirmation?: boolean;
+}): AgentTask<TInput, TResult> {
+  const standard = capabilityStandard(params.capability);
+  if (!standard) throw new Error(`agent_standard_missing:${params.capability}`);
+  return createAgentTask({ ...params, acceptance: standard.acceptance(params.input) });
+}
+
+export function registeredCapabilities(): string[] {
+  return [...standards.keys()];
+}

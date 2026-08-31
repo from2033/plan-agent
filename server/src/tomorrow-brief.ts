@@ -1,5 +1,7 @@
 import type { Report, ReportEntry } from "./summary.js";
 import type { Entry } from "./types.js";
+import "./agent-standards.js";
+import { createCapabilityTask, verifyAgentTask } from "./agent-contract.js";
 
 function shanghaiDate(timestamp: string): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -71,6 +73,11 @@ export function finalizeTomorrowReport(report: Report, entries: ReportEntry[]): 
   const checklist = [...required.map((item) => `带上：${item}`), ...generated]
     .filter((item, index, values) => values.indexOf(item) === index)
     .slice(0, 18);
+  const verification = verifyAgentTask(
+    createCapabilityTask<{ required: string[] }, Report>({ id: `tomorrow-${Date.now()}`, capability: "tomorrow_brief", input: { required } }),
+    { ...report, checklist },
+  );
+  if (verification.stage === "failed") throw new Error(`tomorrow_brief_acceptance_failed:${verification.failures.join(";")}`);
   return {
     ...report,
     overview: report.overview || (checklist.length
