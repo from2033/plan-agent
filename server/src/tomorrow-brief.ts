@@ -29,7 +29,8 @@ export function explicitTomorrowChecklist(entries: ReportEntry[]): string[] {
   };
   for (const entry of entries) {
     if (entry.category !== "资料" && entry.category !== "QQ群任务") continue;
-    const text = entry.description.replace(/\r/g, "");
+    // 群任务的 description 可能被清洗成第一句；raw 才是完整通知，验收时必须同时审计两者。
+    const text = `${entry.description}\n${entry.raw}`.replace(/\r/g, "");
     for (const match of text.matchAll(/(语文|数学|英语)包括[：:]?([^。！？\n]+)/g)) {
       for (const part of String(match[2] || "").split(/[、，,；;]/)) add(part, `${match[1]}：`);
     }
@@ -43,6 +44,10 @@ export function explicitTomorrowChecklist(entries: ReportEntry[]): string[] {
       for (const part of detail.split(/[、，,；;]|(?<=收纳箱)和|(?<=桌垫)和/)) {
         add(part);
       }
+    }
+    // 覆盖“还要带…/记得带…/带2本…”等不以“请”开头的通知表达。
+    for (const match of text.matchAll(/(?:还要|还需|需要|记得|务必)?\s*(?:带好|带齐|带上|携带|带)\s*([^。！？\n]+)/g)) {
+      for (const part of String(match[1] || "").split(/[、，,；;和与及]/)) add(part);
     }
   }
   return items.slice(0, 12);

@@ -60,3 +60,14 @@ test("最终明日清单逐项置顶原始物品且不被模型合并项挤掉",
   assert.ok(!report.checklist.some((item) => /昨天|下个月/.test(item)));
   assert.deepEqual(report.preparations, ["今晚整理书包"]);
 });
+
+test("清单验收使用群消息原文，不能漏掉数量物品和家长书", () => {
+  const items = explicitTomorrowChecklist([{
+    type: "knowledge",
+    category: "QQ群任务",
+    description: "明天报到请带好语文、数学作业。",
+    raw: "明天报到请带好语文、数学作业，还有2本作业记录本，另外要带告家长书。",
+  }]);
+  assert.ok(items.some((item) => /2本作业记录本/.test(item)));
+  assert.ok(items.some((item) => /告家长书/.test(item)));
+});

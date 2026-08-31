@@ -11,6 +11,7 @@ export interface ReportEntry {
   type: string;
   category: string;
   description: string;
+  raw?: string;
   amount?: number;
   timeRange?: { start: string; end: string };
   done?: boolean;

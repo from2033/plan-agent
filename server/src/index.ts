@@ -693,6 +693,7 @@ function tomorrowBriefEntries(userId: string, now = new Date()): ReportEntry[] {
       type: entry.type,
       category: entry.category,
       description: entry.description,
+      raw: entry.raw,
       amount: entry.amount,
       timeRange: entry.timeRange,
       done: entry.done,
