@@ -281,15 +281,50 @@ class ApiClient {
   Future<List<Map<String, dynamic>>> assistantActions() async {
     if (_isGuest) return const [];
     final value = await _request('GET', '/assistant-actions') as List<dynamic>;
-    return value.whereType<Map>().map((item) => item.cast<String, dynamic>()).toList();
+    return value
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList();
   }
 
   Future<Map<String, dynamic>> confirmAssistantAction(String id) async =>
-      (await _request('POST', '/assistant-actions/${Uri.encodeComponent(id)}/confirm')) as Map<String, dynamic>;
+      (await _request(
+            'POST',
+            '/assistant-actions/${Uri.encodeComponent(id)}/confirm',
+          ))
+          as Map<String, dynamic>;
 
   Future<void> dismissAssistantAction(String id) async {
-    await _request('POST', '/assistant-actions/${Uri.encodeComponent(id)}/dismiss');
+    await _request(
+      'POST',
+      '/assistant-actions/${Uri.encodeComponent(id)}/dismiss',
+    );
   }
+
+  Future<List<Map<String, dynamic>>> agentTasks() async {
+    if (_isGuest) return const [];
+    final value = await _request('GET', '/agent/tasks') as List<dynamic>;
+    return value
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> retryAgentTask(String id) async =>
+      (await _request('POST', '/agent/tasks/${Uri.encodeComponent(id)}/retry'))
+          as Map<String, dynamic>;
+  Future<Map<String, dynamic>> followUpAgentTask(String id) async =>
+      (await _request(
+            'POST',
+            '/agent/tasks/${Uri.encodeComponent(id)}/follow-up',
+          ))
+          as Map<String, dynamic>;
+  Future<Map<String, dynamic>> confirmAgentTask(String id) async =>
+      (await _request(
+            'POST',
+            '/agent/tasks/${Uri.encodeComponent(id)}/confirm',
+          ))
+          as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> financeOverview({int months = 3}) async {
     return await _request('GET', '/finance/overview?months=$months')

@@ -11,6 +11,7 @@ import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
+import 'agent_page.dart';
 import 'conversation_page.dart';
 import 'desktop_pairing_page.dart';
 import 'document_audio_player.dart';
@@ -616,6 +617,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ('待办', Icons.checklist_rounded),
     ('对话', Icons.forum_outlined),
     ('资料库', Icons.folder_copy_outlined),
+    ('Agent', Icons.auto_awesome_rounded),
   ];
 
   @override
@@ -1143,12 +1145,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           )
         ? '明天'
         : DateFormat('M月d日').format(selectedDate);
-    final titles = [homeTitle, '待办', '对话', '资料库'];
+    final titles = [homeTitle, '待办', '对话', '资料库', 'Agent'];
     const subtitles = [
       '说一句，我来记录和查询',
       '把没做完的事情理清楚',
       '每次提问和回答都会保留',
       '长期保存的资料与知识',
+      '所有任务、验收和后续跟进',
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
@@ -1222,6 +1225,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       1 => _buildReminderPage(),
       2 => _buildConversationPage(),
       3 => _buildLibraryPage(),
+      4 => AgentPage(api: widget.api),
       _ => _buildHomePage(),
     };
   }
