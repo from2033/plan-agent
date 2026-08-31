@@ -1094,35 +1094,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void moveDate(int days) {
-    final next = DateUtils.dateOnly(selectedDate.add(Duration(days: days)));
-    setState(() => selectedDate = next);
-  }
-
-  Future<void> pickDate() async {
-    final value = await showDatePicker(
-      context: context,
-      initialDate: selectedDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 730)),
-      locale: const Locale('zh', 'CN'),
-      builder: (context, child) => Theme(
-        data: Theme.of(context).copyWith(
-          colorScheme: const ColorScheme.light(
-            primary: Color(0xffd97706),
-            onPrimary: Colors.white,
-            surface: Color(0xfff5f4f0),
-            onSurface: Color(0xff1a1a1e),
-          ),
-        ),
-        child: child!,
-      ),
-    );
-    if (value != null && mounted) {
-      setState(() => selectedDate = DateUtils.dateOnly(value));
-    }
-  }
-
   @override
   void dispose() {
     _disposing = true;
@@ -1295,12 +1266,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildHomePage() {
     final selectedKey = _dateKey(selectedDate);
-    final dayActions = entries.where((entry) {
-      final scheduledDate = _scheduledDateOf(entry);
-      if (scheduledDate != selectedKey) return false;
-      if (entry.type == EntryType.memo) return !entry.done;
-      return entry.type == EntryType.activity && _activityStillRelevant(entry, selectedDate);
-    }).toList()..sort((a, b) => (a.reminderAt ?? a.timestamp).compareTo(b.reminderAt ?? b.timestamp));
+    final dayActions =
+        entries.where((entry) {
+          final scheduledDate = _scheduledDateOf(entry);
+          if (scheduledDate != selectedKey) return false;
+          if (entry.type == EntryType.memo) return !entry.done;
+          return entry.type == EntryType.activity &&
+              _activityStillRelevant(entry, selectedDate);
+        }).toList()..sort(
+          (a, b) => (a.reminderAt ?? a.timestamp).compareTo(
+            b.reminderAt ?? b.timestamp,
+          ),
+        );
     final isToday = DateUtils.isSameDay(selectedDate, DateTime.now());
     return RefreshIndicator(
       onRefresh: refreshHome,
@@ -1312,16 +1289,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _buildHomeAnswerCard(_homeAnswer!),
           ],
           const SizedBox(height: 24),
-          const Center(child: Text('按住下方麦克风，说一句即可记录、查询或安排事项', style: TextStyle(color: Color(0xff8a8680), fontSize: 12))),
+          const Center(
+            child: Text(
+              '按住下方麦克风，说一句即可记录、查询或安排事项',
+              style: TextStyle(color: Color(0xff8a8680), fontSize: 12),
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.only(top: 22, bottom: 8),
-            child: Row(children: [Expanded(child: Text(isToday ? '今天要做' : '当天要做', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700))), if (dayActions.length > 3) TextButton(onPressed: () => setState(() => tab = 1), child: Text('查看全部 ${dayActions.length}'))]),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    isToday ? '今天要做' : '当天要做',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (dayActions.length > 3)
+                  TextButton(
+                    onPressed: () => setState(() => tab = 1),
+                    child: Text('查看全部 ${dayActions.length}'),
+                  ),
+              ],
+            ),
           ),
           if (dayActions.isEmpty)
-            const Padding(padding: EdgeInsets.symmetric(vertical: 18), child: Center(child: Text('今天没有安排要做的事', style: TextStyle(color: Color(0xff8a8680)))))
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Center(
+                child: Text(
+                  '今天没有安排要做的事',
+                  style: TextStyle(color: Color(0xff8a8680)),
+                ),
+              ),
+            )
           else
             for (final entry in dayActions.take(3)) ...[
-              EntryCard(entry: entry, reminderScheduled: scheduledReminderIds.contains(entry.id), onToggleDone: entry.type == EntryType.memo ? () => toggleEntryDone(entry) : null, onDelete: () => confirmDeleteEntry(entry)),
+              EntryCard(
+                entry: entry,
+                reminderScheduled: scheduledReminderIds.contains(entry.id),
+                onToggleDone: entry.type == EntryType.memo
+                    ? () => toggleEntryDone(entry)
+                    : null,
+                onDelete: () => confirmDeleteEntry(entry),
+              ),
               const SizedBox(height: 9),
             ],
         ],
@@ -1572,51 +1586,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const Icon(Icons.chevron_right_rounded, color: Color(0xffd1d5db)),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildDateNavigator(int count) {
-    final isToday = DateUtils.isSameDay(selectedDate, DateTime.now());
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => moveDate(-1),
-            icon: const Icon(Icons.chevron_left_rounded),
-          ),
-          Expanded(
-            child: InkWell(
-              onTap: pickDate,
-              child: Column(
-                children: [
-                  Text(
-                    DateFormat('M月d日 EEEE', 'zh_CN').format(selectedDate),
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  Text(
-                    isToday
-                        ? '$count 项要做 · 今天'
-                        : '${selectedDate.year}年 · $count 项要做',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: Color(0xff8a8680),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          IconButton(
-            onPressed: () => moveDate(1),
-            icon: const Icon(Icons.chevron_right_rounded),
-          ),
-        ],
       ),
     );
   }
@@ -1902,8 +1871,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
       children: [
-        _settingsTile(Icons.bar_chart_rounded, '消费分析', '导入支付宝账单，查看消费规律', () => _openFinancePage()),
-        _settingsTile(Icons.auto_awesome_rounded, '管家工具', '明日管家、今日趋势、今日待办与 QQ 同步', () => _openHousekeepingPage()),
+        _settingsTile(
+          Icons.bar_chart_rounded,
+          '消费分析',
+          '导入支付宝账单，查看消费规律',
+          () => _openFinancePage(),
+        ),
+        _settingsTile(
+          Icons.auto_awesome_rounded,
+          '管家工具',
+          '明日管家、今日趋势、今日待办与 QQ 同步',
+          () => _openHousekeepingPage(),
+        ),
         _settingsTile(
           Icons.forum_outlined,
           'QQ群消息',
@@ -1937,26 +1916,70 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openFinancePage() async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Scaffold(appBar: AppBar(title: const Text('消费分析')), body: FinancePage(api: widget.api))));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('消费分析')),
+          body: FinancePage(api: widget.api),
+        ),
+      ),
+    );
   }
 
   Future<void> _openTrendPage() async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => WorldPulsePage(api: widget.api, initialData: worldPulse)));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            WorldPulsePage(api: widget.api, initialData: worldPulse),
+      ),
+    );
   }
 
   Future<void> _openTomorrowBrief() async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Scaffold(appBar: AppBar(title: const Text('明日管家')), body: TomorrowBriefPane(api: widget.api, entries: entries, selectedDate: selectedDate))));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('明日管家')),
+          body: TomorrowBriefPane(
+            api: widget.api,
+            entries: entries,
+            selectedDate: selectedDate,
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _openHousekeepingPage() async {
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Scaffold(appBar: AppBar(title: const Text('管家工具')), body: ListView(padding: const EdgeInsets.all(16), children: [
-      _buildTomorrowBriefCard(),
-      const SizedBox(height: 12),
-      _buildTrendSummaryCard(),
-      if (!widget.isGuest && qqSyncStatus != null) ...[const SizedBox(height: 12), _buildQqSyncStatusCard()],
-      const SizedBox(height: 12),
-      _settingsTile(Icons.checklist_rounded, '今天要做', '查看并管理今天的待办与安排', () { Navigator.of(context).pop(); setState(() => tab = 1); }),
-    ]))));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('管家工具')),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _buildTomorrowBriefCard(),
+              const SizedBox(height: 12),
+              _buildTrendSummaryCard(),
+              if (!widget.isGuest && qqSyncStatus != null) ...[
+                const SizedBox(height: 12),
+                _buildQqSyncStatusCard(),
+              ],
+              const SizedBox(height: 12),
+              _settingsTile(
+                Icons.checklist_rounded,
+                '今天要做',
+                '查看并管理今天的待办与安排',
+                () {
+                  Navigator.of(context).pop();
+                  setState(() => tab = 1);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> openStudyCenter() async {
@@ -2179,6 +2202,17 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
   bool stale = false;
   DateTime? updatedAt;
   String? error;
+
+  bool get hasReportContent {
+    final value = report;
+    return value != null &&
+        (value.overview.trim().isNotEmpty ||
+            value.checklist.isNotEmpty ||
+            value.preparations.isNotEmpty ||
+            value.highlights.isNotEmpty ||
+            value.improvements.isNotEmpty ||
+            value.suggestions.isNotEmpty);
+  }
 
   @override
   void initState() {
@@ -2411,13 +2445,31 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                     padding: const EdgeInsets.only(top: 70),
                     child: Column(
                       children: [
-                        const Icon(Icons.event_available_outlined, size: 42, color: Color(0xffd97706)),
+                        const Icon(
+                          Icons.event_available_outlined,
+                          size: 42,
+                          color: Color(0xffd97706),
+                        ),
                         const SizedBox(height: 14),
-                        const Text('明天还没有安排', style: TextStyle(fontWeight: FontWeight.w700)),
+                        const Text(
+                          '明天还没有安排',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
                         const SizedBox(height: 7),
-                        const Text('在首页或待办中记录明天的事项后，管家会自动整理清单和准备建议', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Color(0xff8a8680))),
+                        const Text(
+                          '在首页或待办中记录明天的事项后，管家会自动整理清单和准备建议',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Color(0xff8a8680),
+                          ),
+                        ),
                         const SizedBox(height: 16),
-                        OutlinedButton.icon(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.checklist_rounded, size: 17), label: const Text('去待办添加安排')),
+                        OutlinedButton.icon(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.checklist_rounded, size: 17),
+                          label: const Text('去待办添加安排'),
+                        ),
                       ],
                     ),
                   )
@@ -2441,7 +2493,7 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                     icon: Icons.info_outline_rounded,
                     items: [error!],
                   )
-                else if (report != null) ...[
+                else if (hasReportContent) ...[
                   if (scope == 'tomorrow' && report!.overview.isNotEmpty)
                     _ReportSection(
                       title: '明日总览',
@@ -2481,7 +2533,16 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                     icon: Icons.lightbulb_outline_rounded,
                     items: report!.suggestions,
                   ),
-                ],
+                ] else
+                  const Padding(
+                    padding: EdgeInsets.only(top: 70),
+                    child: Center(
+                      child: Text(
+                        '暂时没有可展示的明日安排，请稍后下拉刷新',
+                        style: TextStyle(color: Color(0xff8a8680)),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
