@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'conversation_page.dart';
+import 'desktop_pairing_page.dart';
 import 'document_audio_player.dart';
 import 'finance_page.dart';
 import 'models.dart';
@@ -1167,6 +1168,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ],
             ),
           ),
+          if (tab == 0 && !widget.isGuest)
+            IconButton(
+              onPressed: _openDesktopPairingScanner,
+              tooltip: '扫描电脑二维码',
+              icon: const Icon(Icons.qr_code_scanner_rounded, size: 21),
+            ),
           if (tab == 0)
             IconButton(
               onPressed: _openTrendPage,
@@ -1218,6 +1225,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           appBar: AppBar(title: const Text('我的')),
           body: SafeArea(child: _buildProfilePage()),
         ),
+      ),
+    );
+  }
+
+  Future<void> _openDesktopPairingScanner() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<bool>(
+        builder: (_) => DesktopPairingPage(api: widget.api),
       ),
     );
   }

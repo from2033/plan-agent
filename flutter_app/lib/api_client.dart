@@ -173,6 +173,30 @@ class ApiClient {
     return json['user'] as String;
   }
 
+  Future<Map<String, dynamic>> inspectDesktopPairing(
+    String sessionId,
+    String scanSecret,
+  ) async {
+    return (await _request(
+          'POST',
+          '/auth/desktop-sessions/${Uri.encodeComponent(sessionId)}/inspect',
+          body: {'scanSecret': scanSecret},
+          authenticated: false,
+        ))
+        as Map<String, dynamic>;
+  }
+
+  Future<void> approveDesktopPairing(
+    String sessionId,
+    String scanSecret,
+  ) async {
+    await _request(
+      'POST',
+      '/auth/desktop-sessions/${Uri.encodeComponent(sessionId)}/approve',
+      body: {'scanSecret': scanSecret},
+    );
+  }
+
   Future<Uri> studyLaunchUrl() async {
     final json =
         await _request('POST', '/study/launch') as Map<String, dynamic>;
@@ -266,15 +290,22 @@ class ApiClient {
     if (_isGuest) throw const ApiException('请先登录后再导入账单');
     final request = http.MultipartRequest(
       'POST',
-      Uri.parse('$apiBase/finance/import?fileName=${Uri.encodeQueryComponent(fileName)}'),
+      Uri.parse(
+        '$apiBase/finance/import?fileName=${Uri.encodeQueryComponent(fileName)}',
+      ),
     );
     request.headers['authorization'] = 'Bearer $_token';
-    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: fileName));
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: fileName),
+    );
     final response = await request.send();
     final body = await response.stream.bytesToString();
     final decoded = body.isEmpty ? null : jsonDecode(body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(decoded is Map ? (decoded['error'] as String? ?? '账单导入失败') : '账单导入失败', status: response.statusCode);
+      throw ApiException(
+        decoded is Map ? (decoded['error'] as String? ?? '账单导入失败') : '账单导入失败',
+        status: response.statusCode,
+      );
     }
     return (decoded as Map).cast<String, dynamic>();
   }

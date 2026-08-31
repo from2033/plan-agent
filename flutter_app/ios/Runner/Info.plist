@@ -35,7 +35,7 @@
 		<string>audio</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>用于拍摄并上传家庭资料，由本机进行识别和归档。</string>
+	<string>用于拍摄并上传家庭资料，以及扫描电脑端的一次性登录二维码。</string>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>用于在你指定的时间为备忘事项响铃提醒。</string>
 	<key>UIApplicationSceneManifest</key>

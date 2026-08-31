@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import QRCode from "qrcode";
 import {
   Clock,
   CreditCard,
@@ -25,6 +26,9 @@ import {
   Lightbulb,
   GraduationCap,
   MoreHorizontal,
+  KeyRound,
+  QrCode,
+  RefreshCw,
   X,
 } from "lucide-react";
 import * as api from "./api";
@@ -712,36 +716,169 @@ function SummaryPanel({ dayEntries, monthEntries, selectedDate }: {
 
 // ─── 访问令牌录入 ─────────────────────────────────────────────────────────────
 
+function desktopDeviceLabel(): string {
+  const ua = navigator.userAgent;
+  const system = /Macintosh|Mac OS X/.test(ua)
+    ? "Mac"
+    : /Windows/.test(ua)
+      ? "Windows"
+      : /Linux/.test(ua)
+        ? "Linux"
+        : "电脑";
+  const browser = /Edg\//.test(ua)
+    ? "Edge"
+    : /Chrome\//.test(ua)
+      ? "Chrome"
+      : /Safari\//.test(ua)
+        ? "Safari"
+        : "浏览器";
+  return `${system} · ${browser}`;
+}
+
 function TokenGate({ onSubmit }: { onSubmit: (token: string) => void }) {
   const [value, setValue] = useState("");
+  const [manual, setManual] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [qrImage, setQrImage] = useState("");
+  const [pairing, setPairing] = useState<api.DesktopPairingSession | null>(null);
+  const [pairingError, setPairingError] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(90);
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
+
+  useEffect(() => {
+    if (manual) return;
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let countdownTimer: ReturnType<typeof setInterval> | null = null;
+
+    async function startPairing() {
+      setQrImage("");
+      setPairing(null);
+      setPairingError(null);
+      try {
+        const created = await api.createDesktopPairing(desktopDeviceLabel());
+        const image = await QRCode.toDataURL(created.pairingUri, {
+          width: 280,
+          margin: 1,
+          errorCorrectionLevel: "M",
+          color: { dark: "#1e1d1a", light: "#ffffff" },
+        });
+        if (cancelled) return;
+        setPairing(created);
+        setQrImage(image);
+        const updateCountdown = () => {
+          const remaining = Math.max(0, Math.ceil((new Date(created.expiresAt).getTime() - Date.now()) / 1000));
+          setSecondsLeft(remaining);
+          if (remaining === 0) setPairingError("二维码已过期，请刷新后重试");
+        };
+        updateCountdown();
+        countdownTimer = setInterval(updateCountdown, 1000);
+
+        const poll = async () => {
+          if (cancelled || Date.now() >= new Date(created.expiresAt).getTime()) return;
+          try {
+            const result = await api.claimDesktopPairing(created.id, created.desktopSecret);
+            if (cancelled) return;
+            if (result.status === "complete" && result.token) {
+              onSubmitRef.current(result.token);
+              return;
+            }
+          } catch (error) {
+            if (!cancelled) setPairingError(error instanceof Error ? error.message : "配对失败");
+            return;
+          }
+          pollTimer = setTimeout(poll, 1500);
+        };
+        pollTimer = setTimeout(poll, 800);
+      } catch (error) {
+        if (!cancelled) setPairingError(error instanceof Error ? error.message : "暂时无法生成二维码");
+      }
+    }
+
+    void startPairing();
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+      if (countdownTimer) clearInterval(countdownTimer);
+    };
+  }, [manual, refreshKey]);
+
   return (
     <div
       className="min-h-screen w-full flex items-center justify-center p-6"
       style={{ background: "#e8e5df", fontFamily: "'Inter', sans-serif" }}
     >
       <div
-        className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+        className="w-full max-w-sm rounded-2xl p-6 space-y-5"
         style={{ background: "#f5f4f0", border: "1px solid rgba(0,0,0,0.08)" }}
       >
         <div>
-          <h1 className="text-lg font-semibold" style={{ color: "#1a1a1e" }}>我的流水账</h1>
-          <p className="text-xs mt-1" style={{ color: "#8a8680" }}>请输入访问令牌以连接你的服务器</p>
+          <h1 className="text-lg font-semibold" style={{ color: "#1a1a1e" }}>Daynote 电脑端</h1>
+          <p className="text-xs mt-1" style={{ color: "#8a8680" }}>
+            {manual ? "使用已有访问令牌登录" : "打开手机 Daynote，点击首页扫一扫"}
+          </p>
         </div>
-        <input
-          type="password"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && value.trim()) onSubmit(value.trim()); }}
-          placeholder="访问令牌"
-          className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.12)", color: "#1a1a1e" }}
-        />
+        {manual ? (
+          <>
+            <input
+              type="password"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && value.trim()) onSubmit(value.trim()); }}
+              placeholder="访问令牌"
+              className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+              style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.12)", color: "#1a1a1e" }}
+            />
+            <button
+              onClick={() => value.trim() && onSubmit(value.trim())}
+              className="w-full rounded-lg py-2.5 text-sm font-medium"
+              style={{ background: "#4f6ef7", color: "#ffffff" }}
+            >
+              进入
+            </button>
+          </>
+        ) : (
+          <div className="flex flex-col items-center gap-3">
+            <div
+              className="w-[260px] h-[260px] rounded-xl flex items-center justify-center overflow-hidden"
+              style={{ background: "#ffffff", border: "1px solid rgba(0,0,0,0.08)" }}
+            >
+              {qrImage && !pairingError ? (
+                <img src={qrImage} width={250} height={250} alt="手机扫码登录" />
+              ) : pairingError ? (
+                <div className="px-7 text-center space-y-3">
+                  <QrCode size={36} className="mx-auto" color="#9b9790" />
+                  <p className="text-sm" style={{ color: "#77736c" }}>{pairingError}</p>
+                  <button
+                    type="button"
+                    onClick={() => setRefreshKey((key) => key + 1)}
+                    className="inline-flex items-center gap-1.5 text-sm font-medium"
+                    style={{ color: "#4f6ef7" }}
+                  >
+                    <RefreshCw size={15} /> 重新生成
+                  </button>
+                </div>
+              ) : (
+                <RefreshCw size={28} className="animate-spin" color="#9b9790" />
+              )}
+            </div>
+            <p className="text-xs" style={{ color: "#8a8680" }}>
+              {pairing ? `二维码 ${secondsLeft} 秒后失效 · ${pairing.deviceLabel}` : "正在建立安全连接…"}
+            </p>
+            <p className="text-[11px] text-center leading-relaxed" style={{ color: "#aaa59c" }}>
+              手机确认后，本电脑获得独立的两小时临时会话
+            </p>
+          </div>
+        )}
         <button
-          onClick={() => value.trim() && onSubmit(value.trim())}
-          className="w-full rounded-lg py-2 text-sm font-medium"
-          style={{ background: "#4f6ef7", color: "#ffffff" }}
+          type="button"
+          onClick={() => setManual((current) => !current)}
+          className="w-full flex items-center justify-center gap-2 py-1 text-xs"
+          style={{ color: "#77736c" }}
         >
-          进入
+          {manual ? <QrCode size={15} /> : <KeyRound size={15} />}
+          {manual ? "返回手机扫码" : "改用访问令牌"}
         </button>
       </div>
     </div>

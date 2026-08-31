@@ -41,6 +41,20 @@ function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+export function createAuthSessionForUser(
+  userId: string,
+  source: string,
+  lifetimeMs: number,
+): { token: string; expiresAt: string } {
+  const now = new Date();
+  const token = crypto.randomBytes(32).toString("base64url");
+  const expiresAt = new Date(now.getTime() + lifetimeMs).toISOString();
+  db.prepare("DELETE FROM auth_sessions WHERE expires_at<=?").run(now.toISOString());
+  db.prepare("INSERT INTO auth_sessions (token_hash,user_id,email,expires_at,created_at) VALUES (?,?,?,?,?)")
+    .run(hashToken(token), userId, source.slice(0, 320), expiresAt, now.toISOString());
+  return { token, expiresAt };
+}
+
 function reviewEmail(): string {
   return normalizeEmail(process.env.APP_REVIEW_EMAIL || "");
 }
@@ -150,11 +164,8 @@ export function verifyEmailCode(rawEmail: string, code: string): { token: string
   if (!equalHash(row.code_hash, candidateHash)) return null;
 
   db.prepare("DELETE FROM email_codes WHERE email=?").run(email);
-  db.prepare("DELETE FROM auth_sessions WHERE expires_at<=?").run(new Date().toISOString());
-  const token = crypto.randomBytes(32).toString("base64url");
-  const now = new Date();
-  db.prepare("INSERT INTO auth_sessions (token_hash,user_id,email,expires_at,created_at) VALUES (?,?,?,?,?)")
-    .run(hashToken(token), userId, email, new Date(now.getTime() + 30 * 24 * 60 * 60_000).toISOString(), now.toISOString());
+  const session = createAuthSessionForUser(userId, email, 30 * 24 * 60 * 60_000);
+  const { token } = session;
   return { token, user: userId };
 }
 

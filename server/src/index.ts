@@ -56,6 +56,12 @@ import { extractQqTasks, qqMessageKnowledge } from "./qq-task-import.js";
 import { knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
 import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
+import {
+  approveDesktopPairing,
+  claimDesktopPairing,
+  createDesktopPairing,
+  inspectDesktopPairing,
+} from "./desktop-pairing.js";
 import { privacyPageHtml } from "./privacy-page.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
 import { finalizeTomorrowReport, includeEntryInTomorrowBrief } from "./tomorrow-brief.js";
@@ -361,6 +367,72 @@ app.post(`${API}/auth/guest`, (req, res) => {
     return;
   }
   res.status(201).json(createGuestSession());
+});
+
+const desktopPairingIssueLimits = new Map<string, { count: number; resetAt: number }>();
+app.post(`${API}/auth/desktop-sessions`, (req, res) => {
+  const key = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const current = desktopPairingIssueLimits.get(key);
+  const bucket = !current || current.resetAt <= now
+    ? { count: 0, resetAt: now + 60 * 60_000 }
+    : current;
+  bucket.count += 1;
+  desktopPairingIssueLimits.set(key, bucket);
+  if (bucket.count > 30) {
+    res.status(429).json({ error: "配对请求过于频繁，请稍后再试" });
+    return;
+  }
+  const label = typeof req.body?.deviceLabel === "string" ? req.body.deviceLabel : "电脑浏览器";
+  const created = createDesktopPairing(label);
+  const pairingUri = new URL("daynote://desktop-pair");
+  pairingUri.searchParams.set("session", created.id);
+  pairingUri.searchParams.set("secret", created.scanSecret);
+  res.status(201).json({
+    id: created.id,
+    desktopSecret: created.desktopSecret,
+    pairingUri: pairingUri.toString(),
+    deviceLabel: created.deviceLabel,
+    expiresAt: created.expiresAt,
+  });
+});
+
+app.post(`${API}/auth/desktop-sessions/:id/inspect`, (req, res) => {
+  const secret = typeof req.body?.scanSecret === "string" ? req.body.scanSecret : "";
+  const value = inspectDesktopPairing(req.params.id, secret);
+  if (!value) {
+    res.status(410).json({ error: "二维码无效或已过期" });
+    return;
+  }
+  res.json(value);
+});
+
+app.post(`${API}/auth/desktop-sessions/:id/approve`, requireAuth, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.status(403).json({ error: "请先登录账号，再授权电脑使用" });
+    return;
+  }
+  const secret = typeof req.body?.scanSecret === "string" ? req.body.scanSecret : "";
+  const value = approveDesktopPairing(req.params.id, secret, req.userId!);
+  if (!value) {
+    res.status(410).json({ error: "二维码无效、已过期或已由其他账号确认" });
+    return;
+  }
+  res.json(value);
+});
+
+app.post(`${API}/auth/desktop-sessions/:id/claim`, (req, res) => {
+  const secret = typeof req.body?.desktopSecret === "string" ? req.body.desktopSecret : "";
+  const value = claimDesktopPairing(req.params.id, secret);
+  if (value.status === "invalid") {
+    res.status(404).json({ error: "配对请求不存在" });
+    return;
+  }
+  if (value.status === "expired" || value.status === "consumed") {
+    res.status(410).json({ error: value.status === "expired" ? "二维码已过期" : "二维码已经使用" });
+    return;
+  }
+  res.status(value.status === "waiting" ? 202 : 200).json(value);
 });
 
 // Codex 桌面 worker：与用户会话完全分离，只接受服务器配置的哈希令牌。

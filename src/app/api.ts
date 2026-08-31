@@ -34,6 +34,48 @@ export function clearToken(): void {
 
 export class UnauthorizedError extends Error {}
 
+export interface DesktopPairingSession {
+  id: string;
+  desktopSecret: string;
+  pairingUri: string;
+  deviceLabel: string;
+  expiresAt: string;
+}
+
+export interface DesktopPairingClaim {
+  status: "waiting" | "complete";
+  token?: string;
+  user?: string;
+  expiresAt?: string;
+}
+
+async function publicRequest<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const value = await res.json().catch(() => null) as { error?: string } | null;
+  if (!res.ok && res.status !== 202) {
+    throw new Error(value?.error || `请求失败 (${res.status})`);
+  }
+  return value as T;
+}
+
+export function createDesktopPairing(deviceLabel: string): Promise<DesktopPairingSession> {
+  return publicRequest<DesktopPairingSession>("/auth/desktop-sessions", { deviceLabel });
+}
+
+export function claimDesktopPairing(
+  id: string,
+  desktopSecret: string,
+): Promise<DesktopPairingClaim> {
+  return publicRequest<DesktopPairingClaim>(
+    `/auth/desktop-sessions/${encodeURIComponent(id)}/claim`,
+    { desktopSecret },
+  );
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
