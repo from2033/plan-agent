@@ -1207,6 +1207,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           if (tab == 0)
             IconButton(
+              onPressed: _openTrendPage,
+              tooltip: '今日新闻与趋势',
+              icon: const Icon(Icons.public_rounded, size: 21),
+            ),
+          if (tab == 0)
+            IconButton(
+              onPressed: _openTomorrowBrief,
+              tooltip: '明日管家',
+              icon: const Icon(Icons.nightlight_outlined, size: 21),
+            ),
+          if (tab == 0)
+            IconButton(
               onPressed: _openProfilePage,
               tooltip: '我的与设置',
               icon: CircleAvatar(
@@ -1947,6 +1959,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _openFinancePage() async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => Scaffold(appBar: AppBar(title: const Text('消费分析')), body: FinancePage(api: widget.api))));
+  }
+
+  Future<void> _openTrendPage() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => WorldPulsePage(api: widget.api, initialData: worldPulse)));
+  }
+
+  Future<void> _openTomorrowBrief() async {
+    await showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (_) => SizedBox(height: MediaQuery.sizeOf(context).height * .86, child: TomorrowBriefPane(api: widget.api, entries: entries, selectedDate: selectedDate)));
   }
 
   Future<void> _openHousekeepingPage() async {
