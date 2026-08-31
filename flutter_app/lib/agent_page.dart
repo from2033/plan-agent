@@ -373,7 +373,7 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
   Widget _statusCard(Map<String, dynamic> value) {
     final stage = value['stage']?.toString();
     final input = value['input'] as Map?;
-    final result = value['result'] as Map?;
+    final result = value['result'] is Map ? value['result'] as Map : null;
     final summary = result?['summary']?.toString();
     return Card(
       elevation: 0,
