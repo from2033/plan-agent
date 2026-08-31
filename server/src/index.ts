@@ -121,6 +121,7 @@ import {
   registerLocalDocument,
   resolveDocumentEvidence,
   storeDocumentUpload,
+  documentContentHash,
 } from "./document-store.js";
 import {
   deleteFamilyAccountData,
@@ -1644,6 +1645,8 @@ function acceptDocumentUpload(
           desktopContext.uploadId,
           duplicate.id,
           desktopContext.kind || "file",
+          undefined,
+          documentContentHash(content),
         )
       : null;
     if (userNote && duplicate.status === "COMPLETE") {
@@ -1678,6 +1681,8 @@ function acceptDocumentUpload(
           desktopContext.uploadId,
           document.id,
           desktopContext.kind || "file",
+          undefined,
+          documentContentHash(content),
         )
       : null;
     const job = enqueueAiJob(userId, "document", {
@@ -2812,20 +2817,15 @@ const WEB_DIST = process.env.WEB_DIST
 const WEB_BASE = BASE_PATH || "/app";
 
 if (existsSync(WEB_DIST)) {
-  app.get(WEB_BASE, (req, res, next) => {
-    if (req.path === WEB_BASE) return res.redirect(`${WEB_BASE}/`);
-    next();
-  });
-  app.use(WEB_BASE, express.static(WEB_DIST));
-  // /scan 是电脑端的明确扫码入口，成功后前端会切换到 /app/ 工作台。
+  // /app 仅保留构建产物的静态资源；不再是可访问的完整网页应用。
+  app.use(`${WEB_BASE}/assets`, express.static(path.join(WEB_DIST, "assets"), { index: false, fallthrough: false }));
+  app.get(`${WEB_BASE}/favicon.png`, (_req, res) => res.sendFile(path.join(WEB_DIST, "favicon.png")));
+  app.get(`${WEB_BASE}/apple-touch-icon.png`, (_req, res) => res.sendFile(path.join(WEB_DIST, "apple-touch-icon.png")));
   app.get(["/scan", "/scan/"], (_req, res) => {
     res.sendFile(path.join(WEB_DIST, "index.html"));
   });
   app.get("/", (_req, res) => res.redirect("/scan"));
-  // SPA 回退：工作台内的其它路径都返回 index.html。
-  app.get(`${WEB_BASE}*`, (_req, res) => {
-    res.sendFile(path.join(WEB_DIST, "index.html"));
-  });
+  app.get([WEB_BASE, `${WEB_BASE}/`, `${WEB_BASE}/*path`], (_req, res) => res.redirect("/scan"));
 } else {
   console.warn(`[static] 未找到前端构建目录: ${WEB_DIST}（仅提供 API）`);
 }

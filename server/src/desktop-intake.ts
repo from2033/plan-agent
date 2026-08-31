@@ -54,6 +54,7 @@ db.exec(`
     file_name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     byte_size INTEGER NOT NULL,
+    content_hash TEXT,
     status TEXT NOT NULL,
     error TEXT,
     created_at TEXT NOT NULL,
@@ -64,6 +65,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_desktop_submission_files_parent
     ON desktop_submission_files(submission_id,created_at);
 `);
+const hasContentHash = (db.prepare("PRAGMA table_info(desktop_submission_files)").all() as unknown as { name: string }[])
+  .some((column) => column.name === "content_hash");
+if (!hasContentHash) db.exec("ALTER TABLE desktop_submission_files ADD COLUMN content_hash TEXT");
 
 const SESSION_LIFETIME_MS = 30 * 60_000;
 
@@ -127,6 +131,7 @@ export interface DesktopSubmissionFile {
   fileName: string;
   mimeType: string;
   byteSize: number;
+  contentHash: string | null;
   status: "PENDING" | "UPLOADING" | "UPLOADED" | "PROCESSING" | "COMPLETE" | "FAILED";
   error: string | null;
 }
@@ -154,7 +159,7 @@ type SubmissionRow = {
 type FileRow = {
   id: string; kind: "file" | "text"; upload_id: string | null; document_id: string | null;
   agent_task_id: string | null; file_name: string; mime_type: string; byte_size: number;
-  status: DesktopSubmissionFile["status"]; error: string | null;
+  status: DesktopSubmissionFile["status"]; error: string | null; content_hash: string | null;
 };
 
 function filesForSubmission(id: string, userId: string): DesktopSubmissionFile[] {
@@ -168,6 +173,7 @@ function filesForSubmission(id: string, userId: string): DesktopSubmissionFile[]
       fileName: decField(row.file_name),
       mimeType: row.mime_type,
       byteSize: row.byte_size,
+      contentHash: row.content_hash,
       status: row.status,
       error: row.error ? decField(row.error) : null,
     }));
@@ -255,13 +261,25 @@ export function createDesktopSubmissionUpload(
   if (!submission || submission.stage !== "DRAFT") throw new Error("desktop_submission_not_found");
   const currentFileCount = submission.files.filter((item) => item.kind === "file").length;
   const expectedFileCount = submission.expectedItemCount - (submission.pastedText ? 1 : 0);
-  if (currentFileCount >= expectedFileCount) throw new Error("desktop_submission_file_limit");
+  const retrying = submission.files.find((item) => item.kind === "file"
+    && !item.documentId && item.fileName === input.fileName && item.byteSize === input.totalBytes);
+  if (!retrying && currentFileCount >= expectedFileCount) throw new Error("desktop_submission_file_limit");
   const upload = chunkedUploadStore.create(session.userId, {
     fileName: input.fileName,
     mimeType: input.mimeType,
     totalBytes: input.totalBytes,
     userNote: submission.instruction,
   });
+  if (retrying) {
+    if (retrying.uploadId) {
+      try { chunkedUploadStore.remove(session.userId, retrying.uploadId); } catch { /* expired upload */ }
+    }
+    db.prepare(`UPDATE desktop_submission_files
+      SET upload_id=?,mime_type=?,status='UPLOADING',error=NULL,updated_at=? WHERE id=? AND user_id=?`).run(
+        upload.id, input.mimeType, new Date().toISOString(), retrying.id, session.userId,
+      );
+    return { fileId: retrying.id, uploadId: upload.id, chunkSize: upload.chunkSize, chunkCount: upload.chunkCount };
+  }
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   db.prepare(`INSERT INTO desktop_submission_files
@@ -284,8 +302,9 @@ export function markDesktopUploadAccepted(
   uploadId: string | null,
   documentId: string,
   kind: "file" | "text" = "file",
+  contentHash: string | null = null,
 ): DesktopSubmissionFile {
-  return markDesktopDocumentAccepted(session.userId, submissionId, uploadId, documentId, kind, session.id);
+  return markDesktopDocumentAccepted(session.userId, submissionId, uploadId, documentId, kind, session.id, contentHash);
 }
 
 export function markDesktopDocumentAccepted(
@@ -295,6 +314,7 @@ export function markDesktopDocumentAccepted(
   documentId: string,
   kind: "file" | "text" = "file",
   sessionId?: string,
+  contentHash: string | null = null,
 ): DesktopSubmissionFile {
   const submission = getDesktopSubmission(submissionId, userId, sessionId);
   if (!submission || submission.stage !== "DRAFT") throw new Error("desktop_submission_not_found");
@@ -314,8 +334,8 @@ export function markDesktopDocumentAccepted(
   transitionPersistentAgentTask(userId, child.id, "classified", "document_type_identified");
   transitionPersistentAgentTask(userId, child.id, "extracted", "document_goal_extracted");
   transitionPersistentAgentTask(userId, child.id, "executing", "document_processing_started");
-  db.prepare(`UPDATE desktop_submission_files SET document_id=?,agent_task_id=?,status='PROCESSING',updated_at=?
-    WHERE id=? AND user_id=?`).run(documentId, child.id, new Date().toISOString(), file.id, userId);
+  db.prepare(`UPDATE desktop_submission_files SET document_id=?,agent_task_id=?,content_hash=?,status='PROCESSING',updated_at=?
+    WHERE id=? AND user_id=?`).run(documentId, child.id, contentHash, new Date().toISOString(), file.id, userId);
   return getDesktopSubmission(submissionId, userId, sessionId)!.files.find((item) => item.id === file.id)!;
 }
 

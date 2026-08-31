@@ -53,7 +53,8 @@ test("多文件与粘贴文字形成父子任务，全部验收通过后父任�
   chunkedUploadStore.writeChunk("owner", upload.uploadId, 0, content);
   const assembled = chunkedUploadStore.assemble("owner", upload.uploadId);
   const firstDocument = storeDocumentUpload("owner", assembled.metadata.fileName, assembled.metadata.mimeType, assembled.content);
-  intake.markDesktopUploadAccepted(session, submission.id, upload.uploadId, firstDocument.id);
+  const firstHash = crypto.createHash("sha256").update(content).digest("hex");
+  intake.markDesktopUploadAccepted(session, submission.id, upload.uploadId, firstDocument.id, "file", firstHash);
   completeDocument(firstDocument.id, "owner", completedResult(firstDocument.id, "资料一"));
 
   const textDocument = storeDocumentUpload("owner", "电脑粘贴文字.txt", "text/plain", Buffer.from(submission.pastedText));
@@ -66,6 +67,7 @@ test("多文件与粘贴文字形成父子任务，全部验收通过后父任�
   assert.equal(getPersistentAgentTask(submission.agentTaskId, "owner")?.stage, "verified");
   assert.equal(listChildAgentTasks("owner", submission.agentTaskId).length, 2);
   assert.ok(listChildAgentTasks("owner", submission.agentTaskId).every((task) => task.stage === "verified"));
+  assert.equal(intake.getDesktopSubmission(submission.id, "owner")?.files.find((file) => file.kind === "file")?.contentHash, firstHash);
 });
 
 test("未上传完整时禁止提交，跨账号与重复提交保持隔离和幂等", () => {
@@ -85,6 +87,16 @@ test("未上传完整时禁止提交，跨账号与重复提交保持隔离和�
   assert.equal(repeated.id, first.id);
   assert.equal(intake.getDesktopSubmission(first.id, "other"), null);
   assert.throws(() => intake.commitDesktopSubmission(session, first.id), /desktop_submission_incomplete/);
+
+  const firstUpload = intake.createDesktopSubmissionUpload(session, first.id, {
+    fileName: "可重试.txt", mimeType: "text/plain", totalBytes: 10,
+  });
+  intake.markDesktopUploadFailed("owner", first.id, firstUpload.uploadId, "网络中断");
+  const retriedUpload = intake.createDesktopSubmissionUpload(session, first.id, {
+    fileName: "可重试.txt", mimeType: "text/plain", totalBytes: 10,
+  });
+  assert.notEqual(retriedUpload.uploadId, firstUpload.uploadId);
+  assert.equal(retriedUpload.fileId, firstUpload.fileId);
 });
 
 test.after(() => fs.rmSync(temporaryDir, { recursive: true, force: true }));
