@@ -50,6 +50,12 @@ export interface CapabilityStandard {
   description: string;
   requiresConfirmation: boolean;
   allowedSideEffects: string[];
+  inputContract: string;
+  outputContract: string;
+  confirmationPolicy: string;
+  idempotencyRule: string;
+  retryPolicy: string;
+  followUpPolicy: string;
   failurePolicy: "retry" | "awaiting_user" | "follow_up";
   acceptance: (input: unknown) => AcceptanceCheck[];
 }
@@ -76,6 +82,6 @@ export function createCapabilityTask<TInput, TResult>(params: {
   return createAgentTask({ ...params, acceptance: standard.acceptance(params.input) });
 }
 
-export function registeredCapabilities(): string[] {
-  return [...standards.keys()];
+export function registeredCapabilities(): Array<Omit<CapabilityStandard, "acceptance">> {
+  return [...standards.values()].map(({ acceptance: _acceptance, ...standard }) => standard);
 }

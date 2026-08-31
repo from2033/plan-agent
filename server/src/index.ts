@@ -136,8 +136,9 @@ import {
   MAX_CHUNKED_DOCUMENT_SIZE,
 } from "./chunked-upload.js";
 import { confirmAssistantAction, confirmAssistantActionByAgentTaskId, dismissAssistantAction, listAssistantActions, proposeDocumentActions } from "./assistant-actions.js";
-import { createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, listChildAgentTasks, listPersistentAgentTasks, transitionPersistentAgentTask, verifyPersistentAgentTask } from "./agent-runtime.js";
+import { auditStaleAgentTasks, createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, listChildAgentTasks, listPersistentAgentTasks, schedulePersistentAgentFollowUp, transitionPersistentAgentTask, verifyPersistentAgentTask, wakeDueAgentFollowUps } from "./agent-runtime.js";
 import { registeredCapabilities } from "./agent-contract.js";
+import { agentQualityAudit, listAgentFailureSamples, recordAgentFailureSample } from "./agent-quality.js";
 import {
   deleteMistake,
   insertMistake,
@@ -155,6 +156,7 @@ import {
   ownedDesktopUpload,
   refreshActiveDesktopSubmissions,
   refreshDesktopSubmission,
+  retryDesktopSubmission,
   resolveDesktopIntakeSession,
   type DesktopIntakeSession,
 } from "./desktop-intake.js";
@@ -920,6 +922,12 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
       throw new Error("research_report_missing");
     }
     completeDocument(reportId, job.userId, value);
+    const agentTaskId = String((job.input as { agentTaskId?: unknown })?.agentTaskId || "");
+    const agentTask = agentTaskId ? getPersistentAgentTask(agentTaskId, job.userId) : null;
+    if (agentTask?.stage === "executing") {
+      transitionPersistentAgentTask(job.userId, agentTask.id, "verifying", "research_report_ready", value);
+      verifyPersistentAgentTask(job.userId, agentTask.id, value);
+    }
     return value;
   }
   if (job.kind === "document") {
@@ -1800,6 +1808,14 @@ app.get(`${API}/assistant-actions`, (req, res) => {
 });
 
 app.get(`${API}/agent/capabilities`, (req, res) => { res.json(registeredCapabilities()); });
+app.get(`${API}/agent/quality`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  res.json(agentQualityAudit(req.userId!, Number(req.query.days || 30)));
+});
+app.get(`${API}/agent/failure-samples`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  res.json(listAgentFailureSamples(req.userId!, Number(req.query.limit || 50)));
+});
 app.get(`${API}/agent/tasks`, (req, res) => {
   if (isGuestUser(req.userId)) { res.json([]); return; }
   refreshActiveDesktopSubmissions(req.userId!);
@@ -1832,21 +1848,61 @@ app.get(`${API}/agent/tasks/:id`, (req, res) => {
 });
 app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
-  const task = transitionPersistentAgentTask(req.userId!, req.params.id, "retrying" as never, "user_requested_retry");
-  if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
-  res.json(task);
+  const existing = getPersistentAgentTask(req.params.id, req.userId!);
+  if (!existing) { res.status(404).json({ error: "任务不存在" }); return; }
+  if (existing.stage !== "failed") {
+    res.status(409).json({ error: "当前状态不能重试" }); return;
+  }
+  if (existing.capability === "desktop_intake" && existing.sourceId) {
+    const retried = retryDesktopSubmission(req.userId!, existing.sourceId);
+    if (!retried) { res.status(409).json({ error: "原始资料不可用，请重新从电脑投递" }); return; }
+    res.json(retried); return;
+  }
+  if (existing.capability === "research") {
+    const input = existing.input as { title?: string; details?: string; payload?: { query?: string } };
+    const query = String(input.payload?.query || input.title || "").trim();
+    if (!query) { res.status(409).json({ error: "研究主题缺失，请重新发起" }); return; }
+    const report = createResearchDocument(req.userId!, input.title || query);
+    transitionPersistentAgentTask(req.userId!, existing.id, "retrying", "user_requested_retry");
+    transitionPersistentAgentTask(req.userId!, existing.id, "executing", "research_retry_started");
+    const job = enqueueAiJob(req.userId!, "research", {
+      reportId: report.id, query, originalRequest: input.details || query, agentTaskId: existing.id,
+    }, 100);
+    res.status(202).json({ ...getPersistentAgentTask(existing.id, req.userId!)!, jobId: job.id, reportId: report.id });
+    return;
+  }
+  res.status(409).json({ error: "该任务需要补充信息后重新提交，不能直接重复执行" });
 });
 app.post(`${API}/agent/tasks/:id/follow-up`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
-  const task = transitionPersistentAgentTask(req.userId!, req.params.id, "follow_up", "user_requested_follow_up");
+  const existing = getPersistentAgentTask(req.params.id, req.userId!);
+  if (!existing) { res.status(404).json({ error: "任务不存在" }); return; }
+  const remindAt = typeof req.body?.remindAt === "string" ? req.body.remindAt : "";
+  const task = remindAt
+    ? schedulePersistentAgentFollowUp(req.userId!, existing.id, remindAt, "user_scheduled_follow_up")
+    : existing.stage === "follow_up"
+      ? transitionPersistentAgentTask(req.userId!, existing.id, "awaiting_user", "user_opened_follow_up")
+      : transitionPersistentAgentTask(req.userId!, existing.id, "follow_up", "user_requested_follow_up");
   if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
   res.json(task);
 });
 app.post(`${API}/agent/tasks/:id/dismiss`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
-  const task = transitionPersistentAgentTask(req.userId!, req.params.id, "follow_up", "user_dismissed");
+  const task = schedulePersistentAgentFollowUp(
+    req.userId!, req.params.id, new Date(Date.now() + 24 * 60 * 60_000).toISOString(), "user_dismissed",
+  );
   if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
   res.json(task);
+});
+const AgentCorrectionSchema = z.object({ description: z.string().trim().min(2).max(1_000) });
+app.post(`${API}/agent/tasks/:id/corrections`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const task = getPersistentAgentTask(req.params.id, req.userId!);
+  const parsed = AgentCorrectionSchema.safeParse(req.body);
+  if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
+  if (!parsed.success) { res.status(400).json({ error: "请说明哪里需要改进" }); return; }
+  recordAgentFailureSample(task, "user_correction", parsed.data.description, task.result);
+  res.status(201).json({ ok: true });
 });
 app.post(`${API}/assistant-actions/:id/confirm`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
@@ -1858,6 +1914,7 @@ app.post(`${API}/assistant-actions/:id/confirm`, (req, res) => {
       reportId: report.id,
       query: action.title,
       originalRequest: action.details,
+      ...(action.agentTaskId ? { agentTaskId: action.agentTaskId } : {}),
     }, 100);
     res.status(202).json({ ...action, jobId: job.id, reportId: report.id });
     return;
@@ -2866,6 +2923,15 @@ const tomorrowBriefTimer = setInterval(() => {
   ensureScheduledTomorrowBrief();
 }, 60_000);
 tomorrowBriefTimer.unref();
+
+// 主动闭环：唤醒到期跟进，并把长时间无进展的任务转成可见失败，禁止静默卡住。
+wakeDueAgentFollowUps();
+auditStaleAgentTasks();
+const agentFollowUpTimer = setInterval(() => {
+  wakeDueAgentFollowUps();
+  auditStaleAgentTasks();
+}, 60_000);
+agentFollowUpTimer.unref();
 
 // ─── 实时语音识别 WebSocket（流式）：${API}/asr?token=<访问令牌> ───────────────
 const wss = new WebSocketServer({ noServer: true });

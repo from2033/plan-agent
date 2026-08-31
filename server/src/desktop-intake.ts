@@ -3,13 +3,15 @@ import { DatabaseSync } from "node:sqlite";
 
 import { decField, encField } from "./crypto-field.js";
 import { chunkedUploadStore } from "./chunked-upload.js";
-import { getDocument } from "./document-store.js";
+import { getDocument, readDocumentUpload, restartDocumentProcessing } from "./document-store.js";
+import { enqueueAiJob } from "./ai-queue.js";
 import {
   createPersistentAgentTask,
   getPersistentAgentTask,
   listChildAgentTasks,
   transitionPersistentAgentTask,
   verifyPersistentAgentTask,
+  type PersistedAgentTask,
 } from "./agent-runtime.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
@@ -376,12 +378,13 @@ export function refreshDesktopSubmission(userId: string, submissionId: string): 
     if (!file.agentTaskId || !file.document) continue;
     const child = getPersistentAgentTask(file.agentTaskId, userId);
     if (file.document.status === "COMPLETE" && child?.stage === "executing") {
-      const result = file.document.result as { title?: string; summary?: string } | null;
+      const result = file.document.result as { title?: string; summary?: string; vaultPath?: string } | null;
       transitionPersistentAgentTask(userId, child.id, "verifying", "document_archived", result);
       verifyPersistentAgentTask(userId, child.id, {
         documentId: file.document.id,
         title: result?.title || file.document.fileName,
         summary: result?.summary || "资料已完成归档。",
+        vaultPath: result?.vaultPath || `资料/${file.document.id}`,
       });
       db.prepare("UPDATE desktop_submission_files SET status='COMPLETE',updated_at=? WHERE id=? AND user_id=?")
         .run(new Date().toISOString(), file.id, userId);
@@ -422,4 +425,37 @@ export function refreshActiveDesktopSubmissions(userId: string): void {
   const rows = db.prepare("SELECT id FROM desktop_submissions WHERE user_id=? AND stage='PROCESSING' ORDER BY updated_at DESC LIMIT 20")
     .all(userId) as unknown as Array<{ id: string }>;
   for (const row of rows) refreshDesktopSubmission(userId, row.id);
+}
+
+export function retryDesktopSubmission(userId: string, submissionId: string): PersistedAgentTask | null {
+  const submission = getDesktopSubmission(submissionId, userId);
+  const parent = submission ? getPersistentAgentTask(submission.agentTaskId, userId) : null;
+  if (!submission || !parent || submission.stage !== "FAILED" || parent.stage !== "failed") return null;
+  const failedFiles = submission.files.filter((file) => file.status === "FAILED" && file.documentId && file.agentTaskId);
+  if (!failedFiles.length) return null;
+  const sources = failedFiles.map((file) => ({ file, source: readDocumentUpload(file.documentId!, userId) }));
+  if (sources.some((item) => !item.source)) return null;
+  transitionPersistentAgentTask(userId, parent.id, "retrying", "desktop_submission_retry_requested");
+  transitionPersistentAgentTask(userId, parent.id, "executing", "desktop_submission_retry_started");
+  for (const { file } of sources) {
+    const child = getPersistentAgentTask(file.agentTaskId!, userId);
+    if (!child || child.stage !== "failed") continue;
+    transitionPersistentAgentTask(userId, child.id, "retrying", "document_retry_requested");
+    const job = enqueueAiJob(userId, "document", {
+      documentId: file.documentId,
+      desktopSubmissionId: submission.id,
+      agentTaskId: child.id,
+      ...(submission.instruction ? { userNote: submission.instruction } : {}),
+    }, 100);
+    if (!restartDocumentProcessing(file.documentId!, userId, job.id)) {
+      transitionPersistentAgentTask(userId, child.id, "failed", "document_retry_source_unavailable");
+      continue;
+    }
+    transitionPersistentAgentTask(userId, child.id, "executing", "document_retry_started");
+    db.prepare("UPDATE desktop_submission_files SET status='PROCESSING',error=NULL,updated_at=? WHERE id=? AND user_id=?")
+      .run(new Date().toISOString(), file.id, userId);
+  }
+  db.prepare("UPDATE desktop_submissions SET stage='PROCESSING',updated_at=? WHERE id=? AND user_id=?")
+    .run(new Date().toISOString(), submission.id, userId);
+  return getPersistentAgentTask(parent.id, userId);
 }

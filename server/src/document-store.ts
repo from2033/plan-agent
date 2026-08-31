@@ -233,6 +233,12 @@ export function bindDocumentJob(id: string, userId: string, jobId: string): void
     .run(jobId, new Date().toISOString(), id, userId);
 }
 
+export function restartDocumentProcessing(id: string, userId: string, jobId: string): boolean {
+  const result = db.prepare(`UPDATE documents SET status='PROCESSING',job_id=?,error=NULL,updated_at=?
+    WHERE id=? AND user_id=? AND status='FAILED'`).run(jobId, new Date().toISOString(), id, userId);
+  return Number(result.changes) === 1;
+}
+
 export function getDocument(id: string, userId: string): StoredDocument | null {
   const row = db.prepare("SELECT * FROM documents WHERE id=? AND user_id=?")
     .get(id, userId) as unknown as DocumentRow | undefined;

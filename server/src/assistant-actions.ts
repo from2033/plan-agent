@@ -56,7 +56,7 @@ export function proposeDocumentActions(
   const add = (kind: string, actionTitle: string, details: string, payload: unknown) => {
     const exists = db.prepare("SELECT id FROM assistant_actions WHERE user_id=? AND source_document_id=? AND kind=? AND status IN ('PENDING','CONFIRMED') LIMIT 1").get(userId, documentId, kind);
     if (exists) return;
-    const capability = kind === "todo" ? "todo" : kind === "research" ? "research" : "document_action";
+    const capability = kind === "todo" ? "todo" : kind === "reminder" ? "reminder" : kind === "research" ? "research" : "document_action";
     const agentTask = createPersistentAgentTask(
       userId,
       capability,

@@ -285,6 +285,48 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
     }
   }
 
+  Future<void> reportProblem() async {
+    final controller = TextEditingController();
+    final description = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('告诉 Agent 哪里不对'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 3,
+          maxLines: 6,
+          decoration: const InputDecoration(hintText: '例如：漏掉了第二份资料里的截止时间'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('提交'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (description == null || description.length < 2) return;
+    setState(() => busy = true);
+    try {
+      await widget.api.correctAgentTask(widget.taskId, description);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('已记录为失败样本，后续标准升级会用于回归测试')));
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   List<String> strings(dynamic value) =>
       value is List ? value.map((item) => item.toString()).toList() : const [];
 
@@ -492,6 +534,11 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
   List<Widget> _actions(Map<String, dynamic> value) {
     if (busy) return const [Center(child: CircularProgressIndicator())];
     final stage = value['stage']?.toString();
+    final feedback = OutlinedButton.icon(
+      onPressed: reportProblem,
+      icon: const Icon(Icons.flag_outlined),
+      label: const Text('报告结果问题'),
+    );
     if (stage == 'awaiting_confirmation') {
       return [
         FilledButton.icon(
@@ -503,6 +550,7 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
           onPressed: () => act(widget.api.dismissAgentTask),
           child: const Text('暂不处理'),
         ),
+        feedback,
       ];
     }
     if (stage == 'failed') {
@@ -512,6 +560,7 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
           icon: const Icon(Icons.refresh_rounded),
           label: const Text('重试'),
         ),
+        feedback,
       ];
     }
     if (stage == 'follow_up') {
@@ -521,6 +570,16 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
           icon: const Icon(Icons.play_arrow_rounded),
           label: const Text('现在处理'),
         ),
+        TextButton(
+          onPressed: () => act(
+            (id) => widget.api.followUpAgentTask(
+              id,
+              remindAt: DateTime.now().add(const Duration(days: 1)),
+            ),
+          ),
+          child: const Text('明天提醒我'),
+        ),
+        feedback,
       ];
     }
     if (stage == 'awaiting_user') {
@@ -529,9 +588,10 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
           onPressed: () => act(widget.api.dismissAgentTask),
           child: const Text('稍后处理'),
         ),
+        feedback,
       ];
     }
-    return const [];
+    return [feedback];
   }
 
   String _sourceLabel(String? source) => switch (source) {

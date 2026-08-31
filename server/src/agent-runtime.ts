@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { decField, encField } from "./crypto-field.js";
 import { capabilityStandard, verifyAgentTask, createCapabilityTask, type AgentStage } from "./agent-contract.js";
 import "./agent-standards.js";
+import { recordAgentFailureSample } from "./agent-quality.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
 db.exec(`
@@ -89,6 +90,9 @@ export function transitionPersistentAgentTask(userId: string, id: string, toStag
   };
   const nextAction = nextActions[toStage] || null;
   db.prepare("UPDATE agent_tasks SET stage=?,result_json=?,failure_json=?,next_action=?,updated_at=? WHERE id=? AND user_id=?").run(toStage, result == null ? task.result == null ? null : encField(JSON.stringify(task.result)) : encField(JSON.stringify(result)), encField(JSON.stringify(failures)), nextAction, now, id, userId);
+  if (toStage === "failed" && reason !== "acceptance_failed") {
+    recordAgentFailureSample(task, "execution", reason, result);
+  }
   const updated = getPersistentAgentTask(id, userId)!; event(updated, task.stage, toStage, reason, result); return updated;
 }
 
@@ -98,10 +102,79 @@ export function verifyPersistentAgentTask(userId: string, id: string, result: un
   const memoryTask = createCapabilityTask({ id: task.id, capability: task.capability, input: task.input, requiresConfirmation: task.requiresConfirmation });
   const checked = verifyAgentTask(memoryTask, result);
   db.prepare("UPDATE agent_tasks SET passed_checks_json=?,failed_checks_json=? WHERE id=? AND user_id=?").run(encField(JSON.stringify(checked.acceptance.filter((item) => !checked.failures.includes(item.description)).map((item) => item.description))), encField(JSON.stringify(checked.failures)), id, userId);
+  for (const failure of checked.failures) recordAgentFailureSample(task, "acceptance", failure, result);
   return transitionPersistentAgentTask(userId, id, checked.stage === "verified" ? "verified" : "failed", checked.stage === "verified" ? "acceptance_passed" : "acceptance_failed", checked.stage === "verified" ? result : checked.failures);
+}
+
+export function recordPersistentAgentExecutionFailure(
+  userId: string,
+  id: string,
+  reason: string,
+  result?: unknown,
+): void {
+  const task = getPersistentAgentTask(id, userId);
+  if (task) recordAgentFailureSample(task, "execution", reason, result);
+}
+
+export function schedulePersistentAgentFollowUp(
+  userId: string,
+  id: string,
+  followUpAt: string,
+  reason = "follow_up_scheduled",
+): PersistedAgentTask | null {
+  const task = getPersistentAgentTask(id, userId);
+  const at = new Date(followUpAt);
+  if (!task || Number.isNaN(at.getTime()) || at.getTime() <= Date.now()) return null;
+  let scheduled = task;
+  if (task.stage !== "follow_up") {
+    scheduled = transitionPersistentAgentTask(userId, id, "follow_up", reason) || task;
+  }
+  db.prepare("UPDATE agent_tasks SET next_follow_up_at=?,next_action=?,updated_at=? WHERE id=? AND user_id=?")
+    .run(at.toISOString(), `将在 ${at.toISOString()} 再次提醒`, new Date().toISOString(), id, userId);
+  const updated = getPersistentAgentTask(id, userId)!;
+  event(updated, scheduled.stage, scheduled.stage, reason, { followUpAt: at.toISOString() });
+  return updated;
+}
+
+export function wakeDueAgentFollowUps(now = new Date()): PersistedAgentTask[] {
+  const due = db.prepare(`SELECT * FROM agent_tasks
+    WHERE stage='follow_up' AND next_follow_up_at IS NOT NULL AND next_follow_up_at<=?
+    ORDER BY next_follow_up_at ASC LIMIT 100`).all(now.toISOString()) as unknown as Row[];
+  const awakened: PersistedAgentTask[] = [];
+  for (const row of due) {
+    db.prepare("UPDATE agent_tasks SET next_follow_up_at=NULL WHERE id=? AND user_id=?").run(row.id, row.user_id);
+    const task = transitionPersistentAgentTask(row.user_id, row.id, "awaiting_user", "scheduled_follow_up_due");
+    if (task) awakened.push(task);
+  }
+  return awakened;
+}
+
+export function auditStaleAgentTasks(
+  now = new Date(),
+  maximumAgeMs = 2 * 60 * 60_000,
+): PersistedAgentTask[] {
+  const cutoff = new Date(now.getTime() - maximumAgeMs).toISOString();
+  const rows = db.prepare(`SELECT * FROM agent_tasks WHERE updated_at<=?
+    AND stage IN ('received','classified','extracted','executing','verifying','retrying')
+    ORDER BY updated_at ASC LIMIT 100`).all(cutoff) as unknown as Row[];
+  const failed: PersistedAgentTask[] = [];
+  for (const row of rows) {
+    const task = transitionPersistentAgentTask(row.user_id, row.id, "failed", "agent_task_timeout", ["任务长时间没有进展"]);
+    if (!task) continue;
+    const scheduled = schedulePersistentAgentFollowUp(
+      task.userId,
+      task.id,
+      new Date(now.getTime() + 15 * 60_000).toISOString(),
+      "timeout_follow_up_scheduled",
+    );
+    failed.push(scheduled || task);
+  }
+  return failed;
 }
 
 export function listAgentTaskEvents(userId: string, taskId: string): unknown[] {
   if (!getPersistentAgentTask(taskId, userId)) return [];
-  return db.prepare("SELECT id,from_stage as fromStage,to_stage as toStage,reason,payload_json as payload,created_at as createdAt FROM agent_task_events WHERE task_id=? AND user_id=? ORDER BY created_at ASC").all(taskId, userId);
+  const rows = db.prepare("SELECT id,from_stage as fromStage,to_stage as toStage,reason,payload_json as payload,created_at as createdAt FROM agent_task_events WHERE task_id=? AND user_id=? ORDER BY created_at ASC")
+    .all(taskId, userId) as unknown as Array<{ id: string; fromStage: string | null; toStage: string; reason: string; payload: string | null; createdAt: string }>;
+  return rows.map((row) => ({ ...row, payload: decodeJson(row.payload, null) }));
 }

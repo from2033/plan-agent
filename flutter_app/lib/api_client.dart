@@ -317,10 +317,17 @@ class ApiClient {
   Future<Map<String, dynamic>> retryAgentTask(String id) async =>
       (await _request('POST', '/agent/tasks/${Uri.encodeComponent(id)}/retry'))
           as Map<String, dynamic>;
-  Future<Map<String, dynamic>> followUpAgentTask(String id) async =>
+  Future<Map<String, dynamic>> followUpAgentTask(
+    String id, {
+    DateTime? remindAt,
+  }) async =>
       (await _request(
             'POST',
             '/agent/tasks/${Uri.encodeComponent(id)}/follow-up',
+            body: {
+              if (remindAt != null)
+                'remindAt': remindAt.toUtc().toIso8601String(),
+            },
           ))
           as Map<String, dynamic>;
   Future<Map<String, dynamic>> confirmAgentTask(String id) async =>
@@ -335,6 +342,13 @@ class ApiClient {
             '/agent/tasks/${Uri.encodeComponent(id)}/dismiss',
           ))
           as Map<String, dynamic>;
+  Future<void> correctAgentTask(String id, String description) async {
+    await _request(
+      'POST',
+      '/agent/tasks/${Uri.encodeComponent(id)}/corrections',
+      body: {'description': description},
+    );
+  }
 
   Future<Map<String, dynamic>> financeOverview({int months = 3}) async {
     return await _request('GET', '/finance/overview?months=$months')
