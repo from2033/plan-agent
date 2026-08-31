@@ -310,6 +310,10 @@ class ApiClient {
         .toList();
   }
 
+  Future<Map<String, dynamic>> agentTask(String id) async =>
+      (await _request('GET', '/agent/tasks/${Uri.encodeComponent(id)}'))
+          as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> retryAgentTask(String id) async =>
       (await _request('POST', '/agent/tasks/${Uri.encodeComponent(id)}/retry'))
           as Map<String, dynamic>;
@@ -323,6 +327,12 @@ class ApiClient {
       (await _request(
             'POST',
             '/agent/tasks/${Uri.encodeComponent(id)}/confirm',
+          ))
+          as Map<String, dynamic>;
+  Future<Map<String, dynamic>> dismissAgentTask(String id) async =>
+      (await _request(
+            'POST',
+            '/agent/tasks/${Uri.encodeComponent(id)}/dismiss',
           ))
           as Map<String, dynamic>;
 

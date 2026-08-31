@@ -34,6 +34,23 @@ class ReminderService {
       ),
     );
   }
+
+  Future<bool> notifyAgent({
+    required String id,
+    required String title,
+    required String body,
+  }) async {
+    try {
+      return await _channel.invokeMethod<bool>('notifyAgent', {
+            'id': id,
+            'title': title,
+            'body': body,
+          }) ??
+          false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
 }
 
 class ReminderSyncResult {

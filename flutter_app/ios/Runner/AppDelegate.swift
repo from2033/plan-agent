@@ -40,13 +40,20 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
       binaryMessenger: registrar.messenger()
     )
     channel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "sync",
-            let arguments = call.arguments as? [String: Any],
-            let reminders = arguments["reminders"] as? [[String: Any]] else {
+      guard let arguments = call.arguments as? [String: Any] else {
         result(FlutterMethodNotImplemented)
         return
       }
-      self?.syncReminders(reminders, result: result)
+      if call.method == "sync", let reminders = arguments["reminders"] as? [[String: Any]] {
+        self?.syncReminders(reminders, result: result)
+      } else if call.method == "notifyAgent",
+                let id = arguments["id"] as? String,
+                let title = arguments["title"] as? String,
+                let body = arguments["body"] as? String {
+        self?.notifyAgent(id: id, title: title, body: body, result: result)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
     }
     let documentChannel = FlutterMethodChannel(
       name: "com.from2033.assistant/documents",
@@ -528,6 +535,30 @@ private struct ReminderAlarmMetadata: AlarmMetadata {
             result(["mode": "denied", "count": 0, "scheduledEntryIds": []])
           }
         }
+      }
+    }
+  }
+
+  private func notifyAgent(id: String, title: String, body: String, result: @escaping FlutterResult) {
+    let center = UNUserNotificationCenter.current()
+    center.getNotificationSettings { settings in
+      guard settings.authorizationStatus == .authorized ||
+              settings.authorizationStatus == .provisional ||
+              settings.authorizationStatus == .ephemeral else {
+        DispatchQueue.main.async { result(false) }
+        return
+      }
+      let content = UNMutableNotificationContent()
+      content.title = String(title.prefix(80))
+      content.body = String(body.prefix(300))
+      content.sound = .default
+      let request = UNNotificationRequest(
+        identifier: "agent-\(id)",
+        content: content,
+        trigger: nil
+      )
+      center.add(request) { error in
+        DispatchQueue.main.async { result(error == nil) }
       }
     }
   }

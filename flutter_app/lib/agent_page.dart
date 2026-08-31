@@ -1,6 +1,52 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'api_client.dart';
+
+String agentCapabilityLabel(String? capability) => switch (capability) {
+  'input_processing' => '提问与录入',
+  'desktop_intake' => '电脑资料投递',
+  'document_ingest' => '资料识别与归档',
+  'tomorrow_brief' => '明日管家',
+  'document_action' => '资料后续动作',
+  'todo' => '待办',
+  'reminder' => '提醒',
+  'research' => '研究',
+  'qq_task_sync' => 'QQ 群同步',
+  'desktop_action' => '电脑操作',
+  _ => capability ?? 'Agent 任务',
+};
+
+String agentStageLabel(String? stage) => switch (stage) {
+  'received' => '刚刚收到',
+  'classified' => '正在判断',
+  'extracted' => '已提取目标',
+  'awaiting_confirmation' => '等待你确认',
+  'executing' => '执行中',
+  'verifying' => '验收中',
+  'retrying' => '重试中',
+  'awaiting_user' => '等待你补充',
+  'failed' => '处理或验收失败',
+  'follow_up' => '等待后续处理',
+  'verified' => '已完成并通过验收',
+  _ => stage ?? '未知状态',
+};
+
+Color agentStageColor(String? stage) => switch (stage) {
+  'verified' => const Color(0xff267046),
+  'failed' => const Color(0xffb42318),
+  'awaiting_confirmation' || 'awaiting_user' => const Color(0xff9a4f06),
+  _ => const Color(0xff52645b),
+};
+
+IconData agentStageIcon(String? stage) => switch (stage) {
+  'verified' => Icons.check_circle_outline_rounded,
+  'failed' => Icons.error_outline_rounded,
+  'awaiting_confirmation' => Icons.pan_tool_outlined,
+  'awaiting_user' => Icons.help_outline_rounded,
+  'follow_up' => Icons.notifications_active_outlined,
+  'verifying' => Icons.fact_check_outlined,
+  _ => Icons.sync_rounded,
+};
 
 class AgentPage extends StatefulWidget {
   const AgentPage({super.key, required this.api});
@@ -13,20 +59,21 @@ class _AgentPageState extends State<AgentPage> {
   bool loading = true;
   String? error;
   List<Map<String, dynamic>> tasks = [];
+  Timer? refreshTimer;
   static const groups = <(String, String, IconData)>[
+    ('awaiting_confirmation', '待确认', Icons.pan_tool_outlined),
+    ('awaiting_user', '等待补充', Icons.help_outline_rounded),
+    ('failed', '处理或验收失败', Icons.error_outline_rounded),
     ('received', '刚刚收到', Icons.inbox_outlined),
     ('classified', '正在判断', Icons.account_tree_outlined),
     ('extracted', '已提取目标', Icons.filter_alt_outlined),
-    ('awaiting_confirmation', '待确认', Icons.pan_tool_outlined),
     ('executing', '执行中', Icons.sync_rounded),
     ('verifying', '验收中', Icons.fact_check_outlined),
     ('retrying', '重试中', Icons.refresh_rounded),
-    ('awaiting_user', '等待补充', Icons.help_outline_rounded),
-    ('failed', '验收失败', Icons.error_outline_rounded),
     ('follow_up', '待跟进', Icons.notifications_active_outlined),
     ('verified', '已完成', Icons.check_circle_outline_rounded),
   ];
-  Timer? refreshTimer;
+
   @override
   void initState() {
     super.initState();
@@ -60,16 +107,14 @@ class _AgentPageState extends State<AgentPage> {
     }
   }
 
-  Future<void> act(
-    String id,
-    Future<Map<String, dynamic>> Function(String) request,
-  ) async {
-    try {
-      await request(id);
-      await load();
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    }
+  Future<void> _openTask(Map<String, dynamic> task) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            AgentTaskDetailPage(api: widget.api, taskId: task['id'].toString()),
+      ),
+    );
+    await load(silent: true);
   }
 
   @override
@@ -99,7 +144,7 @@ class _AgentPageState extends State<AgentPage> {
                       ),
                       SizedBox(height: 6),
                       Text(
-                        '下一次提问或录入后，这里会实时显示识别、执行和验收过程。',
+                        '电脑投递、提问或录入后，这里会显示处理、验收和后续动作。',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 12,
@@ -113,6 +158,7 @@ class _AgentPageState extends State<AgentPage> {
             ],
           ),
         );
+
   List<Widget> _section((String, String, IconData) group) {
     final values = tasks.where((task) => task['stage'] == group.$1).toList();
     if (values.isEmpty) return [];
@@ -121,7 +167,7 @@ class _AgentPageState extends State<AgentPage> {
         padding: const EdgeInsets.only(top: 8, bottom: 8),
         child: Row(
           children: [
-            Icon(group.$3, size: 20, color: const Color(0xff9a4f06)),
+            Icon(group.$3, size: 20, color: agentStageColor(group.$1)),
             const SizedBox(width: 8),
             Text(
               '${group.$2}  ${values.length}',
@@ -134,76 +180,366 @@ class _AgentPageState extends State<AgentPage> {
         Card(
           elevation: 0,
           margin: const EdgeInsets.only(bottom: 9),
-          child: Padding(
-            padding: const EdgeInsets.all(13),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _capabilityLabel(task['capability']?.toString()),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xff8a8680),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _openTask(task),
+            child: Padding(
+              padding: const EdgeInsets.all(13),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    agentStageIcon(group.$1),
+                    size: 21,
+                    color: agentStageColor(group.$1),
                   ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  (task['input'] as Map?)?['title']?.toString() ?? '未命名任务',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  task['nextAction']?.toString() ?? group.$2,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xff57534e),
-                  ),
-                ),
-                if (group.$1 == 'awaiting_confirmation')
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: () => act(
-                        task['id'] as String,
-                        widget.api.confirmAgentTask,
-                      ),
-                      child: const Text('确认执行'),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${agentCapabilityLabel(task['capability']?.toString())} · 标准 ${task['standardVersion'] ?? '-'}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xff8a8680),
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          (task['input'] as Map?)?['title']?.toString() ??
+                              '未命名任务',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          task['nextAction']?.toString() ?? group.$2,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: agentStageColor(group.$1),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                if (group.$1 == 'failed')
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: () =>
-                          act(task['id'] as String, widget.api.retryAgentTask),
-                      child: const Text('重试'),
-                    ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Color(0xffa8a29e),
                   ),
-                if (group.$1 == 'follow_up')
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: () => act(
-                        task['id'] as String,
-                        widget.api.followUpAgentTask,
-                      ),
-                      child: const Text('继续处理'),
-                    ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
     ];
   }
+}
 
-  String _capabilityLabel(String? capability) => switch (capability) {
-    'input_processing' => '提问与录入',
-    'tomorrow_brief' => '明日管家',
-    'document_action' => '资料后续动作',
-    'todo' => '待办',
-    'reminder' => '提醒',
-    'research' => '研究',
-    _ => capability ?? 'Agent 任务',
+class AgentTaskDetailPage extends StatefulWidget {
+  const AgentTaskDetailPage({
+    super.key,
+    required this.api,
+    required this.taskId,
+  });
+  final ApiClient api;
+  final String taskId;
+  @override
+  State<AgentTaskDetailPage> createState() => _AgentTaskDetailPageState();
+}
+
+class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
+  Map<String, dynamic>? task;
+  String? error;
+  bool busy = false;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(load());
+  }
+
+  Future<void> load() async {
+    try {
+      final value = await widget.api.agentTask(widget.taskId);
+      if (mounted) {
+        setState(() {
+          task = value;
+          error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    }
+  }
+
+  Future<void> act(
+    Future<Map<String, dynamic>> Function(String) request,
+  ) async {
+    setState(() => busy = true);
+    try {
+      await request(widget.taskId);
+      await load();
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  List<String> strings(dynamic value) =>
+      value is List ? value.map((item) => item.toString()).toList() : const [];
+
+  @override
+  Widget build(BuildContext context) {
+    final value = task;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Agent 任务详情')),
+      body: value == null
+          ? Center(
+              child: error == null
+                  ? const CircularProgressIndicator()
+                  : Text(error!),
+            )
+          : RefreshIndicator(
+              onRefresh: load,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  _statusCard(value),
+                  const SizedBox(height: 12),
+                  _infoCard(value),
+                  if (strings(value['passedChecks']).isNotEmpty ||
+                      strings(value['failedChecks']).isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _acceptanceCard(value),
+                  ],
+                  if (strings(value['failures']).isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _failureCard(value),
+                  ],
+                  if ((value['children'] as List?)?.isNotEmpty == true) ...[
+                    const SizedBox(height: 12),
+                    _childrenCard(value),
+                  ],
+                  const SizedBox(height: 18),
+                  ..._actions(value),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _statusCard(Map<String, dynamic> value) {
+    final stage = value['stage']?.toString();
+    final input = value['input'] as Map?;
+    final result = value['result'] as Map?;
+    final summary = result?['summary']?.toString();
+    return Card(
+      elevation: 0,
+      color: const Color(0xfffffbeb),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(agentStageIcon(stage), color: agentStageColor(stage)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    agentStageLabel(stage),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: agentStageColor(stage),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              input?['title']?.toString() ?? 'Agent 任务',
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+            ),
+            if (summary?.isNotEmpty == true) ...[
+              const SizedBox(height: 9),
+              Text(summary!),
+            ],
+            const SizedBox(height: 9),
+            Text(
+              value['nextAction']?.toString() ?? '等待状态更新',
+              style: const TextStyle(fontSize: 12, color: Color(0xff78716c)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoCard(Map<String, dynamic> value) {
+    final input = value['input'] as Map?;
+    final reason = input?['confirmationReason']?.toString();
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          children: [
+            _row('能力', agentCapabilityLabel(value['capability']?.toString())),
+            _row('标准版本', value['standardVersion']?.toString() ?? '-'),
+            _row('来源', _sourceLabel(value['sourceType']?.toString())),
+            _row('是否需确认', value['requiresConfirmation'] == true ? '是' : '否'),
+            if (reason?.isNotEmpty == true) _row('确认原因', reason!),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(String label, String text) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 78,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: Color(0xff8a8680)),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _acceptanceCard(Map<String, dynamic> value) => _listCard('验收结果', [
+    for (final item in strings(value['passedChecks']))
+      (Icons.check_rounded, const Color(0xff267046), item),
+    for (final item in strings(value['failedChecks']))
+      (Icons.close_rounded, const Color(0xffb42318), item),
+  ]);
+  Widget _failureCard(Map<String, dynamic> value) => _listCard('失败原因', [
+    for (final item in strings(value['failures']))
+      (Icons.error_outline_rounded, const Color(0xffb42318), item),
+  ]);
+  Widget _listCard(String title, List<(IconData, Color, String)> items) => Card(
+    elevation: 0,
+    child: Padding(
+      padding: const EdgeInsets.all(15),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 9),
+          for (final item in items)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(item.$1, size: 17, color: item.$2),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(item.$3, style: const TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _childrenCard(Map<String, dynamic> value) {
+    final children = (value['children'] as List).whereType<Map>().toList();
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '资料处理 ${children.length} 项',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            for (final child in children)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  agentStageIcon(child['stage']?.toString()),
+                  color: agentStageColor(child['stage']?.toString()),
+                ),
+                title: Text(
+                  (child['input'] as Map?)?['title']?.toString() ?? '资料',
+                ),
+                subtitle: Text(agentStageLabel(child['stage']?.toString())),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _actions(Map<String, dynamic> value) {
+    if (busy) return const [Center(child: CircularProgressIndicator())];
+    final stage = value['stage']?.toString();
+    if (stage == 'awaiting_confirmation') {
+      return [
+        FilledButton.icon(
+          onPressed: () => act(widget.api.confirmAgentTask),
+          icon: const Icon(Icons.check_rounded),
+          label: const Text('确认执行'),
+        ),
+        TextButton(
+          onPressed: () => act(widget.api.dismissAgentTask),
+          child: const Text('暂不处理'),
+        ),
+      ];
+    }
+    if (stage == 'failed') {
+      return [
+        FilledButton.icon(
+          onPressed: () => act(widget.api.retryAgentTask),
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('重试'),
+        ),
+      ];
+    }
+    if (stage == 'follow_up') {
+      return [
+        FilledButton.icon(
+          onPressed: () => act(widget.api.followUpAgentTask),
+          icon: const Icon(Icons.play_arrow_rounded),
+          label: const Text('现在处理'),
+        ),
+      ];
+    }
+    if (stage == 'awaiting_user') {
+      return [
+        OutlinedButton(
+          onPressed: () => act(widget.api.dismissAgentTask),
+          child: const Text('稍后处理'),
+        ),
+      ];
+    }
+    return const [];
+  }
+
+  String _sourceLabel(String? source) => switch (source) {
+    'desktop' => '电脑投递',
+    'qq_message' => 'QQ 群消息',
+    'voice' => '语音',
+    'image' => '图片',
+    'document' => '资料',
+    _ => source ?? 'App',
   };
 }

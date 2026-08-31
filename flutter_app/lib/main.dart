@@ -613,6 +613,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Timer? worldPulseAnalysisTimer;
   Timer? agentProgressTimer;
   List<Map<String, dynamic>> agentTasks = [];
+  final Map<String, String> _knownAgentStages = {};
+  bool _agentStagesInitialized = false;
 
   static const List<(String, IconData)> tabs = [
     ('首页', Icons.mic_none_rounded),
@@ -643,6 +645,43 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _refreshAgentProgress() async {
     try {
       final value = await widget.api.agentTasks();
+      if (!_agentStagesInitialized) {
+        for (final task in value) {
+          _knownAgentStages[task['id'].toString()] =
+              task['stage']?.toString() ?? '';
+        }
+        _agentStagesInitialized = true;
+      } else {
+        for (final task in value) {
+          final id = task['id'].toString();
+          final stage = task['stage']?.toString() ?? '';
+          final previous = _knownAgentStages[id];
+          _knownAgentStages[id] = stage;
+          if (previous == null ||
+              previous == stage ||
+              !{
+                'awaiting_confirmation',
+                'verified',
+                'failed',
+              }.contains(stage)) {
+            continue;
+          }
+          final title = switch (stage) {
+            'awaiting_confirmation' => 'Agent 等待你确认',
+            'verified' => 'Agent 处理完成',
+            _ => 'Agent 处理失败',
+          };
+          unawaited(
+            reminders.notifyAgent(
+              id: '$id-$stage',
+              title: title,
+              body:
+                  (task['input'] as Map?)?['title']?.toString() ??
+                  agentCapabilityLabel(task['capability']?.toString()),
+            ),
+          );
+        }
+      }
       if (mounted && !_disposing) setState(() => agentTasks = value);
     } catch (_) {
       // 首页继续显示本地处理状态；网络恢复后下一次轮询会自动补齐。
@@ -1264,6 +1303,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           appBar: AppBar(title: const Text('Agent 处理记录')),
           body: AgentPage(api: widget.api),
         ),
+      ),
+    );
+    unawaited(_refreshAgentProgress());
+  }
+
+  Future<void> _openAgentTask(String id) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AgentTaskDetailPage(api: widget.api, taskId: id),
       ),
     );
     unawaited(_refreshAgentProgress());
@@ -2228,11 +2276,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       'verifying',
       'retrying',
     };
+    const attentionStages = {
+      'awaiting_confirmation',
+      'awaiting_user',
+      'failed',
+      'follow_up',
+    };
+    final recentCutoff = DateTime.now().subtract(const Duration(hours: 24));
+    final attentionAgentTasks = agentTasks
+        .where((task) => attentionStages.contains(task['stage']))
+        .take(3)
+        .toList();
     final activeAgentTasks = agentTasks
         .where((task) => activeStages.contains(task['stage']))
         .take(3)
         .toList();
-    if (pendingTasks.isEmpty && activeAgentTasks.isEmpty) {
+    final completedDesktopTasks = agentTasks
+        .where((task) {
+          if (task['capability'] != 'desktop_intake' ||
+              task['stage'] != 'verified') {
+            return false;
+          }
+          final updated = DateTime.tryParse(
+            task['updatedAt']?.toString() ?? '',
+          );
+          return updated != null && updated.isAfter(recentCutoff);
+        })
+        .take(2)
+        .toList();
+    final visibleAgentTasks = <Map<String, dynamic>>[
+      ...attentionAgentTasks,
+      ...activeAgentTasks.where(
+        (task) => !attentionAgentTasks.any((item) => item['id'] == task['id']),
+      ),
+      ...completedDesktopTasks.where(
+        (task) => !attentionAgentTasks.any((item) => item['id'] == task['id']),
+      ),
+    ].take(4).toList();
+    if (pendingTasks.isEmpty && visibleAgentTasks.isEmpty) {
       return const SizedBox.shrink();
     }
     return Container(
@@ -2260,7 +2341,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   SizedBox(width: 7),
                   Expanded(
                     child: Text(
-                      'Agent 实时处理',
+                      'Agent 处理与结果',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),
@@ -2277,14 +2358,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
           ),
-          for (final task in activeAgentTasks)
+          for (final task in visibleAgentTasks)
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              leading: const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+              onTap: () => _openAgentTask(task['id'].toString()),
+              leading: Icon(
+                agentStageIcon(task['stage']?.toString()),
+                size: 20,
+                color: agentStageColor(task['stage']?.toString()),
               ),
               title: Text(
                 (task['input'] as Map?)?['title']?.toString() ?? '正在处理输入',
@@ -2292,9 +2374,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text(
-                task['nextAction']?.toString() ?? '正在处理',
-                style: const TextStyle(color: Color(0xffb45f06)),
+                '${agentCapabilityLabel(task['capability']?.toString())} · ${agentStageLabel(task['stage']?.toString())}',
+                style: TextStyle(
+                  color: agentStageColor(task['stage']?.toString()),
+                ),
               ),
+              trailing: const Icon(Icons.chevron_right_rounded, size: 19),
             ),
           for (final task in pendingTasks.take(3))
             ListTile(
