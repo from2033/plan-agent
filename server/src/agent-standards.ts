@@ -42,6 +42,41 @@ registerCapabilityStandard({
   }],
 });
 
+registerCapabilityStandard({
+  capability: "desktop_intake",
+  version: "1.0",
+  description: "电脑投递中的每份资料都必须完整归档并形成可追踪处理结果",
+  requiresConfirmation: false,
+  allowedSideEffects: ["archive_documents", "infer_actions"],
+  failurePolicy: "follow_up",
+  acceptance: (input) => [{
+    id: "all-items-processed",
+    description: "本次投递的全部资料均已处理且没有失败项",
+    check: (result) => {
+      const expected = Number((input as { expectedItemCount?: number }).expectedItemCount || 0);
+      const value = result as { processedCount?: number; failedCount?: number; summary?: string } | null;
+      return Boolean(value && expected > 0 && value.processedCount === expected && value.failedCount === 0 && String(value.summary || "").trim());
+    },
+  }],
+});
+
+registerCapabilityStandard({
+  capability: "document_ingest",
+  version: "1.0",
+  description: "单份电脑资料必须完成完整性校验、归档和结构化分析",
+  requiresConfirmation: false,
+  allowedSideEffects: ["archive_document"],
+  failurePolicy: "retry",
+  acceptance: () => [{
+    id: "document-complete",
+    description: "资料已经归档并产生标题、摘要和资料编号",
+    check: (result) => {
+      const value = result as { documentId?: string; title?: string; summary?: string } | null;
+      return Boolean(value?.documentId && String(value.title || "").trim() && String(value.summary || "").trim());
+    },
+  }],
+});
+
 for (const capability of ["document_action", "research", "todo", "reminder", "qq_task_sync", "desktop_action"]) {
   registerCapabilityStandard({
     capability,

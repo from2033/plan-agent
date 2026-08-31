@@ -25,30 +25,38 @@ for (const definition of [
   "ALTER TABLE agent_tasks ADD COLUMN passed_checks_json TEXT NOT NULL DEFAULT '[]'",
   "ALTER TABLE agent_tasks ADD COLUMN failed_checks_json TEXT NOT NULL DEFAULT '[]'",
   "ALTER TABLE agent_tasks ADD COLUMN next_action TEXT",
+  "ALTER TABLE agent_tasks ADD COLUMN parent_task_id TEXT",
+  "ALTER TABLE agent_tasks ADD COLUMN root_task_id TEXT",
 ]) { try { db.exec(definition); } catch (_) { /* existing database already migrated */ } }
 
 export interface PersistedAgentTask {
   id: string; userId: string; capability: string; standardVersion: string;
   sourceType: string | null; sourceId: string | null; input: unknown; stage: AgentStage;
   requiresConfirmation: boolean; result: unknown | null; failures: string[];
+  parentTaskId: string | null; rootTaskId: string | null;
   passedChecks: string[]; failedChecks: string[]; acceptanceStatus: "pending" | "running" | "passed" | "failed";
   nextAction: string | null; nextFollowUpAt: string | null; createdAt: string; updatedAt: string;
 }
-type Row = { id:string; user_id:string; capability:string; standard_version:string; source_type:string|null; source_id:string|null; input_json:string; stage:AgentStage; requires_confirmation:number; result_json:string|null; failure_json:string|null; passed_checks_json:string; failed_checks_json:string; next_action:string|null; next_follow_up_at:string|null; created_at:string; updated_at:string };
+type Row = { id:string; user_id:string; capability:string; standard_version:string; source_type:string|null; source_id:string|null; input_json:string; stage:AgentStage; requires_confirmation:number; result_json:string|null; failure_json:string|null; passed_checks_json:string; failed_checks_json:string; next_action:string|null; next_follow_up_at:string|null; parent_task_id:string|null; root_task_id:string|null; created_at:string; updated_at:string };
 const decodeJson = (value: string | null, fallback: unknown) => { if (!value) return fallback; try { return JSON.parse(decField(value)); } catch (_) { try { return JSON.parse(value); } catch (_) { return fallback; } } };
-const decode = (row: Row): PersistedAgentTask => ({ id: row.id, userId: row.user_id, capability: row.capability, standardVersion: row.standard_version, sourceType: row.source_type, sourceId: row.source_id, input: JSON.parse(decField(row.input_json)), stage: row.stage, requiresConfirmation: row.requires_confirmation === 1, result: decodeJson(row.result_json, null), failures: decodeJson(row.failure_json, []), passedChecks: decodeJson(row.passed_checks_json, []), failedChecks: decodeJson(row.failed_checks_json, []), acceptanceStatus: row.stage === "verified" ? "passed" : row.stage === "failed" ? "failed" : row.stage === "verifying" ? "running" : "pending", nextAction: row.next_action, nextFollowUpAt: row.next_follow_up_at, createdAt: row.created_at, updatedAt: row.updated_at });
+const decode = (row: Row): PersistedAgentTask => ({ id: row.id, userId: row.user_id, capability: row.capability, standardVersion: row.standard_version, sourceType: row.source_type, sourceId: row.source_id, input: JSON.parse(decField(row.input_json)), stage: row.stage, requiresConfirmation: row.requires_confirmation === 1, result: decodeJson(row.result_json, null), failures: decodeJson(row.failure_json, []), passedChecks: decodeJson(row.passed_checks_json, []), failedChecks: decodeJson(row.failed_checks_json, []), acceptanceStatus: row.stage === "verified" ? "passed" : row.stage === "failed" ? "failed" : row.stage === "verifying" ? "running" : "pending", nextAction: row.next_action, nextFollowUpAt: row.next_follow_up_at, parentTaskId: row.parent_task_id, rootTaskId: row.root_task_id, createdAt: row.created_at, updatedAt: row.updated_at });
 
 function event(task: PersistedAgentTask, fromStage: AgentStage | null, toStage: AgentStage, reason: string, payload?: unknown): void {
   db.prepare("INSERT INTO agent_task_events (id,task_id,user_id,from_stage,to_stage,reason,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?)").run(crypto.randomUUID(), task.id, task.userId, fromStage, toStage, reason.slice(0, 500), payload == null ? null : encField(JSON.stringify(payload)), new Date().toISOString());
 }
 
-export function createPersistentAgentTask(userId: string, capability: string, input: unknown, sourceType?: string, sourceId?: string): PersistedAgentTask {
+export function createPersistentAgentTask(userId: string, capability: string, input: unknown, sourceType?: string, sourceId?: string, relationship?: { parentTaskId?: string; rootTaskId?: string }): PersistedAgentTask {
   const standard = capabilityStandard(capability);
   if (!standard) throw new Error(`agent_standard_missing:${capability}`);
   const now = new Date().toISOString();
   const stage: AgentStage = standard.requiresConfirmation ? "awaiting_confirmation" : "received";
   const id = crypto.randomUUID();
-  db.prepare("INSERT INTO agent_tasks (id,user_id,capability,standard_version,source_type,source_id,input_json,stage,requires_confirmation,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?,?)").run(id, userId, capability, standard.version, sourceType || null, sourceId || null, encField(JSON.stringify(input)), stage, standard.requiresConfirmation ? 1 : 0, now, now);
+  const parent = relationship?.parentTaskId
+    ? getPersistentAgentTask(relationship.parentTaskId, userId)
+    : null;
+  if (relationship?.parentTaskId && !parent) throw new Error("agent_parent_task_missing");
+  const rootTaskId = relationship?.rootTaskId || parent?.rootTaskId || parent?.id || null;
+  db.prepare("INSERT INTO agent_tasks (id,user_id,capability,standard_version,source_type,source_id,input_json,stage,requires_confirmation,parent_task_id,root_task_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(id, userId, capability, standard.version, sourceType || null, sourceId || null, encField(JSON.stringify(input)), stage, standard.requiresConfirmation ? 1 : 0, relationship?.parentTaskId || null, rootTaskId, now, now);
   const task = getPersistentAgentTask(id, userId)!;
   event(task, null, stage, "task_created", input);
   return task;
@@ -56,6 +64,7 @@ export function createPersistentAgentTask(userId: string, capability: string, in
 
 export function getPersistentAgentTask(id: string, userId: string): PersistedAgentTask | null { const row = db.prepare("SELECT * FROM agent_tasks WHERE id=? AND user_id=?").get(id, userId) as unknown as Row | undefined; return row ? decode(row) : null; }
 export function listPersistentAgentTasks(userId: string): PersistedAgentTask[] { return (db.prepare("SELECT * FROM agent_tasks WHERE user_id=? ORDER BY updated_at DESC LIMIT 200").all(userId) as unknown as Row[]).map(decode); }
+export function listChildAgentTasks(userId: string, parentTaskId: string): PersistedAgentTask[] { return (db.prepare("SELECT * FROM agent_tasks WHERE user_id=? AND parent_task_id=? ORDER BY created_at ASC").all(userId, parentTaskId) as unknown as Row[]).map(decode); }
 
 export function transitionPersistentAgentTask(userId: string, id: string, toStage: AgentStage, reason: string, result?: unknown): PersistedAgentTask | null {
   const task = getPersistentAgentTask(id, userId); if (!task) return null;

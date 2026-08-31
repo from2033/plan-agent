@@ -135,7 +135,7 @@ import {
   MAX_CHUNKED_DOCUMENT_SIZE,
 } from "./chunked-upload.js";
 import { confirmAssistantAction, confirmAssistantActionByAgentTaskId, dismissAssistantAction, listAssistantActions, proposeDocumentActions } from "./assistant-actions.js";
-import { createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, listPersistentAgentTasks, transitionPersistentAgentTask, verifyPersistentAgentTask } from "./agent-runtime.js";
+import { createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, listChildAgentTasks, listPersistentAgentTasks, transitionPersistentAgentTask, verifyPersistentAgentTask } from "./agent-runtime.js";
 import { registeredCapabilities } from "./agent-contract.js";
 import {
   deleteMistake,
@@ -143,6 +143,20 @@ import {
   listMistakes,
   reviewMistake,
 } from "./mistakes.js";
+import {
+  commitDesktopSubmission,
+  createDesktopSubmission,
+  createDesktopSubmissionUpload,
+  getDesktopSubmission,
+  markDesktopDocumentAccepted,
+  markDesktopUploadAccepted,
+  markDesktopUploadFailed,
+  ownedDesktopUpload,
+  refreshActiveDesktopSubmissions,
+  refreshDesktopSubmission,
+  resolveDesktopIntakeSession,
+  type DesktopIntakeSession,
+} from "./desktop-intake.js";
 import { getFinanceCategoryTransactions, getFinanceOverview, importAlipayBill } from "./finance.js";
 import {
   buildWorldPulseDiscoveryInput,
@@ -162,6 +176,18 @@ const STUDY_APP_URL = process.env.STUDY_APP_URL || "https://sutyd.5656ai.com/app
 const STUDY_SSO_SECRET = process.env.STUDY_SSO_SECRET || "";
 const QQ_TASK_SYNC_SECRET = process.env.QQ_TASK_SYNC_SECRET || "";
 const QQ_TASK_SYNC_USER = process.env.QQ_TASK_SYNC_USER || process.env.PRIMARY_USER || "我";
+const DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/markdown",
+  "image/jpeg",
+  "image/png",
+  "image/heic",
+  "image/heif",
+  "audio/wav",
+  "audio/x-wav",
+]);
 
 function isFinanceSubscriptionQuestion(raw: string): boolean {
   return /(账单|消费|支出|支付宝)/.test(raw)
@@ -899,8 +925,25 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const documentId = String((job.input as { documentId?: unknown })?.documentId || "");
     if (!documentId) throw new Error("document_id_missing");
     completeDocument(documentId, job.userId, value);
+    const agentTaskId = String((job.input as { agentTaskId?: unknown }).agentTaskId || "");
+    const documentAgentTask = agentTaskId ? getPersistentAgentTask(agentTaskId, job.userId) : null;
+    if (agentTaskId) {
+      if (documentAgentTask?.stage === "executing") {
+        transitionPersistentAgentTask(job.userId, documentAgentTask.id, "verifying", "document_archived", value);
+        verifyPersistentAgentTask(job.userId, documentAgentTask.id, value);
+      }
+    }
     const note = String((job.input as { userNote?: unknown }).userNote || "");
-    proposeDocumentActions(job.userId, documentId, note, String((value as { title?: unknown }).title || "资料"));
+    proposeDocumentActions(
+      job.userId,
+      documentId,
+      note,
+      String((value as { title?: unknown }).title || "资料"),
+      (value as { suggestedActions?: unknown }).suggestedActions,
+      documentAgentTask?.rootTaskId || undefined,
+    );
+    const desktopSubmissionId = String((job.input as { desktopSubmissionId?: unknown }).desktopSubmissionId || "");
+    if (desktopSubmissionId) refreshDesktopSubmission(job.userId, desktopSubmissionId);
     return value;
   }
   if (job.kind === "document_note") {
@@ -1136,6 +1179,15 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
         leased.userId,
         current.error || "document_processing_failed",
       );
+      if (leased.kind === "document") {
+        const agentTaskId = String((leased.input as { agentTaskId?: unknown }).agentTaskId || "");
+        const child = agentTaskId ? getPersistentAgentTask(agentTaskId, leased.userId) : null;
+        if (child?.stage === "executing") {
+          transitionPersistentAgentTask(leased.userId, child.id, "failed", current.error || "document_processing_failed");
+        }
+        const desktopSubmissionId = String((leased.input as { desktopSubmissionId?: unknown }).desktopSubmissionId || "");
+        if (desktopSubmissionId) refreshDesktopSubmission(leased.userId, desktopSubmissionId);
+      }
     }
   }
   const current = leased ? getAiJob(leased.id, leased.userId) : null;
@@ -1204,6 +1256,179 @@ app.post(
     }
   },
 );
+
+type DesktopIntakeRequest = express.Request & { desktopIntakeSession?: DesktopIntakeSession };
+function requireDesktopIntake(req: DesktopIntakeRequest, res: express.Response, next: express.NextFunction): void {
+  const header = req.header("authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const session = resolveDesktopIntakeSession(token);
+  if (!session) {
+    res.status(401).json({ error: "电脑投递会话无效或已过期，请重新扫码" });
+    return;
+  }
+  req.userId = session.userId;
+  req.desktopIntakeSession = session;
+  next();
+}
+
+const DesktopSubmissionSchema = z.object({
+  instruction: z.string().trim().max(100_000).default(""),
+  pastedText: z.string().trim().max(2_000_000).default(""),
+  expectedFileCount: z.number().int().min(0).max(200),
+  idempotencyKey: z.string().trim().min(8).max(120),
+});
+const DesktopUploadSchema = z.object({
+  fileName: z.string().trim().min(1).max(240),
+  mimeType: z.string().trim().min(1).max(120).transform((value) => value.toLowerCase()),
+  totalBytes: z.number().int().positive().max(MAX_CHUNKED_DOCUMENT_SIZE),
+});
+
+app.post(`${API}/desktop/submissions`, requireDesktopIntake, (req: DesktopIntakeRequest, res) => {
+  const parsed = DesktopSubmissionSchema.safeParse(req.body);
+  if (!parsed.success || (!parsed.data.expectedFileCount && !parsed.data.pastedText)) {
+    res.status(400).json({ error: "请至少添加一份文件或粘贴文字" });
+    return;
+  }
+  try {
+    const submission = createDesktopSubmission(req.desktopIntakeSession!, parsed.data);
+    res.status(201).json({
+      id: submission.id,
+      stage: submission.stage,
+      expectedItemCount: submission.expectedItemCount,
+      expiresAt: req.desktopIntakeSession!.expiresAt,
+    });
+  } catch (error) {
+    console.error("[desktop intake] 创建投递失败:", error);
+    res.status(500).json({ error: "暂时无法创建资料投递" });
+  }
+});
+
+app.post(`${API}/desktop/submissions/:id/uploads`, requireDesktopIntake, (req: DesktopIntakeRequest, res) => {
+  const parsed = DesktopUploadSchema.safeParse(req.body);
+  if (!parsed.success || !DOCUMENT_MIME_TYPES.has(parsed.data?.mimeType || "")) {
+    res.status(400).json({ error: "文件类型或大小不受支持" });
+    return;
+  }
+  try {
+    res.status(201).json(createDesktopSubmissionUpload(req.desktopIntakeSession!, req.params.id, parsed.data));
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    res.status(code === "desktop_submission_not_found" ? 404 : 409).json({
+      error: code === "desktop_submission_file_limit" ? "文件数量超过本次投递声明" : "投递任务不存在或已提交",
+    });
+  }
+});
+
+app.put(
+  `${API}/desktop/submissions/:id/uploads/:uploadId/chunks/:index`,
+  requireDesktopIntake,
+  express.raw({ type: () => true, limit: "9mb" }),
+  (req: DesktopIntakeRequest, res) => {
+    const owned = ownedDesktopUpload(req.desktopIntakeSession!, req.params.id, req.params.uploadId);
+    if (!owned) {
+      res.status(404).json({ error: "上传任务不存在" });
+      return;
+    }
+    try {
+      chunkedUploadStore.writeChunk(req.userId!, req.params.uploadId, Number(req.params.index), req.body as Buffer);
+      res.status(204).end();
+    } catch {
+      res.status(400).json({ error: "文件分片无效，请重试当前文件" });
+    }
+  },
+);
+
+app.post(`${API}/desktop/submissions/:id/uploads/:uploadId/complete`, requireDesktopIntake, (req: DesktopIntakeRequest, res) => {
+  const owned = ownedDesktopUpload(req.desktopIntakeSession!, req.params.id, req.params.uploadId);
+  if (!owned) {
+    res.status(404).json({ error: "上传任务不存在" });
+    return;
+  }
+  if (owned.documentId) {
+    res.json({ fileId: owned.id, documentId: owned.documentId, status: owned.status });
+    return;
+  }
+  try {
+    const assembled = chunkedUploadStore.assemble(req.userId!, req.params.uploadId);
+    const accepted = acceptDocumentUpload(
+      req.userId!,
+      assembled.metadata.fileName,
+      assembled.metadata.mimeType,
+      assembled.content,
+      assembled.metadata.userNote,
+      { desktopSubmissionId: req.params.id, uploadId: req.params.uploadId, kind: "file" },
+    );
+    const documentId = String(accepted.body.documentId || "");
+    if (!documentId) throw new Error("desktop_document_missing");
+    const file = markDesktopUploadAccepted(
+      req.desktopIntakeSession!, req.params.id, req.params.uploadId, documentId,
+    );
+    chunkedUploadStore.remove(req.userId!, req.params.uploadId);
+    res.status(accepted.status).json({ fileId: file.id, documentId, status: file.status });
+  } catch (error) {
+    console.error("[desktop intake] 文件合并失败:", error);
+    markDesktopUploadFailed(req.userId!, req.params.id, req.params.uploadId, "文件上传或保存失败");
+    res.status(409).json({ error: "文件尚未上传完整或保存失败，请重新投递" });
+  }
+});
+
+app.post(`${API}/desktop/submissions/:id/commit`, requireDesktopIntake, (req: DesktopIntakeRequest, res) => {
+  try {
+    let submission = getDesktopSubmission(req.params.id, req.userId!, req.desktopIntakeSession!.id);
+    if (!submission) {
+      res.status(404).json({ error: "投递任务不存在" });
+      return;
+    }
+    const pasted = submission.files.find((file) => file.kind === "text");
+    if (pasted && !pasted.documentId) {
+      const content = Buffer.from(submission.pastedText, "utf8");
+      const accepted = acceptDocumentUpload(
+        req.userId!,
+        pasted.fileName,
+        pasted.mimeType,
+        content,
+        submission.instruction,
+        { desktopSubmissionId: submission.id, uploadId: null, kind: "text" },
+      );
+      const documentId = String(accepted.body.documentId || "");
+      if (!documentId) throw new Error("desktop_document_missing");
+      markDesktopUploadAccepted(req.desktopIntakeSession!, submission.id, null, documentId, "text");
+    }
+    submission = commitDesktopSubmission(req.desktopIntakeSession!, submission.id);
+    res.status(202).json({
+      id: submission.id,
+      taskId: submission.agentTaskId,
+      status: "SUBMITTED",
+      message: "已交给 Agent，可关闭网页并在手机端查看结果。",
+    });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    console.error("[desktop intake] 提交失败:", error);
+    res.status(code === "desktop_submission_incomplete" ? 409 : 500).json({
+      error: code === "desktop_submission_incomplete" ? "仍有文件未上传完成" : "资料提交失败，请重试",
+    });
+  }
+});
+
+app.get(`${API}/desktop/submissions/:id`, requireDesktopIntake, (req: DesktopIntakeRequest, res) => {
+  const submission = getDesktopSubmission(req.params.id, req.userId!, req.desktopIntakeSession!.id);
+  if (!submission) {
+    res.status(404).json({ error: "投递任务不存在" });
+    return;
+  }
+  res.json({
+    id: submission.id,
+    stage: submission.stage,
+    expectedItemCount: submission.expectedItemCount,
+    files: submission.files.map((file) => ({
+      id: file.id,
+      fileName: file.fileName,
+      byteSize: file.byteSize,
+      status: file.status,
+      error: file.error,
+    })),
+  });
+});
 
 // 以下 API 都需要鉴权
 app.use(API, requireAuth);
@@ -1402,28 +1627,25 @@ app.delete(`${API}/account`, (req, res) => {
   }
 });
 
-const DOCUMENT_MIME_TYPES = new Set([
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-  "text/markdown",
-  "image/jpeg",
-  "image/png",
-  "image/heic",
-  "image/heif",
-  "audio/wav",
-  "audio/x-wav",
-]);
-
 function acceptDocumentUpload(
   userId: string,
   fileName: string,
   mimeType: string,
   content: Buffer,
   userNote: string,
+  desktopContext?: { desktopSubmissionId: string; uploadId: string | null; kind?: "file" | "text" },
 ): { status: number; body: Record<string, unknown> } {
   const duplicate = findDuplicateDocument(userId, content);
   if (duplicate && duplicate.status !== "FAILED") {
+    const desktopFile = desktopContext
+      ? markDesktopDocumentAccepted(
+          userId,
+          desktopContext.desktopSubmissionId,
+          desktopContext.uploadId,
+          duplicate.id,
+          desktopContext.kind || "file",
+        )
+      : null;
     if (userNote && duplicate.status === "COMPLETE") {
       const job = enqueueAiJob(userId, "document_note", {
         documentId: duplicate.id,
@@ -1437,25 +1659,37 @@ function acceptDocumentUpload(
           documentId: duplicate.id,
           jobId: job.id,
           status: job.status,
+          ...(desktopFile ? { agentTaskId: desktopFile.agentTaskId } : {}),
         },
       };
     }
     return {
       status: 200,
-      body: { duplicate: true, documentId: duplicate.id, status: duplicate.status },
+      body: { duplicate: true, documentId: duplicate.id, status: duplicate.status, ...(desktopFile ? { agentTaskId: desktopFile.agentTaskId } : {}) },
     };
   }
   if (duplicate) discardDocument(duplicate.id, userId);
   const document = storeDocumentUpload(userId, fileName, mimeType, content, userNote);
   try {
+    const desktopFile = desktopContext
+      ? markDesktopDocumentAccepted(
+          userId,
+          desktopContext.desktopSubmissionId,
+          desktopContext.uploadId,
+          document.id,
+          desktopContext.kind || "file",
+        )
+      : null;
     const job = enqueueAiJob(userId, "document", {
       documentId: document.id,
       ...(userNote ? { userNote } : {}),
+      ...(desktopContext ? { desktopSubmissionId: desktopContext.desktopSubmissionId } : {}),
+      ...(desktopFile?.agentTaskId ? { agentTaskId: desktopFile.agentTaskId } : {}),
     }, 90);
     bindDocumentJob(document.id, userId, job.id);
     return {
       status: 202,
-      body: { documentId: document.id, jobId: job.id, status: "QUEUED" },
+      body: { documentId: document.id, jobId: job.id, status: "QUEUED", ...(desktopFile ? { agentTaskId: desktopFile.agentTaskId } : {}) },
     };
   } catch (error) {
     discardDocument(document.id, userId);
@@ -1563,10 +1797,12 @@ app.get(`${API}/assistant-actions`, (req, res) => {
 app.get(`${API}/agent/capabilities`, (req, res) => { res.json(registeredCapabilities()); });
 app.get(`${API}/agent/tasks`, (req, res) => {
   if (isGuestUser(req.userId)) { res.json([]); return; }
+  refreshActiveDesktopSubmissions(req.userId!);
   const status = typeof req.query.status === "string" ? req.query.status : "";
   const capability = typeof req.query.capability === "string" ? req.query.capability : "";
+  const includeChildren = req.query.includeChildren === "1";
   const limit = Math.min(200, Math.max(1, Number(req.query.limit || 100)));
-  res.json(listPersistentAgentTasks(req.userId!).filter((task) => (!status || task.stage === status) && (!capability || task.capability === capability)).slice(0, limit));
+  res.json(listPersistentAgentTasks(req.userId!).filter((task) => (includeChildren || !task.parentTaskId) && (!status || task.stage === status) && (!capability || task.capability === capability)).slice(0, limit));
 });
 app.get(`${API}/agent/tasks/:id/events`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
@@ -1587,7 +1823,7 @@ app.get(`${API}/agent/tasks/:id`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
   const task = getPersistentAgentTask(req.params.id, req.userId!);
   if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
-  res.json(task);
+  res.json({ ...task, children: listChildAgentTasks(req.userId!, task.id) });
 });
 app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }

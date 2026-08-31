@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { createAuthSessionForUser } from "./email-auth.js";
+import { createDesktopIntakeSession } from "./desktop-intake.js";
 
 const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
@@ -23,7 +23,6 @@ db.exec(`
 `);
 
 const PAIRING_LIFETIME_MS = 90_000;
-const DESKTOP_SESSION_LIFETIME_MS = 2 * 60 * 60_000;
 
 type PairingRow = {
   id: string;
@@ -125,10 +124,6 @@ export function claimDesktopPairing(id: string, desktopSecret: string): DesktopP
   const consumed = db.prepare(`UPDATE desktop_pairing_sessions SET consumed_at=?
     WHERE id=? AND consumed_at IS NULL`).run(now, id);
   if (consumed.changes !== 1) return { status: "consumed" };
-  const session = createAuthSessionForUser(
-    row.user_id,
-    `desktop-pairing:${row.device_label}`,
-    DESKTOP_SESSION_LIFETIME_MS,
-  );
+  const session = createDesktopIntakeSession(row.user_id, row.device_label);
   return { status: "complete", token: session.token, user: row.user_id, expiresAt: session.expiresAt };
 }

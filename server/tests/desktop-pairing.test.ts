@@ -9,6 +9,7 @@ process.env.DB_PATH = path.join(testDir, "data.db");
 
 const pairing = await import("../src/desktop-pairing.js");
 const { resolveEmailSession } = await import("../src/email-auth.js");
+const { resolveDesktopIntakeSession } = await import("../src/desktop-intake.js");
 
 test("电脑配对需要手机侧和电脑侧两个不同密钥", () => {
   const created = pairing.createDesktopPairing("Mac · Safari");
@@ -18,7 +19,7 @@ test("电脑配对需要手机侧和电脑侧两个不同密钥", () => {
   assert.equal(pairing.inspectDesktopPairing(created.id, created.scanSecret)?.deviceLabel, "Mac · Safari");
 });
 
-test("手机确认后电脑只能领取一次独立的两小时会话", () => {
+test("手机确认后电脑只能领取一次受限的资料投递会话", () => {
   const created = pairing.createDesktopPairing("Windows · Chrome");
   assert.deepEqual(pairing.claimDesktopPairing(created.id, created.desktopSecret), { status: "waiting" });
   assert.deepEqual(
@@ -29,8 +30,9 @@ test("手机确认后电脑只能领取一次独立的两小时会话", () => {
   assert.equal(claimed.status, "complete");
   if (claimed.status !== "complete") return;
   assert.equal(claimed.user, "user-1");
-  assert.equal(resolveEmailSession(claimed.token), "user-1");
-  assert.equal(new Date(claimed.expiresAt).getTime() - Date.now() <= 2 * 60 * 60_000, true);
+  assert.equal(resolveEmailSession(claimed.token), null);
+  assert.equal(resolveDesktopIntakeSession(claimed.token)?.userId, "user-1");
+  assert.equal(new Date(claimed.expiresAt).getTime() - Date.now() <= 30 * 60_000, true);
   assert.deepEqual(pairing.claimDesktopPairing(created.id, created.desktopSecret), { status: "consumed" });
 });
 

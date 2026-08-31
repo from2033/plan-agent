@@ -128,6 +128,13 @@ const DocumentResultSchema = z.object({
   attachmentPath: z.string().min(1).max(1_000),
   textLength: z.number().int().nonnegative(),
   warnings: z.array(z.string().min(1).max(300)).max(20),
+  suggestedActions: z.array(z.object({
+    kind: z.enum(["todo", "reminder"]),
+    title: z.string().min(1).max(200),
+    reason: z.string().min(1).max(500),
+    dueAt: z.string().max(40).optional().default(""),
+    confidence: z.number().min(0).max(1),
+  })).max(5).optional().default([]),
 });
 
 const DocumentQuestionResultSchema = z.object({
