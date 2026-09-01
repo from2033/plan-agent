@@ -315,6 +315,53 @@ export function getLatestCompletedAiJob(userId: string, kind: AiJobKind): AiJob 
   return row ? rowToJob(row) : null;
 }
 
+export interface AgentRetryContext {
+  conversationId: string | null;
+  conversationHistory: Array<Record<string, unknown>>;
+  interactionMode: string | null;
+}
+
+/**
+ * Recover the richest original conversation context for an Agent task.
+ *
+ * Older Agent tasks did not persist conversationId/history in agent_tasks. Their
+ * first AI job still contains that context, while later blind retries often do
+ * not. Prefer the candidate with the most history instead of the newest job so
+ * retry can repair the missing-context failure rather than repeat it.
+ */
+export function findBestAiJobContextForAgentTask(userId: string, agentTaskId: string): AgentRetryContext | null {
+  const rows = db.prepare(`SELECT * FROM ai_jobs
+    WHERE user_id=? AND kind='ingest' ORDER BY created_at DESC LIMIT 200`)
+    .all(userId) as unknown as JobRow[];
+  const candidates = rows.map(rowToJob).map((job) => {
+    const input = job.input as {
+      agentTaskId?: unknown;
+      conversationId?: unknown;
+      conversationHistory?: unknown;
+      interactionMode?: unknown;
+    };
+    if (input.agentTaskId !== agentTaskId) return null;
+    const conversationHistory = Array.isArray(input.conversationHistory)
+      ? input.conversationHistory.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      : [];
+    return {
+      conversationId: typeof input.conversationId === "string" && input.conversationId ? input.conversationId : null,
+      conversationHistory,
+      interactionMode: typeof input.interactionMode === "string" ? input.interactionMode : null,
+      updatedAt: job.updatedAt,
+    };
+  }).filter((item): item is AgentRetryContext & { updatedAt: string } => item !== null);
+  candidates.sort((left, right) => right.conversationHistory.length - left.conversationHistory.length
+    || Number(Boolean(right.conversationId)) - Number(Boolean(left.conversationId))
+    || right.updatedAt.localeCompare(left.updatedAt));
+  const best = candidates[0];
+  return best ? {
+    conversationId: best.conversationId,
+    conversationHistory: best.conversationHistory,
+    interactionMode: best.interactionMode,
+  } : null;
+}
+
 export function findActiveSummaryJob(
   userId: string,
   scope: string,

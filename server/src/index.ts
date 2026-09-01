@@ -95,6 +95,7 @@ import {
   enqueueAiJob,
   failAiJob,
   findActiveSummaryJob,
+  findBestAiJobContextForAgentTask,
   getAiJob,
   getLatestCompletedAiJob,
   getLatestAiJob,
@@ -251,14 +252,33 @@ function advanceOrchestration(userId: string, parentId: string): void {
   refreshOrchestrationParent(userId, parentId);
 }
 
-function dispatchActionPlan(userId: string, taskId: string, raw: string, inputMode: "voice" | "text"): string | undefined {
+type InputConversationContext = {
+  conversationId?: string;
+  conversationHistory?: Array<object>;
+};
+
+function dispatchActionPlan(
+  userId: string,
+  taskId: string,
+  raw: string,
+  inputMode: "voice" | "text",
+  conversation: InputConversationContext = {},
+): string | undefined {
   const plan = getActionPlan(userId, taskId);
   if (!plan) return undefined;
   let processingTaskId: string | undefined;
   for (const item of plan.planItems.filter((candidate) => !candidate.childTaskId)) {
     const child = createPersistentAgentTask(userId, item.capability, item.capability === "todo"
       ? { title: item.title, details: item.instruction, payload: { description: item.title, category: "家庭", priority: "medium" } }
-      : { title: item.title, details: item.instruction, raw, inputMode, payload: { query: item.instruction } }, inputMode, taskId, { parentTaskId: taskId });
+      : {
+          title: item.title,
+          details: item.instruction,
+          raw,
+          inputMode,
+          payload: { query: item.instruction },
+          ...(conversation.conversationId ? { conversationId: conversation.conversationId } : {}),
+          ...(conversation.conversationHistory?.length ? { conversationHistory: conversation.conversationHistory } : {}),
+        }, inputMode, taskId, { parentTaskId: taskId });
     linkPlanItem(userId, item.id, child.id, child.stage === "awaiting_confirmation" ? "awaiting_confirmation" : "planned");
     if (item.kind === "process") {
       progressAutomaticTask(userId, child.id);
@@ -282,7 +302,10 @@ function dispatchActionPlan(userId: string, taskId: string, raw: string, inputMo
       progressAutomaticTask(userId, child.id);
       const document = createResearchDocument(userId, item.title);
       const job = enqueueAiJob(userId, "research", { reportId: document.id, query: item.instruction, originalRequest: raw,
-        agentTaskId: child.id, orchestrationTaskId: taskId, requestedAt: new Date().toISOString(), locale: "zh-CN", audience: "南京家庭用户" }, 80);
+        agentTaskId: child.id, orchestrationTaskId: taskId, requestedAt: new Date().toISOString(), locale: "zh-CN", audience: "南京家庭用户",
+        ...(conversation.conversationId ? { conversationId: conversation.conversationId } : {}),
+        ...(conversation.conversationHistory?.length ? { conversationHistory: conversation.conversationHistory } : {}),
+      }, 80);
       bindDocumentJob(document.id, userId, job.id);
     }
   }
@@ -290,18 +313,27 @@ function dispatchActionPlan(userId: string, taskId: string, raw: string, inputMo
   return processingTaskId;
 }
 
-function beginInputAgentTask(userId: string, raw: string, inputMode: "voice" | "text") {
+function beginInputAgentTask(
+  userId: string,
+  raw: string,
+  inputMode: "voice" | "text",
+  conversation: InputConversationContext = {},
+) {
   const task = createPersistentAgentTask(
     userId,
     "input_orchestration",
-    { title: raw.slice(0, 80), raw, inputMode },
+    {
+      title: raw.slice(0, 80), raw, inputMode,
+      ...(conversation.conversationId ? { conversationId: conversation.conversationId } : {}),
+      ...(conversation.conversationHistory?.length ? { conversationHistory: conversation.conversationHistory } : {}),
+    },
     inputMode,
   );
   transitionPersistentAgentTask(userId, task.id, "classified", "input_classified");
   transitionPersistentAgentTask(userId, task.id, "extracted", "goal_extracted");
   transitionPersistentAgentTask(userId, task.id, "executing", "plan_execution_started");
   saveActionPlan(userId, task.id, raw, assistantClock().currentDate);
-  const processingTaskId = dispatchActionPlan(userId, task.id, raw, inputMode);
+  const processingTaskId = dispatchActionPlan(userId, task.id, raw, inputMode, conversation);
   return { task: getPersistentAgentTask(task.id, userId)!, processingTaskId, plan: getActionPlan(userId, task.id)! };
 }
 
@@ -1929,8 +1961,19 @@ app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
   if (existing.stage !== "failed") {
     res.status(409).json({ error: "当前状态不能重试" }); return;
   }
+  if (existing.parentTaskId) {
+    const parent = getPersistentAgentTask(existing.parentTaskId, req.userId!);
+    if (parent?.capability === "input_orchestration") {
+      const replanned = replanOrchestration(
+        req.userId!, parent.id, `Agent 自动诊断子任务失败：${existing.failures.join("；")}`, req,
+      );
+      if (!replanned) { res.status(409).json({ error: "Agent 无法恢复父任务计划" }); return; }
+      res.status(202).json({ ...replanned, repair: { mode: "replan_parent", autonomous: true } });
+      return;
+    }
+  }
   if (existing.capability === "input_orchestration") {
-    const replanned = replanOrchestration(req.userId!, existing.id, "重试失败或缺失的计划项");
+    const replanned = replanOrchestration(req.userId!, existing.id, "重试失败或缺失的计划项", req);
     if (!replanned) { res.status(409).json({ error: "原始输入不可用，无法重试" }); return; }
     res.status(202).json(replanned);
     return;
@@ -1959,23 +2002,57 @@ app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
       title?: unknown;
       inputMode?: unknown;
       conversationId?: unknown;
+      conversationHistory?: unknown;
       intentHint?: unknown;
     };
     const raw = String(input.raw || input.title || "").trim();
     if (!raw) { res.status(409).json({ error: "原始问题缺失，请重新提交" }); return; }
     if (!codexWorkerOnline()) { res.status(503).json({ error: "后台处理服务尚未就绪，请稍后重试" }); return; }
+    const recovered = findBestAiJobContextForAgentTask(req.userId!, existing.id);
+    const conversationId = typeof input.conversationId === "string" && input.conversationId
+      ? input.conversationId
+      : recovered?.conversationId || "";
+    const storedHistory = Array.isArray(input.conversationHistory)
+      ? input.conversationHistory.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      : [];
+    const conversationHistory = storedHistory.length ? storedHistory : recovered?.conversationHistory || [];
+    const needsPriorContext = /(?:表格|列表|整理|改写|重写|简化|展开|详细|翻译|继续|接着|刚才|上面|前面).{0,18}(?:给我|看看|看|输出|形式|一下|下)?/u.test(raw);
+    if (needsPriorContext && !conversationHistory.length) {
+      const waiting = transitionPersistentAgentTask(
+        req.userId!, existing.id, "awaiting_user", "retry_missing_conversation_context",
+        ["原任务依赖上一轮内容，但历史上下文无法恢复。请在“报告结果问题”中补充要处理的原文。"],
+      );
+      res.status(202).json({ task: waiting, repair: { mode: "awaiting_context", autonomous: true } });
+      return;
+    }
     transitionPersistentAgentTask(req.userId!, existing.id, "retrying", "user_requested_retry");
-    transitionPersistentAgentTask(req.userId!, existing.id, "executing", "input_processing_retry_started");
+    transitionPersistentAgentTask(req.userId!, existing.id, "executing", "agent_diagnosed_retry_started", {
+      strategy: conversationHistory.length ? "restore_conversation_context" : "retry_original_input",
+      previousFailures: existing.failures,
+    });
     const job = enqueueAiJob(req.userId!, "ingest", {
       raw,
       agentTaskId: existing.id,
       inputMode: input.inputMode === "text" ? "text" : "voice",
-      interactionMode: "home",
+      interactionMode: conversationHistory.length || conversationId ? "conversation" : "home",
       context: assistantClock(),
       intentHint: input.intentHint === "save" ? "save" : undefined,
-      knowledge: knowledgeFromRequest(req, ""),
+      knowledge: knowledgeFromRequest(req, conversationId),
+      ...(conversationId ? { conversationId } : {}),
+      ...(conversationHistory.length ? { conversationHistory } : {}),
+      retryDiagnosis: {
+        previousFailures: existing.failures,
+        restoredConversationContext: conversationHistory.length > 0,
+      },
     });
-    res.status(202).json({ ...getPersistentAgentTask(existing.id, req.userId!)!, jobId: job.id });
+    res.status(202).json({
+      ...getPersistentAgentTask(existing.id, req.userId!)!,
+      jobId: job.id,
+      repair: {
+        mode: conversationHistory.length ? "restored_conversation_context" : "diagnosed_retry",
+        autonomous: true,
+      },
+    });
     return;
   }
   res.status(409).json({ error: "该任务需要补充信息后重新提交，不能直接重复执行" });
@@ -2002,7 +2079,7 @@ app.post(`${API}/agent/tasks/:id/dismiss`, (req, res) => {
   res.json(task);
 });
 const AgentCorrectionSchema = z.object({ description: z.string().trim().min(2).max(1_000) });
-function replanOrchestration(userId: string, taskId: string, correction = "") {
+function replanOrchestration(userId: string, taskId: string, correction = "", req?: express.Request) {
   const task = getPersistentAgentTask(taskId, userId);
   if (!task || task.capability !== "input_orchestration") return null;
   const input = task.input as { raw?: unknown; inputMode?: unknown };
@@ -2017,11 +2094,39 @@ function replanOrchestration(userId: string, taskId: string, correction = "") {
     transitionPersistentAgentTask(userId, taskId, "executing", "plan_revision_started");
   }
   const plan = saveActionPlan(userId, taskId, `${raw}${correction ? `\n用户纠正：${correction}` : ""}`, assistantClock().currentDate);
-  dispatchActionPlan(userId, taskId, raw, input.inputMode === "text" ? "text" : "voice");
+  const conversationHistory = Array.isArray((input as { conversationHistory?: unknown }).conversationHistory)
+    ? (input as { conversationHistory: Array<object> }).conversationHistory
+    : [];
+  const conversationId = typeof (input as { conversationId?: unknown }).conversationId === "string"
+    ? String((input as { conversationId: string }).conversationId)
+    : "";
+  const inputMode = input.inputMode === "text" ? "text" : "voice";
+  const processingTaskId = dispatchActionPlan(userId, taskId, raw, inputMode, {
+    ...(conversationId ? { conversationId } : {}),
+    ...(conversationHistory.length ? { conversationHistory } : {}),
+  });
+  let enqueuedJobId: string | null = null;
+  if (processingTaskId) {
+    const job = enqueueAiJob(userId, "ingest", {
+      raw: correction ? `${raw}\n\n用户补充修正：${correction}` : raw,
+      agentTaskId: processingTaskId,
+      inputMode,
+      interactionMode: conversationHistory.length || conversationId ? "conversation" : "home",
+      context: assistantClock(),
+      knowledge: req ? knowledgeFromRequest(req, conversationId) : [],
+      ...(conversationId ? { conversationId } : {}),
+      ...(conversationHistory.length ? { conversationHistory } : {}),
+      retryDiagnosis: {
+        strategy: correction ? "replan_with_user_correction" : "replan_failed_or_missing_items",
+        parentTaskId: taskId,
+      },
+    });
+    enqueuedJobId = job.id;
+  }
   const current = getActionPlan(userId, taskId)!;
   const previousKeys = new Set(previous?.planItems.map((item) => `${item.kind}:${item.title}`) || []);
   const currentKeys = new Set(current.planItems.map((item) => `${item.kind}:${item.title}`));
-  return { task: getPersistentAgentTask(taskId, userId), plan: current, diff: {
+  return { task: getPersistentAgentTask(taskId, userId), plan: current, enqueuedJobId, diff: {
     added: current.planItems.filter((item) => !previousKeys.has(`${item.kind}:${item.title}`)).map((item) => item.title),
     removed: (previous?.planItems || []).filter((item) => !currentKeys.has(`${item.kind}:${item.title}`)).map((item) => item.title),
     preserved: current.planItems.filter((item) => item.status === "verified").map((item) => item.title),
@@ -2031,7 +2136,7 @@ function replanOrchestration(userId: string, taskId: string, correction = "") {
 app.post(`${API}/agent/tasks/:id/replan`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
   const correction = typeof req.body?.correction === "string" ? req.body.correction.trim().slice(0, 1_000) : "";
-  const result = replanOrchestration(req.userId!, req.params.id, correction);
+  const result = replanOrchestration(req.userId!, req.params.id, correction, req);
   if (!result) { res.status(409).json({ error: "当前任务不能重新规划" }); return; }
   res.status(202).json(result);
 });
@@ -2043,7 +2148,7 @@ app.post(`${API}/agent/tasks/:id/corrections`, (req, res) => {
   if (!parsed.success) { res.status(400).json({ error: "请说明哪里需要改进" }); return; }
   recordAgentFailureSample(task, "user_correction", parsed.data.description, task.result);
   if (task.capability === "input_orchestration") {
-    const replanned = replanOrchestration(req.userId!, task.id, parsed.data.description);
+    const replanned = replanOrchestration(req.userId!, task.id, parsed.data.description, req);
     if (!replanned) { res.status(409).json({ error: "问题已记录，但当前任务无法重新规划" }); return; }
     res.status(202).json({ ok: true, replanned: true, ...replanned });
     return;
@@ -2642,7 +2747,10 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
   }
   try {
     if (!isGuestUser(req.userId)) {
-      const orchestration = beginInputAgentTask(req.userId!, raw, inputMode);
+      const orchestration = beginInputAgentTask(req.userId!, raw, inputMode, {
+        ...(conversationId ? { conversationId } : {}),
+        ...(conversationHistory?.length ? { conversationHistory } : {}),
+      });
       orchestrationTaskId = orchestration.task.id;
       inputAgentTaskId = orchestration.processingTaskId;
       if (!inputAgentTaskId) {

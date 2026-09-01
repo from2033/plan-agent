@@ -15,9 +15,39 @@ const {
   completeAiJob,
   enqueueAiJob,
   failAiJob,
+  findBestAiJobContextForAgentTask,
   getAiJob,
   getLatestAiJob,
 } = await import("../src/ai-queue.js");
+
+test("Agent 重试恢复最完整的原始聊天上下文，而不是采用最近一次盲重试", () => {
+  const userId = `retry-context-${Date.now()}`;
+  const agentTaskId = crypto.randomUUID();
+  enqueueAiJob(userId, "ingest", {
+    raw: "请用表格整理",
+    agentTaskId,
+    interactionMode: "conversation",
+    conversationId: crypto.randomUUID(),
+    conversationHistory: [
+      { role: "user", content: "数码订阅是什么" },
+      { role: "assistant", content: "最近共有 30 笔。" },
+    ],
+  });
+  enqueueAiJob(userId, "ingest", {
+    raw: "请用表格整理",
+    agentTaskId,
+    interactionMode: "home",
+  });
+  const recovered = findBestAiJobContextForAgentTask(userId, agentTaskId);
+  assert.equal(recovered?.conversationHistory.length, 2);
+  assert.equal(recovered?.interactionMode, "conversation");
+  assert.ok(recovered?.conversationId);
+  for (let index = 0; index < 2; index += 1) {
+    const claimed = claimAiJob(`retry-context-cleanup-${index}`);
+    assert.ok(claimed);
+    failAiJob(claimed!.job.id, claimed!.leaseToken, "test cleanup", false);
+  }
+});
 
 test("资料问题和回答在任务数据库中加密，读取时可正常解密", () => {
   const question = "租赁合同什么时候到期？";

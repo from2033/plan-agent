@@ -119,9 +119,24 @@ export function retrievalQuestionForIngest(job) {
 export function needsConversationContextForRetrieval(value) {
   const text = compactSearchText(value).replace(/[。！？!?]+$/u, "");
   if (!text) return false;
-  const referential = /(?:再试|重试|继续|接着|刚才|之前|上次|前面|上面|这个|那个|这条|那条|这份|那份|这些|那些|同一个|他(?:的)?|她(?:的)?|它(?:的)?|其(?:中)?)/u;
+  const referential = /(?:再试|重试|继续|接着|刚才|之前|上次|前面|上面|这个|那个|这条|那条|这份|那份|这些|那些|同一个|表格|列表|整理|改写|重写|简化|展开|详细|翻译|他(?:的)?|她(?:的)?|它(?:的)?|其(?:中)?)/u;
   const bareFollowUp = /^(?:号码|电话|地址|时间|日期|金额|内容|结果|来源|还有吗|然后呢|为什么|怎么回事)(?:呢|是多少|给我|再说下)?$/u;
   return referential.test(text) || bareFollowUp.test(text);
+}
+
+export function isConversationTransformRequest(value) {
+  const text = compactSearchText(value).replace(/[。！？!?]+$/u, "");
+  if (!text) return false;
+  return /(?:用|按|改成|整理成|转换成|输出成|写成).{0,12}(?:表格|列表|要点|摘要|更详细|更简洁|中文|英文)/u.test(text)
+    || /(?:表格|列表|要点|详细|简洁).{0,12}(?:整理|输出|列出|给我|看看|形式)/u.test(text)
+    || /^(?:继续|接着)(?:整理|写|说|输出)/u.test(text);
+}
+
+function conversationTransformTarget(job) {
+  if (!isConversationTransformRequest(job.input?.raw)) return "";
+  const history = Array.isArray(job.input?.conversationHistory) ? job.input.conversationHistory : [];
+  const latestAssistant = history.findLast(item => item?.role === "assistant" && String(item?.content || "").trim());
+  return String(latestAssistant?.content || "").trim();
 }
 
 export function deduplicateEvidenceSources(sources) {
@@ -737,6 +752,7 @@ const systemPrompt = `你是 Personal Assistant 的受限中文数据处理器�
    input.interactionMode="home" 表示首页的独立语音入口。它同时支持提问和快速记录：问候、提问、请求解释或建议时返回 ask；明确发生的活动、消费、未来事项、待办、提醒、心愿或可复用知识按 capture 规则返回 record/save。home 模式中的每次 ask 都是新话题，不使用上一段聊天；不要把“你好”等问候记录成活动。home 模式对明确的记录内容直接记录，不需要追加“要不要记录”的确认。
 1. input.intentHint="save" 是服务器已验证的强制意图，必须 kind=save，生成简洁 title 和完整 content。用户明确要求“记到知识库、保存这个方法/经验/配方”时也必须 kind=save。即使没说“知识库”，一句话若在陈述可重复查阅的做法、配方、步骤、技巧或经验，也应 kind=save。物品的生产日期、保质期、有效期、到期日、截止日等“日期事实”也属于长期资料；除非同时明确要求提醒、续费、续签、处理等行动，否则不要归为 memo。“以后提醒我做某事”是 memo，不是知识。input.intentHint="ask" 表示服务器已识别为资料查找，即使用户省略问号，也必须 kind=ask。
 2. input.conversationHistory 是当前对话按时间排列的近期消息，只用于理解“这个资料、刚才那个、继续、它”等上下文指代，不得把旧话题强行套到新问题上。最近一条“分享了资料：…”表示用户当前发送到对话的资料；用户随后要求“总结这个资料/分析一下/它讲了什么”时必须判定为 kind=ask，绝不能生成待办或复用无关个人知识。
+   input.transformTarget 存在时，表示服务器已经确认当前请求是在改变上一条助手回答的呈现方式。必须只根据 transformTarget 完成表格化、列表化、改写、翻译或详略调整，返回 kind=ask；不得重新检索、不得回答“资料不足”，不得把无关 knowledge 当成目标内容。用户要求表格时可在 answer 中输出 Markdown 表格，并完整保留原答案中的数字、名称和限定条件。
 3. 用户提问时，kind=ask。input.knowledge 是当前对话有权使用的知识笔记，input.documentSources 是从 Mac 本地资料检索出的证据片段；回答必须优先依据两者，不能因为知识笔记为空就忽略资料证据。金额、日期、合同条款、药名和剂量必须逐字依据资料。询问药品通常用途时，可以在准确列出资料中的药名后补充一般医学常识，但要明确这是一般用途、不能代替医嘱，不能据此推断诊断或用法用量。证据仍不足时明确说明没有找到足够信息。sourceIds 只能使用实际引用条目的 id；其它字段为空。
 4. 其它内容 kind=record，把一句话拆成 1 到 8 条 fields：activity、expense、memo 或 wish。描述简洁但不能丢失关键信息；日期已放入 date 后，description 不要再保留句首“今天/明天/后天/下周一”等相对日期，例如“明天带孩子理发”的 description 应为“带孩子理发”。金额必须是非负数字，币种默认 CNY；没有金额时 amount/currency 为 null。明确时间段必须输出 24 小时制 HH:mm 的 timeRange；“下午3-5点”必须是 15:00-17:00，“晚上7点到9点”必须是 19:00-21:00。否则 timeRange 为 null。memo 若有明确提醒时刻，reminderTime 输出 24 小时制 HH:mm，例如“明天下午3点提醒我交材料”输出 15:00；否则为 null。非 memo 的 reminderTime 必须为 null。priority 只用于 memo，否则为 null。分类使用简短中文词，例如工作、运动、饮食、休息、学习、生活、社交、日常、餐饮、交通、购物、娱乐、健康、备忘、心愿、其他。
    每个事实只生成一条 field：带金额的消费事实生成 expense，不要再为同一件事重复生成 activity。“早上、晚上、中午”等时段或“30分钟”等时长都不是具体起止时间，不能据此编造 timeRange；只有原文明示钟点或起止时刻时才输出 timeRange。
@@ -1672,6 +1688,20 @@ export async function rerankKnowledgeSources(question, candidates, inferenceRunn
 export async function processIngestJob(job) {
   const raw = String(job.input?.raw || "").trim();
   if (!raw) return runInference(job);
+  const transformTarget = conversationTransformTarget(job);
+  if (transformTarget) {
+    return runInference({
+      ...job,
+      input: {
+        ...job.input,
+        transformTarget,
+        knowledge: [],
+        documentSources: [],
+        intentHint: "ask",
+        interactionMode: "conversation",
+      },
+    }, { model: ollamaLargeModel });
+  }
   // All server-authorized evidence shares one retrieval layer. Permission filtering
   // happens on the server before this point; ranking never broadens that scope.
   const retrievalQuestion = retrievalQuestionForIngest(job);

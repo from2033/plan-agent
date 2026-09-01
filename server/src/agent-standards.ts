@@ -71,16 +71,16 @@ registerCapabilityStandard({
 
 registerCapabilityStandard({
   ...common({
-    capability: "input_processing", version: "1.1", description: "输入必须正确分类并产生与请求匹配的结果",
+    capability: "input_processing", version: "1.2", description: "输入必须保留对话上下文并产生符合呈现要求的结果",
     requiresConfirmation: false, allowedSideEffects: ["create_conversation", "create_entry", "save_knowledge"], failurePolicy: "retry",
     inputContract: "原始文本、输入方式和对话上下文",
     outputContract: "ask 答案 / record 记录 / save 资料之一",
     confirmationPolicy: "回答无确认；明确记录请求按既有授权执行",
     idempotencyRule: "同一请求 ID 只能形成一次副作用",
-    retryPolicy: "空泛或不匹配回答重新检索领域事实源",
+    retryPolicy: "先诊断失败类型；上下文请求恢复原对话，计划错误则重规划，禁止原样盲重试",
     followUpPolicy: "证据仍不足时明确列出缺失信息并等待补充",
   }),
-  acceptance: () => [{
+  acceptance: (input) => [{
     id: "usable-result", description: "输入处理产生可用且非答非所问的结果",
     check: (result) => {
       const value = result as { kind?: string; answer?: string; entries?: unknown[]; item?: unknown } | null;
@@ -92,6 +92,15 @@ registerCapabilityStandard({
       if (value.kind === "record") return Array.isArray(value.entries) && value.entries.length > 0;
       if (value.kind === "save") return value.item != null;
       return false;
+    },
+  }, {
+    id: "requested-format", description: "明确要求表格时结果必须包含可读表格",
+    check: (result) => {
+      const raw = String((input as { raw?: unknown; title?: unknown })?.raw
+        || (input as { title?: unknown })?.title || "");
+      if (!/表格/u.test(raw)) return true;
+      const answer = String((result as { answer?: unknown })?.answer || "");
+      return /\|[^\n]+\|\s*\n\s*\|?\s*:?-{3,}/u.test(answer);
     },
   }],
 });

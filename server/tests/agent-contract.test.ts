@@ -58,6 +58,20 @@ test("普通提问必须产生可用答案，空泛的未找到回答不能通�
   })?.stage, "verified");
 });
 
+test("明确要求表格时，普通段落不能通过呈现格式验收", () => {
+  const userId = `agent-table-${Date.now()}`;
+  const verify = (answer: string) => {
+    const task = createPersistentAgentTask(userId, "input_processing", { raw: "请用表格形式整理给我" });
+    transitionPersistentAgentTask(userId, task.id, "classified", "classified");
+    transitionPersistentAgentTask(userId, task.id, "extracted", "extracted");
+    transitionPersistentAgentTask(userId, task.id, "executing", "executing");
+    transitionPersistentAgentTask(userId, task.id, "verifying", "result_ready");
+    return verifyPersistentAgentTask(userId, task.id, { kind: "ask", answer });
+  };
+  assert.equal(verify("共有三十笔数码订阅。")?.stage, "failed");
+  assert.equal(verify("| 项目 | 笔数 |\n| --- | ---: |\n| 数码订阅 | 30 |")?.stage, "verified");
+});
+
 test("能力注册表公开任务契约、幂等和跟进策略", () => {
   const desktop = registeredCapabilities().find((item) => item.capability === "desktop_intake");
   assert.equal(desktop?.version, "1.1");

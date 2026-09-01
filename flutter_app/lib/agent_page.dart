@@ -22,6 +22,7 @@ String agentCapabilityLabel(String? capability) => switch (capability) {
 String agentStandardLabel(String? capability, String? version) =>
     switch (capability) {
       'input_orchestration' => '行动覆盖标准 v${version ?? '-'}',
+      'input_processing' => '提问处理标准 v${version ?? '-'}',
       'reminder' => '日期与闹钟完整性 v${version ?? '-'}',
       'tomorrow_brief' => '原文事项覆盖标准 v${version ?? '-'}',
       _ => '能力验收标准 v${version ?? '-'}',
@@ -340,6 +341,23 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
     }
   }
 
+  Future<void> retryWithAgentRepair() async {
+    setState(() => busy = true);
+    try {
+      await widget.api.retryAgentTask(widget.taskId);
+      await load();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Agent 已诊断失败原因并开始修复')));
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   List<String> strings(dynamic value) =>
       value is List ? value.map((item) => item.toString()).toList() : const [];
 
@@ -649,9 +667,9 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
     if (stage == 'failed') {
       return [
         FilledButton.icon(
-          onPressed: () => act(widget.api.retryAgentTask),
+          onPressed: retryWithAgentRepair,
           icon: const Icon(Icons.refresh_rounded),
-          label: const Text('重试'),
+          label: const Text('让 Agent 修复'),
         ),
         feedback,
       ];

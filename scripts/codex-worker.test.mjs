@@ -16,6 +16,7 @@ import {
   groundedAnswerFacts,
   hasConcreteEvidenceOverlap,
   hasExplicitTimeRange,
+  isConversationTransformRequest,
   knowledgeAnswerForIngest,
   needsConversationContextForRetrieval,
   ollamaModelForJob,
@@ -82,6 +83,13 @@ test("elliptical follow-ups use prior user questions but not assistant answers",
   });
   assert.match(question, /张老师的联系方式/);
   assert.doesNotMatch(question, /13800138000/);
+});
+
+test("formatting follow-ups are recognized as transformations of the previous answer", () => {
+  assert.equal(isConversationTransformRequest("请用表格的形式详细整理好给我看。"), true);
+  assert.equal(isConversationTransformRequest("把上面的内容改成要点列表"), true);
+  assert.equal(isConversationTransformRequest("南京明天天气怎么样"), false);
+  assert.equal(needsConversationContextForRetrieval("请用表格的形式详细整理好给我看。"), true);
 });
 
 test("knowledge evidence answer maps model source indexes back to source ids", () => {

@@ -43,5 +43,9 @@ void main() {
     expect(find.text('处理或验收失败'), findsOneWidget);
     expect(find.text('输入处理产生可用且非答非所问的结果'), findsWidgets);
     expect(find.text('用表格形式给我'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('让 Agent 修复'), 300);
+    expect(find.text('让 Agent 修复'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('报告结果问题'), 200);
+    expect(find.text('报告结果问题'), findsOneWidget);
   });
 }
