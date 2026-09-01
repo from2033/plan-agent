@@ -14,7 +14,6 @@ import mimetypes
 import base64
 from datetime import datetime, timezone
 from pathlib import Path
-from secrets import compare_digest
 from typing import Any, Optional
 
 import httpx
@@ -22,6 +21,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 import config
 from db import db
+from onebot_auth import authorize_onebot
 
 router = APIRouter(prefix="/api/integrations/onebot", tags=["onebot"])
 log = logging.getLogger("onebot")
@@ -115,16 +115,6 @@ async def _napcat(action: str, payload: dict) -> dict:
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(f"{config.NAPCAT_API_URL}/{action}", json=payload, headers=headers)
         return r.json()
-
-
-def _authorized(authorization: Optional[str], x_access_token: Optional[str]) -> bool:
-    expected = config.ONEBOT_ACCESS_TOKEN
-    if not expected:
-        return True
-    candidate = x_access_token or ""
-    if authorization and authorization.lower().startswith("bearer "):
-        candidate = authorization[7:].strip()
-    return compare_digest(candidate, expected)
 
 
 def _is_teacher(sender_id: str, name: str) -> bool:
@@ -295,11 +285,19 @@ async def receive_event(
     request: Request,
     authorization: Optional[str] = Header(default=None),
     x_access_token: Optional[str] = Header(default=None),
+    x_signature: Optional[str] = Header(default=None),
 ):
-    if not _authorized(authorization, x_access_token):
+    body = await request.body()
+    if not authorize_onebot(
+        config.ONEBOT_ACCESS_TOKEN,
+        body,
+        authorization=authorization,
+        x_access_token=x_access_token,
+        x_signature=x_signature,
+    ):
         raise HTTPException(status_code=401, detail="OneBot access token 无效")
 
-    event = await request.json()
+    event = json.loads(body)
     post_type = event.get("post_type")
 
     # 群文件上传
