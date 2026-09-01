@@ -6,6 +6,44 @@ const compact = (value: unknown) => String(value || "").replace(/[\s，。！？
 
 registerCapabilityStandard({
   ...common({
+    capability: "input_orchestration", version: "1.0", description: "原始输入必须形成完整行动计划并逐项闭环",
+    requiresConfirmation: false, allowedSideEffects: ["create_child_tasks"], failurePolicy: "retry",
+    inputContract: "原始文本、输入方式、当前时间和计划版本",
+    outputContract: "事实、目标、计划项、子任务状态、覆盖状态和缺失要求",
+    confirmationPolicy: "只读和明确授权的内部动作自动执行；敏感副作用由子任务确认",
+    idempotencyRule: "同一父任务和计划项只能绑定一个有效子任务",
+    retryPolicy: "只重试缺失或失败计划项，已通过子任务不重复执行",
+    followUpPolicy: "存在缺项或失败时保持可见并反馈下一步",
+  }),
+  acceptance: () => [{
+    id: "plan-present", description: "输入已经形成包含事实、目标和行动的计划",
+    check: (result) => Boolean((result as { facts?: unknown[]; goals?: unknown[]; planItems?: unknown[] })?.facts?.length
+      && (result as { goals?: unknown[] }).goals?.length && (result as { planItems?: unknown[] }).planItems?.length),
+  }, {
+    id: "source-coverage", description: "原始输入中的必要要求均有关联且通过验收的子任务",
+    check: (result) => (result as { coverageStatus?: string }).coverageStatus === "complete"
+      && !((result as { missingRequirements?: unknown[] }).missingRequirements || []).length,
+  }],
+});
+
+registerCapabilityStandard({
+  ...common({ capability: "date_resolution", version: "1.0", description: "相对或节日日期转换为可核对公历日期",
+    requiresConfirmation: false, allowedSideEffects: [], failurePolicy: "awaiting_user", inputContract: "日期表达和当前日期",
+    outputContract: "ISO 日期、原始表达和解析依据", confirmationPolicy: "无副作用自动执行", idempotencyRule: "表达+当前年份唯一",
+    retryPolicy: "解析失败时等待用户补充年份或日期", followUpPolicy: "无法唯一确定时显示澄清问题" }),
+  acceptance: () => [{ id: "date-resolved", description: "日期已转换为有效 ISO 日期并保留依据", check: (result) => /^\d{4}-\d{2}-\d{2}$/.test(String((result as { date?: unknown })?.date || "")) && Boolean(String((result as { basis?: unknown })?.basis || "").trim()) }],
+});
+
+registerCapabilityStandard({
+  ...common({ capability: "feedback", version: "1.0", description: "汇总全部子任务结果并反馈用户",
+    requiresConfirmation: false, allowedSideEffects: ["publish_agent_result"], failurePolicy: "retry", inputContract: "父任务目标和已验收子任务结果",
+    outputContract: "覆盖全部目标的手机可读摘要", confirmationPolicy: "无外部副作用自动反馈", idempotencyRule: "父任务+计划版本只发布一次",
+    retryPolicy: "缺少依赖时等待，反馈为空时重新汇总", followUpPolicy: "仍缺资料时明确列出未完成项" }),
+  acceptance: () => [{ id: "feedback-present", description: "产生了可读的最终反馈", check: (result) => String((result as { summary?: unknown })?.summary || "").trim().length >= 10 }],
+});
+
+registerCapabilityStandard({
+  ...common({
     capability: "tomorrow_brief", version: "1.2", description: "明日管家逐项覆盖明确准备事项",
     requiresConfirmation: false, allowedSideEffects: ["publish_brief"], failurePolicy: "retry",
     inputContract: "目标日期、逐条事实源、required 必带清单",

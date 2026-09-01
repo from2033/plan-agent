@@ -53,7 +53,7 @@ import {
 } from "./entry-date.js";
 import type { Entry } from "./types.js";
 import { extractQqTasks, qqMessageKnowledge } from "./qq-task-import.js";
-import { embeddedResearchTopic, knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
+import { knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
 import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import {
@@ -136,8 +136,9 @@ import {
   MAX_CHUNKED_DOCUMENT_SIZE,
 } from "./chunked-upload.js";
 import { confirmAssistantAction, confirmAssistantActionByAgentTaskId, dismissAssistantAction, listAssistantActions, proposeDocumentActions } from "./assistant-actions.js";
-import { auditStaleAgentTasks, createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, listChildAgentTasks, listPersistentAgentTasks, schedulePersistentAgentFollowUp, transitionPersistentAgentTask, verifyPersistentAgentTask, wakeDueAgentFollowUps } from "./agent-runtime.js";
+import { auditStaleAgentTasks, createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, listChildAgentTasks, listPersistentAgentTasks, refreshOrchestrationParent, schedulePersistentAgentFollowUp, transitionPersistentAgentTask, verifyPersistentAgentTask, wakeDueAgentFollowUps } from "./agent-runtime.js";
 import { registeredCapabilities } from "./agent-contract.js";
+import { getActionPlan, linkPlanItem, resolveMidAutumnDate, saveActionPlan } from "./action-plan.js";
 import { agentQualityAudit, listAgentFailureSamples, recordAgentFailureSample } from "./agent-quality.js";
 import {
   deleteMistake,
@@ -220,16 +221,87 @@ function financeSubscriptionAnswer(userId: string): string {
   return `账单里的“数码订阅”是系统按商户和商品关键词归出的消费类别，不代表每一笔都是自动续费。最近 24 个月共有 ${category.count} 笔，净支出 ¥${category.amount.toFixed(2)}。主要包括：${details}。归类规则会把 Apple/App Store/iTunes/GiftCard、云服务、服务器、软件、会员或充值类交易放进这一类。`;
 }
 
+function progressAutomaticTask(userId: string, id: string): void {
+  const task = getPersistentAgentTask(id, userId);
+  if (!task) return;
+  if (task.stage === "received") transitionPersistentAgentTask(userId, id, "classified", "automatically_classified");
+  const classified = getPersistentAgentTask(id, userId);
+  if (classified?.stage === "classified") transitionPersistentAgentTask(userId, id, "extracted", "goal_extracted");
+  const extracted = getPersistentAgentTask(id, userId);
+  if (extracted?.stage === "extracted" || extracted?.stage === "awaiting_confirmation") {
+    transitionPersistentAgentTask(userId, id, "executing", "authorized_execution_started");
+  }
+}
+
+function advanceOrchestration(userId: string, parentId: string): void {
+  const plan = getActionPlan(userId, parentId);
+  if (!plan) return;
+  const feedback = plan.planItems.find((item) => item.kind === "feedback");
+  if (feedback && feedback.status === "planned"
+    && plan.planItems.filter((item) => item.required && item.kind !== "feedback").every((item) => item.status === "verified")) {
+    if (!feedback.childTaskId) return;
+    progressAutomaticTask(userId, feedback.childTaskId);
+    const research = plan.planItems.find((item) => item.kind === "research")?.result as { executiveSummary?: unknown; title?: unknown } | null;
+    const date = plan.planItems.find((item) => item.kind === "resolve_date")?.result as { date?: unknown } | null;
+    const summary = `宝宝生日计划日期：${String(date?.date || "待确认")}。${String(research?.executiveSummary || research?.title || "南京大厂周边场地调研已完成，请查看研究子任务详情。")}`;
+    transitionPersistentAgentTask(userId, feedback.childTaskId, "verifying", "feedback_ready", { summary });
+    verifyPersistentAgentTask(userId, feedback.childTaskId, { summary });
+  }
+  refreshOrchestrationParent(userId, parentId);
+}
+
+function dispatchActionPlan(userId: string, taskId: string, raw: string, inputMode: "voice" | "text"): string | undefined {
+  const plan = getActionPlan(userId, taskId);
+  if (!plan) return undefined;
+  let processingTaskId: string | undefined;
+  for (const item of plan.planItems.filter((candidate) => !candidate.childTaskId)) {
+    const child = createPersistentAgentTask(userId, item.capability, item.capability === "todo"
+      ? { title: item.title, details: item.instruction, payload: { description: item.title, category: "家庭", priority: "medium" } }
+      : { title: item.title, details: item.instruction, raw, inputMode, payload: { query: item.instruction } }, inputMode, taskId, { parentTaskId: taskId });
+    linkPlanItem(userId, item.id, child.id, child.stage === "awaiting_confirmation" ? "awaiting_confirmation" : "planned");
+    if (item.kind === "process") {
+      progressAutomaticTask(userId, child.id);
+      processingTaskId = child.id;
+    } else if (item.kind === "resolve_date") {
+      progressAutomaticTask(userId, child.id);
+      const year = Number(assistantClock().currentDate.slice(0, 4));
+      const date = resolveMidAutumnDate(year);
+      transitionPersistentAgentTask(userId, child.id, "verifying", "festival_date_resolved", { date, expression: "中秋", basis: `农历${year}年八月十五` });
+      verifyPersistentAgentTask(userId, child.id, { date, expression: "中秋", basis: `农历${year}年八月十五` });
+    } else if (item.kind === "todo") {
+      progressAutomaticTask(userId, child.id);
+      const year = Number(assistantClock().currentDate.slice(0, 4));
+      const date = resolveMidAutumnDate(year) || undefined;
+      const entry: Entry = { id: crypto.randomUUID(), type: "memo", raw, time: "", description: item.title,
+        category: "家庭", priority: "medium", done: false, ...(date ? { scheduledDate: date } : {}), timestamp: new Date().toISOString() };
+      insertEntry(entry, userId);
+      transitionPersistentAgentTask(userId, child.id, "verifying", "birthday_todo_created", entry);
+      verifyPersistentAgentTask(userId, child.id, entry);
+    } else if (item.kind === "research") {
+      progressAutomaticTask(userId, child.id);
+      const document = createResearchDocument(userId, item.title);
+      const job = enqueueAiJob(userId, "research", { reportId: document.id, query: item.instruction, originalRequest: raw,
+        agentTaskId: child.id, orchestrationTaskId: taskId, requestedAt: new Date().toISOString(), locale: "zh-CN", audience: "南京家庭用户" }, 80);
+      bindDocumentJob(document.id, userId, job.id);
+    }
+  }
+  advanceOrchestration(userId, taskId);
+  return processingTaskId;
+}
+
 function beginInputAgentTask(userId: string, raw: string, inputMode: "voice" | "text") {
   const task = createPersistentAgentTask(
     userId,
-    "input_processing",
+    "input_orchestration",
     { title: raw.slice(0, 80), raw, inputMode },
     inputMode,
   );
   transitionPersistentAgentTask(userId, task.id, "classified", "input_classified");
   transitionPersistentAgentTask(userId, task.id, "extracted", "goal_extracted");
-  return transitionPersistentAgentTask(userId, task.id, "executing", "processing_started")!;
+  transitionPersistentAgentTask(userId, task.id, "executing", "plan_execution_started");
+  saveActionPlan(userId, task.id, raw, assistantClock().currentDate);
+  const processingTaskId = dispatchActionPlan(userId, task.id, raw, inputMode);
+  return { task: getPersistentAgentTask(task.id, userId)!, processingTaskId, plan: getActionPlan(userId, task.id)! };
 }
 
 function finishInputAgentTask(userId: string, taskId: string | undefined, result: unknown): void {
@@ -927,6 +999,7 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     if (agentTask?.stage === "executing") {
       transitionPersistentAgentTask(job.userId, agentTask.id, "verifying", "research_report_ready", value);
       verifyPersistentAgentTask(job.userId, agentTask.id, value);
+      if (agentTask.parentTaskId) advanceOrchestration(job.userId, agentTask.parentTaskId);
     }
     return value;
   }
@@ -1823,7 +1896,8 @@ app.get(`${API}/agent/tasks`, (req, res) => {
   const capability = typeof req.query.capability === "string" ? req.query.capability : "";
   const includeChildren = req.query.includeChildren === "1";
   const limit = Math.min(200, Math.max(1, Number(req.query.limit || 100)));
-  res.json(listPersistentAgentTasks(req.userId!).filter((task) => (includeChildren || !task.parentTaskId) && (!status || task.stage === status) && (!capability || task.capability === capability)).slice(0, limit));
+  res.json(listPersistentAgentTasks(req.userId!).filter((task) => (includeChildren || !task.parentTaskId) && (!status || task.stage === status) && (!capability || task.capability === capability)).slice(0, limit)
+    .map((task) => task.capability === "input_orchestration" ? { ...task, ...getActionPlan(req.userId!, task.id) } : task));
 });
 app.get(`${API}/agent/tasks/:id/events`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
@@ -1844,7 +1918,7 @@ app.get(`${API}/agent/tasks/:id`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
   const task = getPersistentAgentTask(req.params.id, req.userId!);
   if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
-  res.json({ ...task, children: listChildAgentTasks(req.userId!, task.id) });
+  res.json({ ...task, ...(task.capability === "input_orchestration" ? getActionPlan(req.userId!, task.id) : {}), children: listChildAgentTasks(req.userId!, task.id) });
 });
 app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
@@ -1852,6 +1926,12 @@ app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
   if (!existing) { res.status(404).json({ error: "任务不存在" }); return; }
   if (existing.stage !== "failed") {
     res.status(409).json({ error: "当前状态不能重试" }); return;
+  }
+  if (existing.capability === "input_orchestration") {
+    const replanned = replanOrchestration(req.userId!, existing.id, "重试失败或缺失的计划项");
+    if (!replanned) { res.status(409).json({ error: "原始输入不可用，无法重试" }); return; }
+    res.status(202).json(replanned);
+    return;
   }
   if (existing.capability === "desktop_intake" && existing.sourceId) {
     const retried = retryDesktopSubmission(req.userId!, existing.sourceId);
@@ -1920,6 +2000,39 @@ app.post(`${API}/agent/tasks/:id/dismiss`, (req, res) => {
   res.json(task);
 });
 const AgentCorrectionSchema = z.object({ description: z.string().trim().min(2).max(1_000) });
+function replanOrchestration(userId: string, taskId: string, correction = "") {
+  const task = getPersistentAgentTask(taskId, userId);
+  if (!task || task.capability !== "input_orchestration") return null;
+  const input = task.input as { raw?: unknown; inputMode?: unknown };
+  const raw = String(input.raw || "").trim();
+  if (!raw) return null;
+  const previous = getActionPlan(userId, taskId);
+  if (task.stage === "failed") {
+    transitionPersistentAgentTask(userId, taskId, "retrying", "plan_revision_requested", { correction });
+    transitionPersistentAgentTask(userId, taskId, "executing", "plan_revision_started");
+  } else if (task.stage === "verified") {
+    transitionPersistentAgentTask(userId, taskId, "follow_up", "plan_revision_requested", { correction });
+    transitionPersistentAgentTask(userId, taskId, "executing", "plan_revision_started");
+  }
+  const plan = saveActionPlan(userId, taskId, `${raw}${correction ? `\n用户纠正：${correction}` : ""}`, assistantClock().currentDate);
+  dispatchActionPlan(userId, taskId, raw, input.inputMode === "text" ? "text" : "voice");
+  const current = getActionPlan(userId, taskId)!;
+  const previousKeys = new Set(previous?.planItems.map((item) => `${item.kind}:${item.title}`) || []);
+  const currentKeys = new Set(current.planItems.map((item) => `${item.kind}:${item.title}`));
+  return { task: getPersistentAgentTask(taskId, userId), plan: current, diff: {
+    added: current.planItems.filter((item) => !previousKeys.has(`${item.kind}:${item.title}`)).map((item) => item.title),
+    removed: (previous?.planItems || []).filter((item) => !currentKeys.has(`${item.kind}:${item.title}`)).map((item) => item.title),
+    preserved: current.planItems.filter((item) => item.status === "verified").map((item) => item.title),
+  } };
+}
+
+app.post(`${API}/agent/tasks/:id/replan`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+  const correction = typeof req.body?.correction === "string" ? req.body.correction.trim().slice(0, 1_000) : "";
+  const result = replanOrchestration(req.userId!, req.params.id, correction);
+  if (!result) { res.status(409).json({ error: "当前任务不能重新规划" }); return; }
+  res.status(202).json(result);
+});
 app.post(`${API}/agent/tasks/:id/corrections`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
   const task = getPersistentAgentTask(req.params.id, req.userId!);
@@ -1927,6 +2040,12 @@ app.post(`${API}/agent/tasks/:id/corrections`, (req, res) => {
   if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
   if (!parsed.success) { res.status(400).json({ error: "请说明哪里需要改进" }); return; }
   recordAgentFailureSample(task, "user_correction", parsed.data.description, task.result);
+  if (task.capability === "input_orchestration") {
+    const replanned = replanOrchestration(req.userId!, task.id, parsed.data.description);
+    if (!replanned) { res.status(409).json({ error: "问题已记录，但当前任务无法重新规划" }); return; }
+    res.status(202).json({ ok: true, replanned: true, ...replanned });
+    return;
+  }
   // 报告问题不是只写样本：对普通提问立即带着用户纠正重新处理，
   // 同时保留原失败任务和纠正事件，便于后续标准回归。
   if (task.stage === "failed" && task.capability === "input_processing") {
@@ -2513,6 +2632,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
   }
   let synchronousInteractionId: string | null = null;
   let inputAgentTaskId: string | undefined;
+  let orchestrationTaskId: string | undefined;
   const interactionConversationId = conversationId;
   if (!raw) {
     res.status(400).json({ error: "raw 不能为空" });
@@ -2559,34 +2679,12 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       return;
     }
     if (!isGuestUser(req.userId)) {
-      inputAgentTaskId = beginInputAgentTask(req.userId!, raw, inputMode).id;
-    }
-    const followUpTopic = embeddedResearchTopic(raw);
-    if (followUpTopic && !isGuestUser(req.userId)) {
-      const researchTask = createPersistentAgentTask(
-        req.userId!,
-        "research",
-        { title: followUpTopic, details: raw, payload: { query: followUpTopic }, explicitUserAuthorization: true },
-        inputMode,
-        inputAgentTaskId,
-      );
-      const document = createResearchDocument(req.userId!, followUpTopic);
-      try {
-        transitionPersistentAgentTask(req.userId!, researchTask.id, "executing", "explicit_compound_research_requested");
-        const job = enqueueAiJob(req.userId!, "research", {
-          reportId: document.id,
-          query: followUpTopic,
-          originalRequest: raw,
-          agentTaskId: researchTask.id,
-          requestedAt: new Date().toISOString(),
-          locale: "zh-CN",
-          audience: "南京家庭用户",
-        }, 80);
-        bindDocumentJob(document.id, req.userId!, job.id);
-      } catch (error) {
-        discardDocument(document.id, req.userId!);
-        transitionPersistentAgentTask(req.userId!, researchTask.id, "failed", "compound_research_enqueue_failed");
-        throw error;
+      const orchestration = beginInputAgentTask(req.userId!, raw, inputMode);
+      orchestrationTaskId = orchestration.task.id;
+      inputAgentTaskId = orchestration.processingTaskId;
+      if (!inputAgentTaskId) {
+        res.status(202).json({ kind: "pending", agentTaskId: orchestrationTaskId, plan: orchestration.plan });
+        return;
       }
     }
     if (isFinanceSubscriptionQuestion(raw) && !isGuestUser(req.userId)) {
@@ -2623,7 +2721,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       if (!isGuestUser(req.userId) && interactionConversationId) {
         beginAiInteraction(req.userId!, job.id, raw, inputMode, interactionConversationId || undefined);
       }
-      res.status(202).json({ kind: "pending", jobId: job.id, agentTaskId: inputAgentTaskId });
+      res.status(202).json({ kind: "pending", jobId: job.id, agentTaskId: orchestrationTaskId || inputAgentTaskId });
       return;
     }
     if (!isGuestUser(req.userId) && interactionConversationId) {

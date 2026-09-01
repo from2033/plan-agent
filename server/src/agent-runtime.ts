@@ -4,6 +4,7 @@ import { decField, encField } from "./crypto-field.js";
 import { capabilityStandard, verifyAgentTask, createCapabilityTask, type AgentStage } from "./agent-contract.js";
 import "./agent-standards.js";
 import { recordAgentFailureSample } from "./agent-quality.js";
+import { getActionPlan, parentForPlanChild, updatePlanItemByChild } from "./action-plan.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
 db.exec(`
@@ -93,7 +94,32 @@ export function transitionPersistentAgentTask(userId: string, id: string, toStag
   if (toStage === "failed" && reason !== "acceptance_failed") {
     recordAgentFailureSample(task, "execution", reason, result);
   }
-  const updated = getPersistentAgentTask(id, userId)!; event(updated, task.stage, toStage, reason, result); return updated;
+  const updated = getPersistentAgentTask(id, userId)!;
+  event(updated, task.stage, toStage, reason, result);
+  const planStatus = toStage === "verified" ? "verified"
+    : toStage === "failed" ? "failed"
+      : toStage === "awaiting_user" ? "awaiting_user"
+        : toStage === "awaiting_confirmation" ? "awaiting_confirmation"
+          : toStage === "verifying" ? "verifying" : toStage === "executing" || toStage === "retrying" ? "executing" : null;
+  if (planStatus) updatePlanItemByChild(userId, id, planStatus, result, toStage === "failed" ? failures.join("；") : undefined);
+  const parentId = parentForPlanChild(userId, id);
+  if (parentId) refreshOrchestrationParent(userId, parentId);
+  return updated;
+}
+
+export function refreshOrchestrationParent(userId: string, parentId: string): PersistedAgentTask | null {
+  const parent = getPersistentAgentTask(parentId, userId);
+  const plan = getActionPlan(userId, parentId);
+  if (!parent || parent.capability !== "input_orchestration" || !plan) return parent;
+  if (plan.coverageStatus === "failed" && ["executing", "verifying", "retrying"].includes(parent.stage)) {
+    return transitionPersistentAgentTask(userId, parent.id, "failed", "required_plan_item_failed", plan.missingRequirements);
+  }
+  if (plan.coverageStatus !== "complete") {
+    return parent;
+  }
+  if (["executing", "retrying"].includes(parent.stage)) transitionPersistentAgentTask(userId, parent.id, "verifying", "all_plan_items_verified", plan);
+  const verifying = getPersistentAgentTask(parent.id, userId);
+  return verifying?.stage === "verifying" ? verifyPersistentAgentTask(userId, parent.id, plan) : verifying;
 }
 
 export function verifyPersistentAgentTask(userId: string, id: string, result: unknown): PersistedAgentTask | null {
