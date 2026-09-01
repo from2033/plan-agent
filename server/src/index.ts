@@ -1927,7 +1927,27 @@ app.post(`${API}/agent/tasks/:id/corrections`, (req, res) => {
   if (!task) { res.status(404).json({ error: "任务不存在" }); return; }
   if (!parsed.success) { res.status(400).json({ error: "请说明哪里需要改进" }); return; }
   recordAgentFailureSample(task, "user_correction", parsed.data.description, task.result);
-  res.status(201).json({ ok: true });
+  // 报告问题不是只写样本：对普通提问立即带着用户纠正重新处理，
+  // 同时保留原失败任务和纠正事件，便于后续标准回归。
+  if (task.stage === "failed" && task.capability === "input_processing") {
+    if (!codexWorkerOnline()) { res.status(503).json({ error: "后台处理服务尚未就绪，问题已记录，请稍后重试" }); return; }
+    const input = task.input as { raw?: unknown; inputMode?: unknown };
+    const raw = String(input.raw || input.title || "").trim();
+    if (!raw) { res.status(409).json({ error: "原始问题缺失，问题已记录，请重新提交" }); return; }
+    transitionPersistentAgentTask(req.userId!, task.id, "retrying", "user_correction_retry_requested", { correction: parsed.data.description });
+    transitionPersistentAgentTask(req.userId!, task.id, "executing", "user_correction_retry_started");
+    const job = enqueueAiJob(req.userId!, "ingest", {
+      raw: `${raw}\n\n用户补充修正：${parsed.data.description}`,
+      agentTaskId: task.id,
+      inputMode: input.inputMode === "text" ? "text" : "voice",
+      interactionMode: "home",
+      context: assistantClock(),
+      knowledge: knowledgeFromRequest(req, ""),
+    });
+    res.status(202).json({ ok: true, retried: true, jobId: job.id, task: getPersistentAgentTask(task.id, req.userId!) });
+    return;
+  }
+  res.status(201).json({ ok: true, retried: false });
 });
 app.post(`${API}/assistant-actions/:id/confirm`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }

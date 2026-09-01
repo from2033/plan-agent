@@ -342,12 +342,16 @@ class ApiClient {
             '/agent/tasks/${Uri.encodeComponent(id)}/dismiss',
           ))
           as Map<String, dynamic>;
-  Future<void> correctAgentTask(String id, String description) async {
-    await _request(
-      'POST',
-      '/agent/tasks/${Uri.encodeComponent(id)}/corrections',
-      body: {'description': description},
-    );
+  Future<Map<String, dynamic>> correctAgentTask(
+    String id,
+    String description,
+  ) async {
+    return await _request(
+          'POST',
+          '/agent/tasks/${Uri.encodeComponent(id)}/corrections',
+          body: {'description': description},
+        )
+        as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> financeOverview({int months = 3}) async {

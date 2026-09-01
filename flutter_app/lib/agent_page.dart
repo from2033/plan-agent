@@ -315,10 +315,11 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
     setState(() => busy = true);
     try {
       await widget.api.correctAgentTask(widget.taskId, description);
+      await load();
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('已记录为失败样本，后续标准升级会用于回归测试')));
+        ).showSnackBar(const SnackBar(content: Text('已记录问题，并立即交给 Agent 重新处理')));
       }
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
