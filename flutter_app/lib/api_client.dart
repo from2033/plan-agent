@@ -317,6 +317,16 @@ class ApiClient {
   Future<Map<String, dynamic>> retryAgentTask(String id) async =>
       (await _request('POST', '/agent/tasks/${Uri.encodeComponent(id)}/retry'))
           as Map<String, dynamic>;
+  Future<Map<String, dynamic>> replanAgentTask(
+    String id, {
+    String correction = '',
+  }) async =>
+      (await _request(
+            'POST',
+            '/agent/tasks/${Uri.encodeComponent(id)}/replan',
+            body: {'correction': correction},
+          ))
+          as Map<String, dynamic>;
   Future<Map<String, dynamic>> followUpAgentTask(
     String id, {
     DateTime? remindAt,

@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import 'api_client.dart';
 
 String agentCapabilityLabel(String? capability) => switch (capability) {
+  'input_orchestration' => '计划型 Agent',
   'input_processing' => '提问与录入',
+  'date_resolution' => '日期确认',
+  'feedback' => '结果反馈',
   'desktop_intake' => '电脑资料投递',
   'document_ingest' => '资料识别与归档',
   'tomorrow_brief' => '明日管家',
@@ -16,8 +19,17 @@ String agentCapabilityLabel(String? capability) => switch (capability) {
   _ => capability ?? 'Agent 任务',
 };
 
+String agentStandardLabel(String? capability, String? version) =>
+    switch (capability) {
+      'input_orchestration' => '行动覆盖标准 v${version ?? '-'}',
+      'reminder' => '日期与闹钟完整性 v${version ?? '-'}',
+      'tomorrow_brief' => '原文事项覆盖标准 v${version ?? '-'}',
+      _ => '能力验收标准 v${version ?? '-'}',
+    };
+
 String agentStageLabel(String? stage) => switch (stage) {
   'received' => '刚刚收到',
+  'planned' => '已规划',
   'classified' => '正在判断',
   'extracted' => '已提取目标',
   'awaiting_confirmation' => '等待你确认',
@@ -199,7 +211,7 @@ class _AgentPageState extends State<AgentPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${agentCapabilityLabel(task['capability']?.toString())} · 标准 ${task['standardVersion'] ?? '-'}',
+                          '${agentCapabilityLabel(task['capability']?.toString())} · ${agentStandardLabel(task['capability']?.toString(), task['standardVersion']?.toString())}',
                           style: const TextStyle(
                             fontSize: 11,
                             color: Color(0xff8a8680),
@@ -350,6 +362,10 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
                   _statusCard(value),
                   const SizedBox(height: 12),
                   _infoCard(value),
+                  if ((value['planItems'] as List?)?.isNotEmpty == true) ...[
+                    const SizedBox(height: 12),
+                    _planCard(value),
+                  ],
                   if (strings(value['passedChecks']).isNotEmpty ||
                       strings(value['failedChecks']).isNotEmpty) ...[
                     const SizedBox(height: 12),
@@ -429,7 +445,13 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
         child: Column(
           children: [
             _row('能力', agentCapabilityLabel(value['capability']?.toString())),
-            _row('标准版本', value['standardVersion']?.toString() ?? '-'),
+            _row(
+              '验收标准',
+              agentStandardLabel(
+                value['capability']?.toString(),
+                value['standardVersion']?.toString(),
+              ),
+            ),
             _row('来源', _sourceLabel(value['sourceType']?.toString())),
             _row('是否需确认', value['requiresConfirmation'] == true ? '是' : '否'),
             if (reason?.isNotEmpty == true) _row('确认原因', reason!),
@@ -467,6 +489,76 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
     for (final item in strings(value['failedChecks']))
       (Icons.close_rounded, const Color(0xffb42318), item),
   ]);
+
+  Widget _planCard(Map<String, dynamic> value) {
+    final items = (value['planItems'] as List? ?? const [])
+        .whereType<Map>()
+        .toList();
+    final goals = strings(value['goals']);
+    final missing = strings(value['missingRequirements']);
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Agent 行动计划',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                Text(
+                  '第 ${value['planVersion'] ?? 1} 版',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xff8a8680),
+                  ),
+                ),
+              ],
+            ),
+            if (goals.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                goals.join('；'),
+                style: const TextStyle(fontSize: 12, color: Color(0xff57534e)),
+              ),
+            ],
+            const SizedBox(height: 8),
+            for (final item in items)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  agentStageIcon(item['status']?.toString()),
+                  color: agentStageColor(item['status']?.toString()),
+                  size: 20,
+                ),
+                title: Text(
+                  item['title']?.toString() ?? '未命名行动',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  '${agentCapabilityLabel(item['capability']?.toString())} · ${agentStageLabel(item['status']?.toString())}',
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ),
+            if (missing.isNotEmpty) ...[
+              const Divider(),
+              Text(
+                '尚未完成：${missing.join('、')}',
+                style: const TextStyle(fontSize: 12, color: Color(0xffb42318)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _failureCard(Map<String, dynamic> value) => _listCard('失败原因', [
     for (final item in strings(value['failures']))
       (Icons.error_outline_rounded, const Color(0xffb42318), item),
@@ -509,7 +601,7 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '资料处理 ${children.length} 项',
+              '关联子任务 ${children.length} 项',
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),

@@ -2374,7 +2374,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text(
-                '${agentCapabilityLabel(task['capability']?.toString())} · ${agentStageLabel(task['stage']?.toString())}',
+                () {
+                  final planItems = (task['planItems'] as List? ?? const []);
+                  final verified = planItems
+                      .where(
+                        (item) => item is Map && item['status'] == 'verified',
+                      )
+                      .length;
+                  final progress = planItems.isEmpty
+                      ? ''
+                      : ' · 计划 $verified/${planItems.length}';
+                  return '${agentCapabilityLabel(task['capability']?.toString())} · ${agentStageLabel(task['stage']?.toString())}$progress';
+                }(),
                 style: TextStyle(
                   color: agentStageColor(task['stage']?.toString()),
                 ),
