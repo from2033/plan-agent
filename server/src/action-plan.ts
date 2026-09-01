@@ -4,6 +4,7 @@ import { decField, encField } from "./crypto-field.js";
 import { embeddedResearchTopic, researchTopic } from "./intent.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
+db.exec("PRAGMA busy_timeout = 5000");
 db.exec(`
   CREATE TABLE IF NOT EXISTS agent_action_plans (
     task_id TEXT NOT NULL, user_id TEXT NOT NULL, version INTEGER NOT NULL,

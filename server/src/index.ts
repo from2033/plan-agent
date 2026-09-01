@@ -164,6 +164,18 @@ import {
 } from "./desktop-intake.js";
 import { getFinanceCategoryTransactions, getFinanceOverview, importAlipayBill } from "./finance.js";
 import {
+  addFeedbackAttachment,
+  createFeedbackTicket,
+  deleteFeedbackAccountData,
+  dueFeedbackTickets,
+  getFeedbackTicket,
+  listFeedbackTicketEvents,
+  listFeedbackTickets,
+  readFeedbackAttachment,
+  transitionFeedbackTicket,
+  type FeedbackTicket,
+} from "./feedback-tickets.js";
+import {
   buildWorldPulseDiscoveryInput,
   currentWorldPulseDiscovery,
   getWorldPulse,
@@ -699,6 +711,26 @@ app.get(`${WORKER_API}/jobs/:id/document`, requireWorker, (req, res) => {
   res.send(uploaded.content);
 });
 
+app.get(`${WORKER_API}/jobs/:id/feedback-attachments/:attachmentId`, requireWorker, (req, res) => {
+  const leaseToken = req.header("x-job-lease") || "";
+  const job = getLeasedAiJob(req.params.id, leaseToken);
+  const attachmentIds = job && (job.kind === "feedback_triage" || job.kind === "feedback_repair")
+    ? ((job.input as { attachmentIds?: unknown }).attachmentIds as unknown[] | undefined) || []
+    : [];
+  if (!job || !attachmentIds.includes(req.params.attachmentId)) {
+    res.status(409).json({ error: "invalid_or_expired_lease" });
+    return;
+  }
+  const uploaded = readFeedbackAttachment(req.params.attachmentId, job.userId, PRIMARY_USER);
+  if (!uploaded) {
+    res.status(404).json({ error: "feedback_attachment_not_found" });
+    return;
+  }
+  res.setHeader("content-type", uploaded.attachment.mimeType);
+  res.setHeader("x-file-name-b64", Buffer.from(uploaded.attachment.fileName, "utf8").toString("base64"));
+  res.send(uploaded.content);
+});
+
 const LocalDocumentRegistrationSchema = z.object({
   userId: z.string().min(1).max(320),
   spaceId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -929,6 +961,68 @@ function shanghaiMinuteOfDay(now: Date): number {
   return value("hour") * 60 + value("minute");
 }
 
+function feedbackJobInput(ticket: FeedbackTicket): Record<string, unknown> {
+  return {
+    ticketId: ticket.id,
+    title: ticket.title,
+    description: ticket.description,
+    sourceTaskId: ticket.sourceTaskId,
+    attachmentIds: ticket.attachments.map(item => item.id),
+    plan: ticket.plan,
+    acceptanceChecks: ticket.acceptanceChecks,
+    previousResolution: ticket.resolution,
+    attempt: ticket.attempts + 1,
+  };
+}
+
+function queueFeedbackTriage(ticket: FeedbackTicket): FeedbackTicket {
+  const job = enqueueAiJob(ticket.userId, "feedback_triage", feedbackJobInput(ticket), 120);
+  return transitionFeedbackTicket(
+    ticket.id,
+    "triaging",
+    "triage_started",
+    "Agent 已开始分析反馈、截图和关联任务",
+    { jobId: job.id, incrementAttempts: true, nextAttemptAt: null },
+  )!;
+}
+
+function queueFeedbackRepair(ticket: FeedbackTicket): FeedbackTicket {
+  const job = enqueueAiJob(ticket.userId, "feedback_repair", feedbackJobInput(ticket), 125);
+  const updated = transitionFeedbackTicket(
+    ticket.id,
+    "processing",
+    "repair_started",
+    "方案已确认，Agent 开始修复并运行验收",
+    { jobId: job.id, incrementAttempts: true, nextAttemptAt: null, confirmationQuestion: null },
+  )!;
+  const task = updated.agentTaskId ? getPersistentAgentTask(updated.agentTaskId, updated.userId) : null;
+  if (task?.stage === "awaiting_confirmation" || task?.stage === "retrying" || task?.stage === "follow_up") {
+    transitionPersistentAgentTask(updated.userId, task.id, "executing", "feedback_repair_started");
+  }
+  return updated;
+}
+
+function deferFeedbackTicket(ticket: FeedbackTicket, reason: string, minutes: number): FeedbackTicket {
+  const delayMinutes = Math.min(10_080, Math.max(15, minutes || 360));
+  const nextAttemptAt = new Date(Date.now() + delayMinutes * 60_000).toISOString();
+  const updated = transitionFeedbackTicket(
+    ticket.id,
+    "deferred",
+    "retry_scheduled",
+    `${reason}；Agent 将在资源恢复后自动续办`,
+    { nextAttemptAt },
+  )!;
+  const task = updated.agentTaskId ? getPersistentAgentTask(updated.agentTaskId, updated.userId) : null;
+  if (task?.stage === "executing") {
+    transitionPersistentAgentTask(updated.userId, task.id, "follow_up", "feedback_retry_scheduled", { nextAttemptAt });
+  }
+  return updated;
+}
+
+function wakeDueFeedbackWork(now = new Date()): FeedbackTicket[] {
+  return dueFeedbackTickets(now).map(ticket => ticket.plan ? queueFeedbackRepair(ticket) : queueFeedbackTriage(ticket));
+}
+
 async function ensureScheduledWorldDiscovery(now = new Date()): Promise<void> {
   if (worldDiscoveryScheduling || !codexQueueEnabled() || shanghaiMinuteOfDay(now) < WORLD_DISCOVERY_MINUTE) return;
   const dayKey = shanghaiDate(now.toISOString());
@@ -960,6 +1054,80 @@ function scheduledDateFor(
 }
 
 function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
+  if (job.kind === "feedback_triage") {
+    const ticketId = String((job.input as { ticketId?: unknown })?.ticketId || "");
+    const ticket = getFeedbackTicket(ticketId, job.userId, PRIMARY_USER);
+    if (!ticket || ticket.status !== "triaging") throw new Error("feedback_ticket_missing_or_stale");
+    const triage = value as {
+      proposedPlan: string[]; acceptanceChecks: string[]; canAutoRepair: boolean;
+      needsConfirmation: boolean; confirmationQuestion: string; riskLevel: string;
+    };
+    const needsConfirmation = triage.needsConfirmation || !triage.canAutoRepair || triage.riskLevel !== "low";
+    if (needsConfirmation) {
+      const updated = transitionFeedbackTicket(
+        ticket.id,
+        "awaiting_confirmation",
+        "confirmation_requested",
+        "Agent 已形成处理方案，等待主账号确认",
+        {
+          plan: value,
+          acceptanceChecks: triage.acceptanceChecks,
+          confirmationQuestion: triage.confirmationQuestion || "是否同意 Agent 按此方案继续处理？",
+        },
+      )!;
+      const task = updated.agentTaskId ? getPersistentAgentTask(updated.agentTaskId, updated.userId) : null;
+      if (task?.stage === "executing") {
+        transitionPersistentAgentTask(updated.userId, task.id, "awaiting_confirmation", "feedback_plan_needs_confirmation", value);
+      }
+    } else {
+      const planned = transitionFeedbackTicket(
+        ticket.id,
+        "processing",
+        "auto_repair_approved",
+        "低风险修复已通过策略检查，Agent 将自动处理",
+        { plan: value, acceptanceChecks: triage.acceptanceChecks },
+      )!;
+      queueFeedbackRepair(planned);
+    }
+    return value;
+  }
+  if (job.kind === "feedback_repair") {
+    const ticketId = String((job.input as { ticketId?: unknown })?.ticketId || "");
+    const ticket = getFeedbackTicket(ticketId, job.userId, PRIMARY_USER);
+    if (!ticket || ticket.status !== "processing") throw new Error("feedback_ticket_missing_or_stale");
+    const result = value as {
+      outcome: "resolved" | "needs_confirmation" | "deferred" | "failed";
+      summary: string; needsConfirmation: boolean; confirmationQuestion: string;
+      retryAfterMinutes: number; errorKind: string;
+    };
+    if (result.outcome === "resolved") {
+      const verifying = transitionFeedbackTicket(
+        ticket.id, "verifying", "repair_finished", "修复已完成，正在执行工单验收", { resolution: value },
+      )!;
+      const resolved = transitionFeedbackTicket(
+        verifying.id, "resolved", "acceptance_passed", "工单已通过验收，不再需要继续处理", { resolution: value },
+      )!;
+      const task = resolved.agentTaskId ? getPersistentAgentTask(resolved.agentTaskId, resolved.userId) : null;
+      if (task?.stage === "executing") transitionPersistentAgentTask(resolved.userId, task.id, "verifying", "feedback_repair_ready", value);
+      if (getPersistentAgentTask(resolved.agentTaskId || "", resolved.userId)?.stage === "verifying") {
+        verifyPersistentAgentTask(resolved.userId, resolved.agentTaskId!, value);
+      }
+    } else if (result.outcome === "needs_confirmation" || result.needsConfirmation || result.errorKind === "blocked") {
+      const updated = transitionFeedbackTicket(
+        ticket.id, "awaiting_confirmation", "repair_blocked", result.summary,
+        { resolution: value, confirmationQuestion: result.confirmationQuestion || "处理遇到新的选择，请确认下一步方案。" },
+      )!;
+      const task = updated.agentTaskId ? getPersistentAgentTask(updated.agentTaskId, updated.userId) : null;
+      if (task?.stage === "executing") transitionPersistentAgentTask(updated.userId, task.id, "awaiting_confirmation", "feedback_repair_needs_confirmation", value);
+    } else {
+      deferFeedbackTicket(
+        ticket,
+        result.errorKind === "quota" ? "本次处理额度不足" : result.summary,
+        result.retryAfterMinutes || (result.errorKind === "quota" ? 360 : 60),
+      );
+    }
+    return value;
+  }
   if (job.kind === "world_discovery") {
     const dayKey = String((job.input as { dayKey?: unknown }).dayKey || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
@@ -1307,6 +1475,15 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
     }
   }
   const current = leased ? getAiJob(leased.id, leased.userId) : null;
+  if (leased && current?.status === "FAILED" && (leased.kind === "feedback_triage" || leased.kind === "feedback_repair")) {
+    const ticketId = String((leased.input as { ticketId?: unknown })?.ticketId || "");
+    const ticket = getFeedbackTicket(ticketId, leased.userId, PRIMARY_USER);
+    if (ticket && !["closed", "resolved"].includes(ticket.status)) {
+      const reason = current.error || "feedback_worker_failed";
+      const quota = /usage|limit|quota|credit|429/i.test(reason);
+      deferFeedbackTicket(ticket, quota ? "本次处理额度不足" : "后台处理暂时失败", quota ? 360 : 60);
+    }
+  }
   if (leased && current?.status === "FAILED") {
     failAiInteraction(leased.userId, leased.id);
     const agentTaskId = String((leased.input as { agentTaskId?: unknown })?.agentTaskId || "");
@@ -1735,6 +1912,7 @@ app.delete(`${API}/account`, (req, res) => {
     deleteUserDocuments(req.userId!);
     deleteFamilyAccountData(req.userId!);
     deleteConversationAccountData(req.userId!);
+    deleteFeedbackAccountData(req.userId!);
     deleteAccountData(req.userId!);
     res.status(204).end();
   } catch (error) {
@@ -1922,6 +2100,128 @@ app.get(`${API}/agent/quality`, (req, res) => {
 app.get(`${API}/agent/failure-samples`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
   res.json(listAgentFailureSamples(req.userId!, Number(req.query.limit || 50)));
+});
+
+const FeedbackTicketSchema = z.object({
+  title: z.string().trim().min(2).max(160),
+  description: z.string().trim().min(2).max(10_000),
+  sourceTaskId: z.string().uuid().optional(),
+  priority: z.enum(["low", "normal", "high"]).default("normal"),
+});
+const FEEDBACK_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/heic", "image/heif"]);
+
+app.get(`${API}/feedback/tickets`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.json([]); return; }
+  res.json(listFeedbackTickets(req.userId!, PRIMARY_USER));
+});
+
+app.post(`${API}/feedback/tickets`, (req, res) => {
+  if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录后再提交反馈" }); return; }
+  const parsed = FeedbackTicketSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "请填写反馈标题和详细说明" }); return; }
+  if (parsed.data.sourceTaskId && !getPersistentAgentTask(parsed.data.sourceTaskId, req.userId!)) {
+    res.status(404).json({ error: "关联的 Agent 任务不存在" }); return;
+  }
+  res.status(201).json(createFeedbackTicket(req.userId!, parsed.data));
+});
+
+app.post(
+  `${API}/feedback/tickets/:id/attachments`,
+  express.raw({ type: () => true, limit: "16mb" }),
+  (req, res) => {
+    if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录" }); return; }
+    const mimeType = String(req.header("content-type") || "").split(";")[0].toLowerCase();
+    const fileName = Buffer.from(String(req.header("x-file-name-b64") || ""), "base64").toString("utf8").trim();
+    const content = req.body as Buffer;
+    if (!FEEDBACK_IMAGE_TYPES.has(mimeType) || !fileName || !content?.length) {
+      res.status(400).json({ error: "仅支持 JPG、PNG、HEIC 截图" }); return;
+    }
+    try {
+      const attachment = addFeedbackAttachment(req.userId!, req.params.id, fileName, mimeType, content);
+      if (!attachment) { res.status(409).json({ error: "工单不存在、已提交或不属于当前账号" }); return; }
+      res.status(201).json(attachment);
+    } catch (error) {
+      res.status(error instanceof Error && error.message === "feedback_attachment_limit" ? 409 : 500)
+        .json({ error: error instanceof Error && error.message === "feedback_attachment_limit" ? "每张工单最多添加 9 张截图" : "截图保存失败" });
+    }
+  },
+);
+
+app.post(`${API}/feedback/tickets/:id/submit`, (req, res) => {
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  if (!ticket || ticket.userId !== req.userId!) { res.status(404).json({ error: "工单不存在" }); return; }
+  if (ticket.status !== "draft") { res.json(ticket); return; }
+  const task = createPersistentAgentTask(
+    ticket.userId,
+    "feedback_ticket",
+    { title: ticket.title, description: ticket.description, ticketId: ticket.id, attachmentIds: ticket.attachments.map(item => item.id) },
+    "feedback",
+    ticket.id,
+  );
+  transitionPersistentAgentTask(ticket.userId, task.id, "classified", "feedback_received");
+  transitionPersistentAgentTask(ticket.userId, task.id, "extracted", "feedback_goal_extracted");
+  transitionPersistentAgentTask(ticket.userId, task.id, "executing", "feedback_triage_started");
+  const submitted = transitionFeedbackTicket(
+    ticket.id, "submitted", "submitted", "反馈已提交，Agent 将持续跟踪直到解决或明确关闭", { agentTaskId: task.id },
+  )!;
+  if (!codexWorkerOnline()) {
+    res.status(202).json(deferFeedbackTicket(submitted, "后台处理服务暂时离线", 30));
+    return;
+  }
+  res.status(202).json(queueFeedbackTriage(submitted));
+});
+
+app.get(`${API}/feedback/tickets/:id`, (req, res) => {
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  if (!ticket) { res.status(404).json({ error: "工单不存在" }); return; }
+  res.json({
+    ...ticket,
+    canConfirm: req.userId === PRIMARY_USER,
+    events: listFeedbackTicketEvents(ticket.id, req.userId!, PRIMARY_USER),
+  });
+});
+
+app.get(`${API}/feedback/tickets/:id/attachments/:attachmentId`, (req, res) => {
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  if (!ticket || !ticket.attachments.some(item => item.id === req.params.attachmentId)) {
+    res.status(404).json({ error: "截图不存在" }); return;
+  }
+  const attachment = readFeedbackAttachment(req.params.attachmentId, req.userId!, PRIMARY_USER);
+  if (!attachment) { res.status(404).json({ error: "截图不存在" }); return; }
+  res.setHeader("content-type", attachment.attachment.mimeType);
+  res.send(attachment.content);
+});
+
+app.post(`${API}/feedback/tickets/:id/confirm`, (req, res) => {
+  if (req.userId !== PRIMARY_USER) { res.status(403).json({ error: "只有主账号可以确认处理方案" }); return; }
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  if (!ticket) { res.status(404).json({ error: "工单不存在" }); return; }
+  if (["processing", "verifying", "resolved", "closed"].includes(ticket.status)) { res.json(ticket); return; }
+  if (ticket.status !== "awaiting_confirmation") { res.status(409).json({ error: "当前工单不在等待确认状态" }); return; }
+  if (!codexWorkerOnline()) { res.status(202).json(deferFeedbackTicket(ticket, "后台处理服务暂时离线", 30)); return; }
+  res.status(202).json(queueFeedbackRepair(ticket));
+});
+
+app.post(`${API}/feedback/tickets/:id/retry`, (req, res) => {
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  if (!ticket || (ticket.userId !== req.userId && req.userId !== PRIMARY_USER)) {
+    res.status(404).json({ error: "工单不存在" }); return;
+  }
+  if (!["deferred", "failed", "resolved"].includes(ticket.status)) {
+    res.status(409).json({ error: "当前工单不能重试" }); return;
+  }
+  if (!codexWorkerOnline()) { res.status(202).json(deferFeedbackTicket(ticket, "后台处理服务暂时离线", 30)); return; }
+  res.status(202).json(ticket.plan ? queueFeedbackRepair(ticket) : queueFeedbackTriage(ticket));
+});
+
+app.post(`${API}/feedback/tickets/:id/close`, (req, res) => {
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  if (!ticket || (ticket.userId !== req.userId && req.userId !== PRIMARY_USER)) {
+    res.status(404).json({ error: "工单不存在" }); return;
+  }
+  if (ticket.status === "closed") { res.json(ticket); return; }
+  const closed = transitionFeedbackTicket(ticket.id, "closed", "closed_by_user", "用户明确确认工单不再需要继续处理");
+  res.json(closed);
 });
 app.get(`${API}/agent/tasks`, (req, res) => {
   if (isGuestUser(req.userId)) { res.json([]); return; }
@@ -3230,9 +3530,11 @@ tomorrowBriefTimer.unref();
 
 // 主动闭环：唤醒到期跟进，并把长时间无进展的任务转成可见失败，禁止静默卡住。
 wakeDueAgentFollowUps();
+wakeDueFeedbackWork();
 auditStaleAgentTasks();
 const agentFollowUpTimer = setInterval(() => {
   wakeDueAgentFollowUps();
+  wakeDueFeedbackWork();
   auditStaleAgentTasks();
 }, 60_000);
 agentFollowUpTimer.unref();

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'api_client.dart';
+import 'feedback_center_page.dart';
 
 String agentCapabilityLabel(String? capability) => switch (capability) {
   'input_orchestration' => '计划型 Agent',
@@ -16,6 +17,7 @@ String agentCapabilityLabel(String? capability) => switch (capability) {
   'research' => '研究',
   'qq_task_sync' => 'QQ 群同步',
   'desktop_action' => '电脑操作',
+  'feedback_ticket' => '反馈工单',
   _ => capability ?? 'Agent 任务',
 };
 
@@ -299,45 +301,15 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
   }
 
   Future<void> reportProblem() async {
-    final controller = TextEditingController();
-    final description = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('告诉 Agent 哪里不对'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          minLines: 3,
-          maxLines: 6,
-          decoration: const InputDecoration(hintText: '例如：漏掉了第二份资料里的截止时间'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('提交'),
-          ),
-        ],
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => NewFeedbackTicketPage(api: widget.api, sourceTaskId: widget.taskId),
       ),
     );
-    controller.dispose();
-    if (description == null || description.length < 2) return;
-    setState(() => busy = true);
-    try {
-      await widget.api.correctAgentTask(widget.taskId, description);
-      await load();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('已记录问题，并立即交给 Agent 重新处理')));
-      }
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    } finally {
-      if (mounted) setState(() => busy = false);
+    if (created == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('反馈工单已创建，Agent 会持续跟踪处理')),
+      );
     }
   }
 

@@ -16,6 +16,7 @@ import 'conversation_page.dart';
 import 'desktop_pairing_page.dart';
 import 'document_audio_player.dart';
 import 'finance_page.dart';
+import 'feedback_center_page.dart';
 import 'models.dart';
 import 'persistent_meeting_recorder.dart';
 import 'reminder_service.dart';
@@ -1308,6 +1309,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(_refreshAgentProgress());
   }
 
+  Future<void> _openFeedbackCenter() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => FeedbackCenterPage(api: widget.api)),
+    );
+    unawaited(_refreshAgentProgress());
+  }
+
   Future<void> _openAgentTask(String id) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -2062,6 +2070,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             'Agent 处理记录',
             '查看每次输入的处理、验收与失败原因',
             _openAgentHistory,
+          ),
+        if (!widget.isGuest)
+          _settingsTile(
+            Icons.feedback_outlined,
+            '反馈中心',
+            '提交多张截图，Agent 持续跟踪处理到关闭',
+            _openFeedbackCenter,
           ),
         _settingsTile(
           Icons.bar_chart_rounded,

@@ -7,6 +7,7 @@ import { recordAgentFailureSample } from "./agent-quality.js";
 import { getActionPlan, parentForPlanChild, updatePlanItemByChild } from "./action-plan.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
+db.exec("PRAGMA busy_timeout = 5000");
 db.exec(`
   CREATE TABLE IF NOT EXISTS agent_tasks (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, capability TEXT NOT NULL,
@@ -71,7 +72,7 @@ export function listChildAgentTasks(userId: string, parentTaskId: string): Persi
 export function transitionPersistentAgentTask(userId: string, id: string, toStage: AgentStage, reason: string, result?: unknown): PersistedAgentTask | null {
   const task = getPersistentAgentTask(id, userId); if (!task) return null;
   const allowed: Record<AgentStage, AgentStage[]> = {
-    received: ["classified", "failed"], classified: ["extracted", "failed"], extracted: ["awaiting_confirmation", "executing", "failed"], awaiting_confirmation: ["executing", "follow_up", "failed"], executing: ["verifying", "failed", "retrying"], verifying: ["verified", "failed"], verified: ["follow_up"], follow_up: ["executing", "awaiting_user"], failed: ["retrying", "awaiting_user", "follow_up"], retrying: ["executing", "failed"], awaiting_user: ["retrying", "follow_up"],
+    received: ["classified", "failed"], classified: ["extracted", "failed"], extracted: ["awaiting_confirmation", "executing", "failed"], awaiting_confirmation: ["executing", "follow_up", "failed"], executing: ["awaiting_confirmation", "follow_up", "verifying", "failed", "retrying"], verifying: ["verified", "failed"], verified: ["follow_up"], follow_up: ["executing", "awaiting_user"], failed: ["retrying", "awaiting_user", "follow_up"], retrying: ["executing", "failed"], awaiting_user: ["retrying", "follow_up"],
   };
   if (task.stage !== toStage && !allowed[task.stage].includes(toStage)) throw new Error(`agent_invalid_transition:${task.stage}->${toStage}`);
   const now = new Date().toISOString();

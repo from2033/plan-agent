@@ -10,7 +10,7 @@ db.exec("PRAGMA journal_mode = WAL");
 export const CODEX_QUEUE_PROTOCOL_VERSION = 11;
 export const CODEX_QUEUE_POLICY_VERSION = "2026-08-30.2";
 
-export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse" | "world_discovery" | "research";
+export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse" | "world_discovery" | "research" | "feedback_triage" | "feedback_repair";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
 
 export interface AiJob {
@@ -203,6 +203,30 @@ const ResearchResultSchema = z.object({
   researchedAt: z.string().min(1).max(40),
 });
 
+const FeedbackTriageResultSchema = z.object({
+  category: z.enum(["bug", "missing_feature", "wrong_result", "usability", "performance", "other"]),
+  summary: z.string().min(5).max(1_000),
+  diagnosis: z.string().min(5).max(4_000),
+  proposedPlan: z.array(z.string().min(2).max(500)).min(1).max(12),
+  acceptanceChecks: z.array(z.string().min(2).max(500)).min(1).max(12),
+  riskLevel: z.enum(["low", "medium", "high"]),
+  canAutoRepair: z.boolean(),
+  needsConfirmation: z.boolean(),
+  confirmationQuestion: z.string().max(1_000),
+});
+
+const FeedbackRepairResultSchema = z.object({
+  outcome: z.enum(["resolved", "needs_confirmation", "deferred", "failed"]),
+  summary: z.string().min(5).max(2_000),
+  changes: z.array(z.string().min(1).max(500)).max(30),
+  tests: z.array(z.string().min(1).max(500)).max(30),
+  commitHash: z.string().max(80).default(""),
+  needsConfirmation: z.boolean(),
+  confirmationQuestion: z.string().max(1_000),
+  retryAfterMinutes: z.number().int().min(0).max(10_080),
+  errorKind: z.enum(["none", "quota", "worker_offline", "temporary", "blocked", "validation"]),
+});
+
 export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "ingest") return IngestResultSchema.parse(value);
   if (kind === "correct") return CorrectResultSchema.parse(value);
@@ -212,6 +236,8 @@ export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "world_pulse") return WorldPulseResultSchema.parse(value);
   if (kind === "world_discovery") return WorldDiscoveryResultSchema.parse(value);
   if (kind === "research") return ResearchResultSchema.parse(value);
+  if (kind === "feedback_triage") return FeedbackTriageResultSchema.parse(value);
+  if (kind === "feedback_repair") return FeedbackRepairResultSchema.parse(value);
   return SummaryResultSchema.parse(value);
 }
 
@@ -445,7 +471,7 @@ export function completeAiJob(
   const currentJob = rowToJob(row);
   const result = finalize ? finalize(currentJob, validated) : validated;
   const now = new Date().toISOString();
-  const storedResult = row.kind === "document" || row.kind === "document_question" || row.kind === "document_note" || row.kind === "world_pulse" || row.kind === "world_discovery" || row.kind === "research"
+  const storedResult = row.kind === "document" || row.kind === "document_question" || row.kind === "document_note" || row.kind === "world_pulse" || row.kind === "world_discovery" || row.kind === "research" || row.kind === "feedback_triage" || row.kind === "feedback_repair"
     ? encField(JSON.stringify(result))
     : JSON.stringify(result);
   db.prepare(`UPDATE ai_jobs SET status='COMPLETE',result_json=?,lease_hash=NULL,lease_until=NULL,

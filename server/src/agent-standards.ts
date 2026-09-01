@@ -27,6 +27,28 @@ registerCapabilityStandard({
 });
 
 registerCapabilityStandard({
+  ...common({
+    capability: "feedback_ticket", version: "1.0", description: "反馈必须形成可追踪工单并持续处理到验收或明确关闭",
+    requiresConfirmation: false, allowedSideEffects: ["diagnose_feedback", "prepare_repair", "apply_approved_repair"], failurePolicy: "follow_up",
+    inputContract: "反馈标题、详细描述、可选关联任务和多张截图",
+    outputContract: "解决摘要、改动、测试、提交编号和验收结论",
+    confirmationPolicy: "低风险原任务重处理可自动执行；代码改动、高风险或不确定方案必须由主账号确认",
+    idempotencyRule: "同一工单同时只能存在一个有效后台处理任务，重复确认不得重复修复",
+    retryPolicy: "额度、服务离线和临时错误自动延期；恢复后按原工单续办",
+    followUpPolicy: "工单在解决、主账号明确关闭或确认无需继续前不得静默结束",
+  }),
+  acceptance: () => [{
+    id: "feedback-resolution-present", description: "反馈工单具有可核对的解决摘要和处理记录",
+    check: (result) => Boolean(String((result as { summary?: unknown })?.summary || "").trim().length >= 5
+      && Array.isArray((result as { changes?: unknown[] })?.changes)
+      && Array.isArray((result as { tests?: unknown[] })?.tests)),
+  }, {
+    id: "feedback-resolution-terminal", description: "工单处理结果明确标记为已解决",
+    check: (result) => (result as { outcome?: unknown })?.outcome === "resolved",
+  }],
+});
+
+registerCapabilityStandard({
   ...common({ capability: "date_resolution", version: "1.0", description: "相对或节日日期转换为可核对公历日期",
     requiresConfirmation: false, allowedSideEffects: [], failurePolicy: "awaiting_user", inputContract: "日期表达和当前日期",
     outputContract: "ISO 日期、原始表达和解析依据", confirmationPolicy: "无副作用自动执行", idempotencyRule: "表达+当前年份唯一",
