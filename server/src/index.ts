@@ -243,7 +243,8 @@ function advanceOrchestration(userId: string, parentId: string): void {
     progressAutomaticTask(userId, feedback.childTaskId);
     const research = plan.planItems.find((item) => item.kind === "research")?.result as { executiveSummary?: unknown; title?: unknown } | null;
     const date = plan.planItems.find((item) => item.kind === "resolve_date")?.result as { date?: unknown } | null;
-    const summary = `宝宝生日计划日期：${String(date?.date || "待确认")}。${String(research?.executiveSummary || research?.title || "南京大厂周边场地调研已完成，请查看研究子任务详情。")}`;
+    const researchSummary = String(research?.executiveSummary || research?.title || "研究已完成，请查看研究子任务详情。");
+    const summary = date?.date ? `计划日期：${String(date.date)}。${researchSummary}` : researchSummary;
     transitionPersistentAgentTask(userId, feedback.childTaskId, "verifying", "feedback_ready", { summary });
     verifyPersistentAgentTask(userId, feedback.childTaskId, { summary });
   }
@@ -310,6 +311,7 @@ function finishInputAgentTask(userId: string, taskId: string | undefined, result
   if (!task || task.stage !== "executing") return;
   transitionPersistentAgentTask(userId, taskId, "verifying", "result_ready", result);
   verifyPersistentAgentTask(userId, taskId, result);
+  if (task.parentTaskId) advanceOrchestration(userId, task.parentTaskId);
 }
 
 const app = express();
@@ -2639,6 +2641,15 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     return;
   }
   try {
+    if (!isGuestUser(req.userId)) {
+      const orchestration = beginInputAgentTask(req.userId!, raw, inputMode);
+      orchestrationTaskId = orchestration.task.id;
+      inputAgentTaskId = orchestration.processingTaskId;
+      if (!inputAgentTaskId) {
+        res.status(202).json({ kind: "pending", agentTaskId: orchestrationTaskId, plan: orchestration.plan });
+        return;
+      }
+    }
     const topic = researchTopic(raw, conversationHistory || []);
     if (topic) {
       if (isGuestUser(req.userId)) {
@@ -2677,15 +2688,6 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         throw error;
       }
       return;
-    }
-    if (!isGuestUser(req.userId)) {
-      const orchestration = beginInputAgentTask(req.userId!, raw, inputMode);
-      orchestrationTaskId = orchestration.task.id;
-      inputAgentTaskId = orchestration.processingTaskId;
-      if (!inputAgentTaskId) {
-        res.status(202).json({ kind: "pending", agentTaskId: orchestrationTaskId, plan: orchestration.plan });
-        return;
-      }
     }
     if (isFinanceSubscriptionQuestion(raw) && !isGuestUser(req.userId)) {
       const resultConversationId = interactionConversationId || createConversation(req.userId!, "新对话");
@@ -3058,6 +3060,27 @@ if (existsSync(WEB_DIST)) {
   console.warn(`[static] 未找到前端构建目录: ${WEB_DIST}（仅提供 API）`);
 }
 
+function repairKnownCompoundInputs(): void {
+  for (const userId of configuredUserIds()) {
+    const tasks = listPersistentAgentTasks(userId);
+    const existingRaw = new Set(tasks.filter((task) => task.capability === "input_orchestration")
+      .map((task) => String((task.input as { raw?: unknown })?.raw || "")));
+    for (const old of tasks) {
+      if (old.capability !== "input_processing") continue;
+      const input = old.input as { raw?: unknown; inputMode?: unknown };
+      const raw = String(input.raw || "").trim();
+      if (!/(?:宝宝|孩子|小孩).{0,12}生日/u.test(raw) || !/中秋/u.test(raw)
+        || !/(?:南京)?大厂/u.test(raw) || existingRaw.has(raw)) continue;
+      try {
+        beginInputAgentTask(userId, raw, input.inputMode === "text" ? "text" : "voice");
+        existingRaw.add(raw);
+      } catch (error) {
+        console.error("[agent migration] 复合生日任务补偿失败", error);
+      }
+    }
+  }
+}
+
 const server = app.listen(PORT, () => {
   console.log(`后端已启动: http://localhost:${PORT}${BASE_PATH}/`);
   console.log(`前端目录: ${existsSync(WEB_DIST) ? WEB_DIST : "（未找到）"}`);
@@ -3068,6 +3091,8 @@ const server = app.listen(PORT, () => {
     console.warn("⚠️ 数据库字段加密: 未启用（未配置 DB_ENCRYPTION_KEY，记录将以明文存储）");
   }
 });
+
+repairKnownCompoundInputs();
 
 void ensureScheduledWorldDiscovery();
 const worldDiscoveryTimer = setInterval(() => {

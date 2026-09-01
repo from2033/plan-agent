@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { decField, encField } from "./crypto-field.js";
+import { embeddedResearchTopic, researchTopic } from "./intent.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
 db.exec(`
@@ -66,6 +67,24 @@ export function buildActionPlan(raw: string, currentDate: string): { facts: stri
       }],
     };
   }
+  const directResearch = researchTopic(raw);
+  if (directResearch) return {
+    facts: [`用户明确要求研究：${directResearch}`], goals: [`完成并反馈${directResearch}的研究结果`],
+    actions: [{ kind: "research", capability: "research", title: `研究：${directResearch}`, instruction: directResearch,
+      evidence: raw, risk: "none", requiresConfirmation: false, required: true },
+    { kind: "feedback", capability: "feedback", title: "反馈研究结果", instruction: "汇总研究结论、来源和下一步建议",
+      evidence: raw, risk: "none", requiresConfirmation: false, required: true }],
+  };
+  const embeddedResearch = embeddedResearchTopic(raw);
+  if (embeddedResearch) return {
+    facts: [raw], goals: ["保存原始安排", `完成并反馈${embeddedResearch}的查询结果`],
+    actions: [{ kind: "process", capability: "input_processing", title: "记录原始安排", instruction: raw,
+      evidence: raw, risk: "internal", requiresConfirmation: false, required: true },
+    { kind: "research", capability: "research", title: `调研：${embeddedResearch}`, instruction: embeddedResearch,
+      evidence: embeddedResearch, risk: "none", requiresConfirmation: false, required: true },
+    { kind: "feedback", capability: "feedback", title: "汇总并反馈处理结果", instruction: "汇总记录和调研结果",
+      evidence: raw, risk: "none", requiresConfirmation: false, required: true }],
+  };
   return {
     facts: [raw], goals: ["完整处理用户输入"],
     actions: [{ kind: "process", capability: "input_processing", title: raw.slice(0, 80), instruction: raw, evidence: raw, risk: "none", requiresConfirmation: false, required: true }],
@@ -84,7 +103,8 @@ export function saveActionPlan(userId: string, taskId: string, raw: string, curr
     (id,task_id,user_id,plan_version,position,kind,capability,title,instruction,evidence,risk,requires_confirmation,required,status,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'planned',?,?)`);
   plan.actions.forEach((item, position) => {
-    const reused = previous?.planItems.find((old) => old.kind === item.kind && old.title === item.title && Boolean(old.childTaskId));
+    const reused = previous?.planItems.find((old) => old.kind === item.kind && old.title === item.title
+      && Boolean(old.childTaskId) && !["failed", "awaiting_user"].includes(old.status));
     const id = crypto.randomUUID();
     insert.run(id, taskId, userId, version, position, item.kind, item.capability,
       encField(item.title), encField(item.instruction), encField(item.evidence), item.risk, item.requiresConfirmation ? 1 : 0, item.required ? 1 : 0, now, now);

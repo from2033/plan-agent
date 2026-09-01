@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildActionPlan, getActionPlan, saveActionPlan, updatePlanItem } from "../src/action-plan.js";
+import { buildActionPlan, getActionPlan, linkPlanItem, saveActionPlan, updatePlanItem } from "../src/action-plan.js";
 import { createPersistentAgentTask, transitionPersistentAgentTask, verifyPersistentAgentTask } from "../src/agent-runtime.js";
 
 const birthdayRequest = "宝宝生日准备安排在中秋，你再去看下南京大厂周边有没有适合的地方";
@@ -39,4 +39,19 @@ test("计划全部逐项通过后父任务才能通过，并保持账号隔离",
   assert.equal(getActionPlan("other-user", task.id), null);
   transitionPersistentAgentTask(userId, task.id, "verifying", "all_children_verified", complete);
   assert.equal(verifyPersistentAgentTask(userId, task.id, complete)?.stage, "verified");
+});
+
+test("重新规划保留已完成和执行中的动作，但为失败动作创建新槽位", () => {
+  const userId = `plan-revision-${Date.now()}`;
+  const task = createPersistentAgentTask(userId, "input_orchestration", { title: birthdayRequest, raw: birthdayRequest });
+  const first = saveActionPlan(userId, task.id, birthdayRequest, "2026-09-01");
+  linkPlanItem(userId, first.planItems[0].id, "date-child", "verified");
+  linkPlanItem(userId, first.planItems[1].id, "todo-child", "verified");
+  linkPlanItem(userId, first.planItems[2].id, "research-child", "failed");
+  const second = saveActionPlan(userId, task.id, birthdayRequest, "2026-09-01");
+  assert.equal(second.planVersion, 2);
+  assert.equal(second.planItems[0].childTaskId, "date-child");
+  assert.equal(second.planItems[1].childTaskId, "todo-child");
+  assert.equal(second.planItems[2].childTaskId, null);
+  assert.equal(second.planItems[2].status, "planned");
 });

@@ -37,6 +37,8 @@ export function embeddedResearchTopic(raw: string): string | null {
     const festival = /中秋/u.test(raw) ? "中秋期间" : "";
     return `南京大厂周边${festival}适合宝宝生日家庭聚会的场地与方案`;
   }
+  const match = raw.match(/(?:看下|看一下|看看|查下|查一下|找下|找一下|了解下|了解一下)[，,：:\s]*(.{2,300})$/u);
+  if (match) return match[1].trim().replace(/[。！？!?]+$/u, "");
   return null;
 }
 
