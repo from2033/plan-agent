@@ -139,22 +139,29 @@ registerCapabilityStandard({
 
 registerCapabilityStandard({
   ...common({
-    capability: "reminder", version: "1.1", description: "确认后创建带有效时间的提醒条目",
+    capability: "reminder", version: "1.2", description: "确认后创建日期正确、可验收的提醒条目",
     requiresConfirmation: true, allowedSideEffects: ["create_reminder"], failurePolicy: "awaiting_user",
-    inputContract: "提醒标题、description 和 ISO reminderAt",
-    outputContract: "数据库 memo 条目和有效 reminderAt",
+    inputContract: "提醒标题、description、ISO reminderAt，以及无日期时的当前日期/时间上下文",
+    outputContract: "数据库 memo 条目、有效 reminderAt 和系统闹钟结果",
     confirmationPolicy: "创建系统提醒前必须确认",
     idempotencyRule: "同一 Agent 任务只允许创建一次提醒",
-    retryPolicy: "权限失败不静默，保留任务供重试",
-    followUpPolicy: "权限拒绝或时间无效时提示用户修正",
+    retryPolicy: "权限失败不静默，保留任务供重试；日期错误时按原文和当前时间重新计算",
+    followUpPolicy: "权限拒绝、时间无效或日期不一致时提示用户修正并保留失败原因",
   }),
-  acceptance: () => [{
+  acceptance: (input) => [{
     id: "reminder-persisted", description: "提醒条目已写入并包含有效提醒时间",
     check: (result) => {
       const value = result as { id?: string; type?: string; reminderAt?: string; done?: boolean } | null;
-      return Boolean(value?.id && value.type === "memo" && value.done === false
-        && value.reminderAt && !Number.isNaN(new Date(value.reminderAt).getTime()));
+      if (!value || !Boolean(value.id && value.type === "memo" && value.done === false
+        && value.reminderAt && !Number.isNaN(new Date(value.reminderAt).getTime()))) return false;
+      const expectedDate = String((input as { expectedDate?: unknown }).expectedDate || "").trim();
+      return !expectedDate || new Date(value.reminderAt!).toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" }) === expectedDate;
     },
+  }, {
+    id: "reminder-action-preserved", description: "明确时间的用药行动保留为提醒而非普通活动",
+    check: (result) => String((input as { title?: unknown; details?: unknown }).title || "").match(/(?:拿药|取药|吃药|服药|喂药)/)
+      ? (result as { type?: string }).type === "memo"
+      : true,
   }],
 });
 
