@@ -129,13 +129,51 @@ def _group_name(event: dict, group_id: str) -> str:
     return str(event.get("group_name") or config.QQ_GROUP_NAMES.get(group_id) or f"QQ群 {group_id}")
 
 
+def _claim_assistant_sync(receipt_key: str) -> bool:
+    """Claim one outbound sync, retrying abandoned/failed attempts safely."""
+    now = int(time.time())
+    with db() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS assistant_sync_receipts ("
+            "receipt_key TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at INTEGER NOT NULL)"
+        )
+        # One statement makes the claim atomic across concurrent FastAPI
+        # requests. A claim abandoned by a process restart expires in 5 minutes.
+        claimed = conn.execute(
+            "INSERT INTO assistant_sync_receipts (receipt_key, status, updated_at) VALUES (?, 'in_progress', ?) "
+            "ON CONFLICT(receipt_key) DO UPDATE SET status='in_progress', updated_at=excluded.updated_at "
+            "WHERE assistant_sync_receipts.status != 'succeeded' "
+            "AND (assistant_sync_receipts.status != 'in_progress' OR assistant_sync_receipts.updated_at <= ?) "
+            "RETURNING receipt_key",
+            (receipt_key, now, now - 300),
+        ).fetchone()
+    return claimed is not None
+
+
+def _finish_assistant_sync(receipt_key: str, succeeded: bool) -> None:
+    with db() as conn:
+        if succeeded:
+            conn.execute(
+                "UPDATE assistant_sync_receipts SET status='succeeded', updated_at=? WHERE receipt_key=?",
+                (int(time.time()), receipt_key),
+            )
+        else:
+            # Network and downstream failures remain immediately retryable.
+            conn.execute(
+                "DELETE FROM assistant_sync_receipts WHERE receipt_key=? AND status='in_progress'",
+                (receipt_key,),
+            )
+
+
 async def _sync_assistant_task(
-    *, external_id: str, group_id: str, group_name: str,
+    *, receipt_key: str, external_id: str, group_id: str, group_name: str,
     sender: str, content: str, timestamp: Any,
-) -> None:
+) -> bool:
     """把原始群消息交给个人助手识别；失败不影响群消息采集。"""
     if not config.ASSISTANT_TASK_SYNC_URL or not config.ASSISTANT_TASK_SYNC_SECRET or not content:
-        return
+        return False
+    if not _claim_assistant_sync(receipt_key):
+        return True
     try:
         sent_at = datetime.fromtimestamp(int(timestamp), timezone.utc)
     except (TypeError, ValueError, OSError):
@@ -156,19 +194,25 @@ async def _sync_assistant_task(
                 headers={"X-Integration-Token": config.ASSISTANT_TASK_SYNC_SECRET},
             )
             response.raise_for_status()
+        _finish_assistant_sync(receipt_key, True)
+        return True
     except Exception as exc:  # noqa: BLE001
+        _finish_assistant_sync(receipt_key, False)
         log.warning("personal assistant task sync failed for %s: %s", external_id, exc)
+        return False
 
 
 async def _sync_assistant_media(
-    *, file_path: Path, file_name: str, external_id: str, group_id: str,
+    *, receipt_key: str, file_path: Path, file_name: str, external_id: str, group_id: str,
     group_name: str, sender: str, timestamp: Any,
-) -> None:
+) -> bool:
     """把 QQ 图片/文件送入个人助手的资料 OCR 与统一索引；失败不影响采集。"""
     if not config.ASSISTANT_TASK_SYNC_URL or not config.ASSISTANT_TASK_SYNC_SECRET:
-        return
+        return False
     if not file_path.exists() or file_path.stat().st_size > 20 * 1024 * 1024:
-        return
+        return False
+    if not _claim_assistant_sync(receipt_key):
+        return True
     try:
         sent_at = datetime.fromtimestamp(int(timestamp), timezone.utc)
     except (TypeError, ValueError, OSError):
@@ -199,8 +243,12 @@ async def _sync_assistant_media(
                     },
                 )
             response.raise_for_status()
+        _finish_assistant_sync(receipt_key, True)
+        return True
     except Exception as exc:  # noqa: BLE001
+        _finish_assistant_sync(receipt_key, False)
         log.warning("personal assistant media sync failed for %s: %s", external_id, exc)
+        return False
 
 
 async def _handle_group_upload(event: dict) -> dict:
@@ -234,9 +282,28 @@ async def _handle_group_upload(event: dict) -> dict:
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with db() as conn:
-        if conn.execute("SELECT id FROM downloads WHERE name = ? AND size_bytes = ?",
-                        (fname, int(size))).fetchone():
-            return {"status": "duplicate"}
+        duplicate = conn.execute(
+            "SELECT id, file_path FROM downloads WHERE name = ? AND size_bytes = ?",
+            (fname, int(size)),
+        ).fetchone()
+    if duplicate:
+        # 历史回填会重放已经下载过的文件；即使下载区已有记录，也要补送个人助手 OCR。
+        await _sync_assistant_task(
+            receipt_key=f"download:{duplicate['id']}:task",
+            external_id=f"file:{fid or duplicate['id']}", group_id=group_id,
+            group_name=group_name, sender=uploader_name or sender_id or "QQ群成员",
+            content=f"[群文件：{fname}]", timestamp=upload_ts,
+        )
+        existing_path = Path(str(duplicate["file_path"] or ""))
+        if existing_path.exists():
+            await _sync_assistant_media(
+                receipt_key=f"download:{duplicate['id']}:media",
+                file_path=existing_path, file_name=fname,
+                external_id=f"file:{fid or duplicate['id']}", group_id=group_id,
+                group_name=group_name, sender=uploader_name or sender_id or "QQ群成员",
+                timestamp=upload_ts,
+            )
+        return {"status": "duplicate", "id": duplicate["id"]}
 
     # 取下载直链
     url = finfo.get("url")
@@ -268,11 +335,13 @@ async def _handle_group_upload(event: dict) -> dict:
         )
         row_id = cur.lastrowid
     await _sync_assistant_task(
+        receipt_key=f"download:{row_id}:task",
         external_id=f"file:{fid or row_id}", group_id=group_id, group_name=group_name,
         sender=uploader_name or sender_id or "QQ群成员", content=f"[群文件：{fname}]",
         timestamp=upload_ts,
     )
     await _sync_assistant_media(
+        receipt_key=f"download:{row_id}:media",
         file_path=config.FILES_DIR / saved, file_name=fname,
         external_id=f"file:{fid or row_id}", group_id=group_id, group_name=group_name,
         sender=uploader_name or sender_id or "QQ群成员", timestamp=upload_ts,
@@ -344,14 +413,29 @@ async def receive_event(
 
     with db() as conn:
         exists = conn.execute(
-            "SELECT id FROM messages WHERE source = 'onebot' AND external_id = ?",
+            "SELECT id, images_json FROM messages WHERE source = 'onebot' AND external_id = ?",
             (external_id,),
         ).fetchone()
         if exists:
             await _sync_assistant_task(
+                receipt_key=f"message:{exists['id']}:task",
                 external_id=external_id, group_id=group_id, group_name=group_name,
                 sender=teacher, content=content, timestamp=timestamp,
             )
+            try:
+                existing_images = json.loads(exists["images_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                existing_images = []
+            for image_url in existing_images:
+                image_name = Path(str(image_url)).name
+                image_path = config.UPLOAD_DIR / image_name
+                if image_name and image_path.exists():
+                    await _sync_assistant_media(
+                        receipt_key=f"message:{exists['id']}:media:{image_name}",
+                        file_path=image_path, file_name=image_name,
+                        external_id=f"{external_id}:image:{image_name}", group_id=group_id,
+                        group_name=group_name, sender=teacher, timestamp=timestamp,
+                    )
             return {"status": "duplicate", "id": exists["id"]}
 
     # 下载图片到 /uploads
@@ -384,11 +468,13 @@ async def receive_event(
 
     sync_content = content or " ".join(f"[图片附件：{name}]" for _, name in downloaded_images)
     await _sync_assistant_task(
+        receipt_key=f"message:{row_id}:task",
         external_id=external_id, group_id=group_id, group_name=group_name,
         sender=teacher, content=sync_content, timestamp=timestamp,
     )
     for image_path, image_name in downloaded_images:
         await _sync_assistant_media(
+            receipt_key=f"message:{row_id}:media:{image_name}",
             file_path=image_path, file_name=image_name,
             external_id=f"{external_id}:image:{image_name}", group_id=group_id,
             group_name=group_name, sender=teacher, timestamp=timestamp,
