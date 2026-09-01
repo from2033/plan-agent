@@ -82,4 +82,57 @@ void main() {
     expect(find.text('是否同意修改验收标准并重新处理？'), findsOneWidget);
     expect(find.text('Agent 已形成处理方案，等待主账号确认'), findsOneWidget);
   });
+
+  testWidgets('已解决工单展示满意度闭环和可批准的标准提案', (tester) async {
+    final api = ApiClient(
+      httpClient: MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'id': 'ticket-3',
+            'title': '日期依据错误',
+            'description': '不能只靠模型猜测',
+            'status': 'resolved',
+            'canConfirm': true,
+            'attachments': [],
+            'events': [],
+            'standardProposals': [
+              {
+                'id': 'proposal-1',
+                'capability': 'date_resolution',
+                'baseVersion': '1.0',
+                'candidateVersion': '1.0-evo.demo',
+                'status': 'ready',
+                'rationale': '要求日期依据包含官方来源',
+                'replay': {
+                  'ready': true,
+                  'negativeBlocked': 1,
+                  'negativeTotal': 1,
+                  'positivePassed': 3,
+                  'positiveTotal': 3,
+                  'fixturePassed': 2,
+                  'fixtureTotal': 2,
+                  'reasons': [],
+                },
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FeedbackTicketDetailPage(api: api, ticketId: 'ticket-3'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('确认已经解决'), findsOneWidget);
+    expect(find.text('仍有问题，让 Agent 继续处理并学习'), findsOneWidget);
+    expect(find.text('Agent 验收标准升级提案'), findsOneWidget);
+    expect(find.text('批准并仅用于新任务'), findsOneWidget);
+    expect(find.textContaining('负例拦截 1/1'), findsOneWidget);
+  });
 }

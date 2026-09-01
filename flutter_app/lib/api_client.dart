@@ -367,7 +367,10 @@ class ApiClient {
   Future<List<Map<String, dynamic>>> feedbackTickets() async {
     if (_isGuest) return const [];
     final value = await _request('GET', '/feedback/tickets') as List<dynamic>;
-    return value.whereType<Map>().map((item) => item.cast<String, dynamic>()).toList();
+    return value
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList();
   }
 
   Future<Map<String, dynamic>> createFeedbackTicket({
@@ -376,12 +379,18 @@ class ApiClient {
     String? sourceTaskId,
     String priority = 'normal',
   }) async =>
-      (await _request('POST', '/feedback/tickets', body: {
-        'title': title.trim(),
-        'description': description.trim(),
-        'priority': priority,
-        if (sourceTaskId?.isNotEmpty == true) 'sourceTaskId': sourceTaskId,
-      })) as Map<String, dynamic>;
+      (await _request(
+            'POST',
+            '/feedback/tickets',
+            body: {
+              'title': title.trim(),
+              'description': description.trim(),
+              'priority': priority,
+              if (sourceTaskId?.isNotEmpty == true)
+                'sourceTaskId': sourceTaskId,
+            },
+          ))
+          as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> uploadFeedbackAttachment({
     required String ticketId,
@@ -390,7 +399,9 @@ class ApiClient {
     required Uint8List bytes,
   }) async {
     final response = await _http.post(
-      Uri.parse('$apiBase/feedback/tickets/${Uri.encodeComponent(ticketId)}/attachments'),
+      Uri.parse(
+        '$apiBase/feedback/tickets/${Uri.encodeComponent(ticketId)}/attachments',
+      ),
       headers: {
         'content-type': mimeType,
         'x-file-name-b64': base64Encode(utf8.encode(fileName)),
@@ -402,28 +413,102 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> submitFeedbackTicket(String id) async =>
-      (await _request('POST', '/feedback/tickets/${Uri.encodeComponent(id)}/submit')) as Map<String, dynamic>;
+      (await _request(
+            'POST',
+            '/feedback/tickets/${Uri.encodeComponent(id)}/submit',
+          ))
+          as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> feedbackTicket(String id) async =>
-      (await _request('GET', '/feedback/tickets/${Uri.encodeComponent(id)}')) as Map<String, dynamic>;
+      (await _request('GET', '/feedback/tickets/${Uri.encodeComponent(id)}'))
+          as Map<String, dynamic>;
 
-  Future<Uint8List> feedbackAttachment(String ticketId, String attachmentId) async {
+  Future<Uint8List> feedbackAttachment(
+    String ticketId,
+    String attachmentId,
+  ) async {
     final response = await _send(
       'GET',
       '/feedback/tickets/${Uri.encodeComponent(ticketId)}/attachments/${Uri.encodeComponent(attachmentId)}',
     );
-    if (response.statusCode < 200 || response.statusCode >= 300) _decode(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _decode(response);
+    }
     return response.bodyBytes;
   }
 
   Future<Map<String, dynamic>> confirmFeedbackTicket(String id) async =>
-      (await _request('POST', '/feedback/tickets/${Uri.encodeComponent(id)}/confirm')) as Map<String, dynamic>;
+      (await _request(
+            'POST',
+            '/feedback/tickets/${Uri.encodeComponent(id)}/confirm',
+          ))
+          as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> retryFeedbackTicket(String id) async =>
-      (await _request('POST', '/feedback/tickets/${Uri.encodeComponent(id)}/retry')) as Map<String, dynamic>;
+      (await _request(
+            'POST',
+            '/feedback/tickets/${Uri.encodeComponent(id)}/retry',
+          ))
+          as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> closeFeedbackTicket(String id) async =>
-      (await _request('POST', '/feedback/tickets/${Uri.encodeComponent(id)}/close')) as Map<String, dynamic>;
+      (await _request(
+            'POST',
+            '/feedback/tickets/${Uri.encodeComponent(id)}/close',
+          ))
+          as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> satisfyFeedbackTicket(String id) async =>
+      (await _request(
+            'POST',
+            '/feedback/tickets/${Uri.encodeComponent(id)}/satisfied',
+          ))
+          as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> reopenFeedbackTicket(
+    String id,
+    String description,
+  ) async =>
+      (await _request(
+            'POST',
+            '/feedback/tickets/${Uri.encodeComponent(id)}/unsatisfied',
+            body: {'description': description.trim()},
+          ))
+          as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> standardProposal(
+    String ticketId,
+    String proposalId,
+  ) async =>
+      (await _request(
+            'GET',
+            '/feedback/tickets/${Uri.encodeComponent(ticketId)}/standard-proposals/${Uri.encodeComponent(proposalId)}',
+          ))
+          as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> approveStandardProposal(
+    String ticketId,
+    String proposalId,
+  ) async =>
+      (await _request(
+            'POST',
+            '/feedback/tickets/${Uri.encodeComponent(ticketId)}/standard-proposals/${Uri.encodeComponent(proposalId)}/approve',
+          ))
+          as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> rejectStandardProposal(
+    String ticketId,
+    String proposalId,
+  ) async =>
+      (await _request(
+            'POST',
+            '/feedback/tickets/${Uri.encodeComponent(ticketId)}/standard-proposals/${Uri.encodeComponent(proposalId)}/reject',
+          ))
+          as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> agentQuality({int days = 30}) async =>
+      (await _request('GET', '/agent/quality?days=$days'))
+          as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> financeOverview({int months = 3}) async {
     return await _request('GET', '/finance/overview?months=$months')

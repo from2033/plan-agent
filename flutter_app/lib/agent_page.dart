@@ -74,6 +74,7 @@ class _AgentPageState extends State<AgentPage> {
   bool loading = true;
   String? error;
   List<Map<String, dynamic>> tasks = [];
+  Map<String, dynamic>? quality;
   Timer? refreshTimer;
   static const groups = <(String, String, IconData)>[
     ('awaiting_confirmation', '待确认', Icons.pan_tool_outlined),
@@ -115,6 +116,14 @@ class _AgentPageState extends State<AgentPage> {
           error = null;
         });
       }
+      if (!silent || quality == null) {
+        try {
+          final metrics = await widget.api.agentQuality();
+          if (mounted) setState(() => quality = metrics);
+        } catch (_) {
+          // 质量指标不阻断任务列表。
+        }
+      }
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     } finally {
@@ -142,6 +151,7 @@ class _AgentPageState extends State<AgentPage> {
             children: [
               if (error != null)
                 Text(error!, style: const TextStyle(color: Colors.red)),
+              if (quality != null) _qualityCard(quality!),
               if (tasks.isEmpty)
                 const Padding(
                   padding: EdgeInsets.only(top: 80),
@@ -173,6 +183,72 @@ class _AgentPageState extends State<AgentPage> {
             ],
           ),
         );
+
+  Widget _qualityCard(Map<String, dynamic> value) {
+    String rate(dynamic raw) =>
+        raw is num ? '${(raw * 100).toStringAsFixed(0)}%' : '暂无';
+    final versions = (value['versions'] as List? ?? const [])
+        .whereType<Map>()
+        .take(4)
+        .toList();
+    return Card(
+      elevation: 0,
+      color: const Color(0xfffffbeb),
+      margin: const EdgeInsets.only(bottom: 14),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Agent 质量 · 最近 30 天',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 18,
+              runSpacing: 10,
+              children: [
+                _metric('首次通过', rate(value['firstPassRate'])),
+                _metric('纠正率', rate(value['postPassCorrectionRate'])),
+                _metric('重试恢复', rate(value['retryRecoveryRate'])),
+                _metric('卡住任务', '${value['stuckTaskCount'] ?? 0}'),
+                _metric('重复副作用', rate(value['repeatedSideEffectRate'])),
+              ],
+            ),
+            if (versions.isNotEmpty) ...[
+              const Divider(height: 22),
+              for (final item in versions)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${agentCapabilityLabel(item['capability']?.toString())} @ ${item['version']}：${rate(item['passRate'])}（${item['total']} 次）',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _metric(String label, String value) => SizedBox(
+    width: 88,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+        ),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: Color(0xff78716c)),
+        ),
+      ],
+    ),
+  );
 
   List<Widget> _section((String, String, IconData) group) {
     final values = tasks.where((task) => task['stage'] == group.$1).toList();
@@ -303,13 +379,14 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
   Future<void> reportProblem() async {
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => NewFeedbackTicketPage(api: widget.api, sourceTaskId: widget.taskId),
+        builder: (_) =>
+            NewFeedbackTicketPage(api: widget.api, sourceTaskId: widget.taskId),
       ),
     );
     if (created == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('反馈工单已创建，Agent 会持续跟踪处理')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('反馈工单已创建，Agent 会持续跟踪处理')));
     }
   }
 
@@ -357,7 +434,9 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
                     _planCard(value),
                   ],
                   if (strings(value['passedChecks']).isNotEmpty ||
-                      strings(value['failedChecks']).isNotEmpty) ...[
+                      strings(value['failedChecks']).isNotEmpty ||
+                      (value['acceptanceDetails'] as List?)?.isNotEmpty ==
+                          true) ...[
                     const SizedBox(height: 12),
                     _acceptanceCard(value),
                   ],
@@ -473,12 +552,94 @@ class _AgentTaskDetailPageState extends State<AgentTaskDetailPage> {
     ),
   );
 
-  Widget _acceptanceCard(Map<String, dynamic> value) => _listCard('验收结果', [
-    for (final item in strings(value['passedChecks']))
-      (Icons.check_rounded, const Color(0xff267046), item),
-    for (final item in strings(value['failedChecks']))
-      (Icons.close_rounded, const Color(0xffb42318), item),
-  ]);
+  Widget _acceptanceCard(Map<String, dynamic> value) {
+    final details = (value['acceptanceDetails'] as List? ?? const [])
+        .whereType<Map>()
+        .toList();
+    if (details.isEmpty) {
+      return _listCard('验收结果', [
+        for (final item in strings(value['passedChecks']))
+          (Icons.check_rounded, const Color(0xff267046), item),
+        for (final item in strings(value['failedChecks']))
+          (Icons.close_rounded, const Color(0xffb42318), item),
+      ]);
+    }
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    '验收证据',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                Text(
+                  '验证器 v${value['validatorVersion'] ?? '-'}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xff8a8680),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final item in details)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 9),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      item['passed'] == true
+                          ? Icons.check_rounded
+                          : Icons.close_rounded,
+                      size: 18,
+                      color: item['passed'] == true
+                          ? const Color(0xff267046)
+                          : const Color(0xffb42318),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item['description']?.toString() ?? '',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          Text(
+                            item['reason']?.toString() ?? '',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xff78716c),
+                            ),
+                          ),
+                          if (item['expected'] != null ||
+                              item['actual'] != null)
+                            Text(
+                              '期望：${item['expected'] ?? '-'} · 实际：${item['actual'] ?? '-'}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xff8a8680),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _planCard(Map<String, dynamic> value) {
     final items = (value['planItems'] as List? ?? const [])

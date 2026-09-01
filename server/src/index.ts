@@ -142,6 +142,19 @@ import { registeredCapabilities } from "./agent-contract.js";
 import { getActionPlan, linkPlanItem, resolveMidAutumnDate, saveActionPlan } from "./action-plan.js";
 import { agentQualityAudit, listAgentFailureSamples, recordAgentFailureSample } from "./agent-quality.js";
 import {
+  approveStandardProposal,
+  auditActiveAcceptanceStandards,
+  createStandardProposal,
+  deleteAcceptanceEvolutionAccountData,
+  getStandardProposal,
+  hydrateActiveAcceptanceStandards,
+  listStandardProposalEvents,
+  proposalJobInput,
+  recordActiveStandardRegression,
+  rejectStandardProposal,
+  standardProposalsForTicket,
+} from "./acceptance-evolution.js";
+import {
   deleteMistake,
   insertMistake,
   listMistakes,
@@ -205,6 +218,8 @@ const DOCUMENT_MIME_TYPES = new Set([
   "audio/wav",
   "audio/x-wav",
 ]);
+
+hydrateActiveAcceptanceStandards();
 
 function isFinanceSubscriptionQuestion(raw: string): boolean {
   return /(账单|消费|支出|支付宝)/.test(raw)
@@ -1054,6 +1069,23 @@ function scheduledDateFor(
 }
 
 function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
+  if (job.kind === "standard_evolution") {
+    const input = job.input as { ticketId?: unknown; capability?: unknown; baseVersion?: unknown };
+    const result = value as {
+      capability: string; baseVersion: string; rationale: string; riskLevel: "low" | "medium" | "high";
+      rules: unknown; cases: Array<{ name:string; input:unknown; result:unknown; expectedPass:boolean }>;
+    };
+    if (result.capability !== input.capability || result.baseVersion !== input.baseVersion) {
+      throw new Error("standard_evolution_identity_mismatch");
+    }
+    const ticket = getFeedbackTicket(String(input.ticketId || ""), job.userId, PRIMARY_USER);
+    if (!ticket) throw new Error("standard_evolution_ticket_missing");
+    const proposal = createStandardProposal(job.userId, ticket.id, result);
+    transitionFeedbackTicket(ticket.id, ticket.status, "standard_proposal_ready",
+      proposal.status === "ready" ? "验收标准提案已通过影子回放，等待主账号批准" : "验收标准提案已生成，但历史证据不足，暂不能批准",
+      { resolution: ticket.resolution });
+    return proposal;
+  }
   if (job.kind === "feedback_triage") {
     const ticketId = String((job.input as { ticketId?: unknown })?.ticketId || "");
     const ticket = getFeedbackTicket(ticketId, job.userId, PRIMARY_USER);
@@ -1199,8 +1231,9 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const agentTaskId = String((job.input as { agentTaskId?: unknown })?.agentTaskId || "");
     const agentTask = agentTaskId ? getPersistentAgentTask(agentTaskId, job.userId) : null;
     if (agentTask?.stage === "executing") {
-      transitionPersistentAgentTask(job.userId, agentTask.id, "verifying", "research_report_ready", value);
-      verifyPersistentAgentTask(job.userId, agentTask.id, value);
+      const verifiedReport = { ...(value as Record<string, unknown>), documentId: reportId };
+      transitionPersistentAgentTask(job.userId, agentTask.id, "verifying", "research_report_ready", verifiedReport);
+      verifyPersistentAgentTask(job.userId, agentTask.id, verifiedReport);
       if (agentTask.parentTaskId) advanceOrchestration(job.userId, agentTask.parentTaskId);
     }
     return value;
@@ -1482,6 +1515,14 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
       const reason = current.error || "feedback_worker_failed";
       const quota = /usage|limit|quota|credit|429/i.test(reason);
       deferFeedbackTicket(ticket, quota ? "本次处理额度不足" : "后台处理暂时失败", quota ? 360 : 60);
+    }
+  }
+  if (leased && current?.status === "FAILED" && leased.kind === "standard_evolution") {
+    const ticketId = String((leased.input as { ticketId?: unknown })?.ticketId || "");
+    const ticket = getFeedbackTicket(ticketId, leased.userId, PRIMARY_USER);
+    if (ticket && ticket.status !== "closed") {
+      transitionFeedbackTicket(ticket.id, ticket.status, "standard_proposal_failed",
+        "验收标准提案暂时未能生成；这不会中断当前工单修复，失败证据已保留");
     }
   }
   if (leased && current?.status === "FAILED") {
@@ -1912,6 +1953,7 @@ app.delete(`${API}/account`, (req, res) => {
     deleteUserDocuments(req.userId!);
     deleteFamilyAccountData(req.userId!);
     deleteConversationAccountData(req.userId!);
+    deleteAcceptanceEvolutionAccountData(req.userId!);
     deleteFeedbackAccountData(req.userId!);
     deleteAccountData(req.userId!);
     res.status(204).end();
@@ -2177,6 +2219,7 @@ app.get(`${API}/feedback/tickets/:id`, (req, res) => {
   res.json({
     ...ticket,
     canConfirm: req.userId === PRIMARY_USER,
+    standardProposals: standardProposalsForTicket(ticket.id, req.userId!, PRIMARY_USER),
     events: listFeedbackTicketEvents(ticket.id, req.userId!, PRIMARY_USER),
   });
 });
@@ -2212,6 +2255,70 @@ app.post(`${API}/feedback/tickets/:id/retry`, (req, res) => {
   }
   if (!codexWorkerOnline()) { res.status(202).json(deferFeedbackTicket(ticket, "后台处理服务暂时离线", 30)); return; }
   res.status(202).json(ticket.plan ? queueFeedbackRepair(ticket) : queueFeedbackTriage(ticket));
+});
+
+app.post(`${API}/feedback/tickets/:id/satisfied`, (req, res) => {
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  if (!ticket || ticket.userId !== req.userId) { res.status(404).json({ error: "工单不存在" }); return; }
+  if (ticket.status === "closed") { res.json(ticket); return; }
+  if (ticket.status !== "resolved") { res.status(409).json({ error: "只有已解决工单可以确认结果" }); return; }
+  res.json(transitionFeedbackTicket(ticket.id, "closed", "resolution_confirmed", "用户确认问题已经解决，工单正式关闭"));
+});
+
+const FeedbackUnsatisfiedSchema = z.object({ description: z.string().trim().min(2).max(2_000) });
+app.post(`${API}/feedback/tickets/:id/unsatisfied`, (req, res) => {
+  const parsed = FeedbackUnsatisfiedSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "请说明仍未解决的问题" }); return; }
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  if (!ticket || ticket.userId !== req.userId) { res.status(404).json({ error: "工单不存在" }); return; }
+  if (ticket.status !== "resolved") { res.status(409).json({ error: "当前工单不能重新打开" }); return; }
+  const sourceTask = ticket.sourceTaskId ? getPersistentAgentTask(ticket.sourceTaskId, ticket.userId) : null;
+  const feedbackTask = ticket.agentTaskId ? getPersistentAgentTask(ticket.agentTaskId, ticket.userId) : null;
+  const learningTask = sourceTask || feedbackTask;
+  if (learningTask) {
+    recordAgentFailureSample(learningTask, "user_correction", parsed.data.description, learningTask.result);
+    recordActiveStandardRegression(
+      learningTask.capability,
+      learningTask.standardVersion,
+      /重复|多次|扣款|越权|泄露|安全|隐私|发错|删错/.test(parsed.data.description),
+    );
+    enqueueAiJob(ticket.userId, "standard_evolution", proposalJobInput(
+      ticket.userId, ticket.id, learningTask.capability, learningTask.standardVersion, parsed.data.description,
+    ), 115);
+  }
+  if (feedbackTask?.stage === "verified") {
+    transitionPersistentAgentTask(ticket.userId, feedbackTask.id, "follow_up", "feedback_user_reports_unresolved", parsed.data);
+  }
+  const reopened = transitionFeedbackTicket(
+    ticket.id, "processing", "user_reports_unresolved", `用户确认仍有问题：${parsed.data.description}`,
+    { confirmationQuestion: null },
+  )!;
+  if (!codexWorkerOnline()) { res.status(202).json(deferFeedbackTicket(reopened, "后台处理服务暂时离线", 30)); return; }
+  res.status(202).json(queueFeedbackRepair(reopened));
+});
+
+app.get(`${API}/feedback/tickets/:id/standard-proposals/:proposalId`, (req, res) => {
+  const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
+  const proposal = ticket ? getStandardProposal(req.params.proposalId, req.userId!, PRIMARY_USER) : null;
+  if (!proposal || proposal.ticketId !== req.params.id) { res.status(404).json({ error: "标准提案不存在" }); return; }
+  res.json({ ...proposal, canApprove: req.userId === PRIMARY_USER,
+    events: listStandardProposalEvents(proposal.id, req.userId!, PRIMARY_USER) });
+});
+
+app.post(`${API}/feedback/tickets/:id/standard-proposals/:proposalId/approve`, (req, res) => {
+  if (req.userId !== PRIMARY_USER) { res.status(403).json({ error: "只有主账号可以批准验收标准" }); return; }
+  const proposal = getStandardProposal(req.params.proposalId, req.userId!, PRIMARY_USER);
+  if (!proposal || proposal.ticketId !== req.params.id) { res.status(404).json({ error: "标准提案不存在" }); return; }
+  try { res.json(approveStandardProposal(proposal.id)); }
+  catch (error) { res.status(409).json({ error: error instanceof Error && error.message === "proposal_not_ready" ? "历史回放证据不足，暂不能批准" : "标准提案批准失败" }); }
+});
+
+app.post(`${API}/feedback/tickets/:id/standard-proposals/:proposalId/reject`, (req, res) => {
+  if (req.userId !== PRIMARY_USER) { res.status(403).json({ error: "只有主账号可以拒绝验收标准" }); return; }
+  const proposal = getStandardProposal(req.params.proposalId, req.userId!, PRIMARY_USER);
+  if (!proposal || proposal.ticketId !== req.params.id) { res.status(404).json({ error: "标准提案不存在" }); return; }
+  try { res.json(rejectStandardProposal(proposal.id)); }
+  catch { res.status(409).json({ error: "当前标准提案不能拒绝" }); }
 });
 
 app.post(`${API}/feedback/tickets/:id/close`, (req, res) => {
@@ -3532,10 +3639,25 @@ tomorrowBriefTimer.unref();
 wakeDueAgentFollowUps();
 wakeDueFeedbackWork();
 auditStaleAgentTasks();
+function auditAndReportAcceptanceRollbacks(): void {
+  for (const proposal of auditActiveAcceptanceStandards()) {
+    const ticket = createFeedbackTicket(proposal.userId, {
+      title: `验收标准 ${proposal.candidateVersion} 已自动回滚`,
+      description: `观察窗口发现安全或质量回归，${proposal.capability} 已恢复到 ${proposal.baseVersion}。请在此工单查看原因并决定后续方案。`,
+      priority: "high",
+    });
+    transitionFeedbackTicket(ticket.id, "resolved", "standard_auto_rollback",
+      "系统已自动回滚异常验收标准，避免继续影响新任务", {
+        resolution: { proposalId: proposal.id, rolledBackVersion: proposal.candidateVersion, restoredVersion: proposal.baseVersion },
+      });
+  }
+}
+auditAndReportAcceptanceRollbacks();
 const agentFollowUpTimer = setInterval(() => {
   wakeDueAgentFollowUps();
   wakeDueFeedbackWork();
   auditStaleAgentTasks();
+  auditAndReportAcceptanceRollbacks();
 }, 60_000);
 agentFollowUpTimer.unref();
 

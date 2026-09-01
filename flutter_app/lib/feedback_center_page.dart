@@ -426,6 +426,65 @@ class _FeedbackTicketDetailPageState extends State<FeedbackTicketDetailPage> {
     }
   }
 
+  Future<void> reportUnresolved() async {
+    final controller = TextEditingController();
+    final description = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('还有什么问题？'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 3,
+          maxLines: 7,
+          maxLength: 2000,
+          decoration: const InputDecoration(hintText: '说明仍不正确、遗漏或没有生效的地方'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (controller.text.trim().length >= 2) {
+                Navigator.pop(context, controller.text.trim());
+              }
+            },
+            child: const Text('重新打开并让 Agent 学习'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (description == null || !mounted) return;
+    setState(() => busy = true);
+    try {
+      await widget.api.reopenFeedbackTicket(widget.ticketId, description);
+      await load();
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> proposalAction(String proposalId, bool approve) async {
+    setState(() => busy = true);
+    try {
+      if (approve) {
+        await widget.api.approveStandardProposal(widget.ticketId, proposalId);
+      } else {
+        await widget.api.rejectStandardProposal(widget.ticketId, proposalId);
+      }
+      await load();
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final value = ticket;
@@ -577,6 +636,19 @@ class _FeedbackTicketDetailPageState extends State<FeedbackTicketDetailPage> {
                       ),
                     ),
                   ],
+                  if ((value['standardProposals'] as List?)?.isNotEmpty ==
+                      true) ...[
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Agent 验收标准升级提案',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 8),
+                    for (final proposal
+                        in (value['standardProposals'] as List)
+                            .whereType<Map>())
+                      _proposalCard(proposal, value['canConfirm'] == true),
+                  ],
                   if ((value['events'] as List?)?.isNotEmpty == true) ...[
                     const SizedBox(height: 12),
                     const Text(
@@ -617,17 +689,25 @@ class _FeedbackTicketDetailPageState extends State<FeedbackTicketDetailPage> {
                       '此方案正在等待主账号确认。',
                       style: TextStyle(color: Color(0xff92400e)),
                     ),
-                  if (!busy &&
-                      [
-                        'deferred',
-                        'failed',
-                        'resolved',
-                      ].contains(value['status']))
+                  if (!busy && ['deferred', 'failed'].contains(value['status']))
                     OutlinedButton.icon(
                       onPressed: () => act(widget.api.retryFeedbackTicket),
                       icon: const Icon(Icons.refresh_rounded),
                       label: const Text('继续处理'),
                     ),
+                  if (!busy && value['status'] == 'resolved') ...[
+                    FilledButton.icon(
+                      onPressed: () => act(widget.api.satisfyFeedbackTicket),
+                      icon: const Icon(Icons.thumb_up_alt_outlined),
+                      label: const Text('确认已经解决'),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: reportUnresolved,
+                      icon: const Icon(Icons.report_problem_outlined),
+                      label: const Text('仍有问题，让 Agent 继续处理并学习'),
+                    ),
+                  ],
                   if (!busy && value['status'] != 'closed')
                     TextButton(
                       onPressed: () => act(widget.api.closeFeedbackTicket),
@@ -639,4 +719,103 @@ class _FeedbackTicketDetailPageState extends State<FeedbackTicketDetailPage> {
             ),
     );
   }
+
+  Widget _proposalCard(Map proposal, bool canApprove) {
+    final replay = proposal['replay'] is Map
+        ? proposal['replay'] as Map
+        : const {};
+    final status = proposal['status']?.toString() ?? 'draft';
+    final ready = status == 'ready' && replay['ready'] == true;
+    final reasons = (replay['reasons'] as List? ?? const [])
+        .map((item) => item.toString())
+        .toList();
+    return Card(
+      elevation: 0,
+      color: const Color(0xfff5f7f4),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${proposal['capability']} · ${proposal['baseVersion']} → ${proposal['candidateVersion']}',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                Text(
+                  _proposalStatus(status),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: ready
+                        ? const Color(0xff267046)
+                        : const Color(0xff9a4f06),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 7),
+            Text(proposal['rationale']?.toString() ?? ''),
+            const SizedBox(height: 8),
+            Text(
+              '负例拦截 ${replay['negativeBlocked'] ?? 0}/${replay['negativeTotal'] ?? 0} · 正例保留 ${replay['positivePassed'] ?? 0}/${replay['positiveTotal'] ?? 0} · 边界用例 ${replay['fixturePassed'] ?? 0}/${replay['fixtureTotal'] ?? 0}',
+              style: const TextStyle(fontSize: 12),
+            ),
+            if (reasons.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              for (final reason in reasons)
+                Text(
+                  '• $reason',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xff92400e),
+                  ),
+                ),
+            ],
+            if (canApprove && ['draft', 'ready'].contains(status)) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: busy
+                          ? null
+                          : () => proposalAction(
+                              proposal['id'].toString(),
+                              false,
+                            ),
+                      child: const Text('拒绝'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: busy || !ready
+                          ? null
+                          : () =>
+                                proposalAction(proposal['id'].toString(), true),
+                      child: const Text('批准并仅用于新任务'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _proposalStatus(String status) => switch (status) {
+    'draft' => '证据不足',
+    'replaying' => '影子回放中',
+    'ready' => '待主账号批准',
+    'approved' => '已批准',
+    'active' => '观察中',
+    'rejected' => '已拒绝',
+    'rolled_back' => '已自动回滚',
+    _ => status,
+  };
 }

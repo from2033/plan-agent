@@ -1,10 +1,11 @@
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { decField, encField } from "./crypto-field.js";
-import { capabilityStandard, verifyAgentTask, createCapabilityTask, type AgentStage } from "./agent-contract.js";
+import { capabilityStandard, verifyAgentTask, createCapabilityTask, ACCEPTANCE_VALIDATOR_VERSION, type AcceptanceCheckResult, type AgentStage } from "./agent-contract.js";
 import "./agent-standards.js";
 import { recordAgentFailureSample } from "./agent-quality.js";
 import { getActionPlan, parentForPlanChild, updatePlanItemByChild } from "./action-plan.js";
+import { withVerifiedSideEffectReceipts } from "./acceptance-receipts.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
 db.exec("PRAGMA busy_timeout = 5000");
@@ -30,6 +31,8 @@ for (const definition of [
   "ALTER TABLE agent_tasks ADD COLUMN next_action TEXT",
   "ALTER TABLE agent_tasks ADD COLUMN parent_task_id TEXT",
   "ALTER TABLE agent_tasks ADD COLUMN root_task_id TEXT",
+  "ALTER TABLE agent_tasks ADD COLUMN acceptance_details_json TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE agent_tasks ADD COLUMN validator_version TEXT NOT NULL DEFAULT '1.0'",
 ]) { try { db.exec(definition); } catch (_) { /* existing database already migrated */ } }
 
 export interface PersistedAgentTask {
@@ -38,11 +41,12 @@ export interface PersistedAgentTask {
   requiresConfirmation: boolean; result: unknown | null; failures: string[];
   parentTaskId: string | null; rootTaskId: string | null;
   passedChecks: string[]; failedChecks: string[]; acceptanceStatus: "pending" | "running" | "passed" | "failed";
+  acceptanceDetails: AcceptanceCheckResult[]; validatorVersion: string;
   nextAction: string | null; nextFollowUpAt: string | null; createdAt: string; updatedAt: string;
 }
-type Row = { id:string; user_id:string; capability:string; standard_version:string; source_type:string|null; source_id:string|null; input_json:string; stage:AgentStage; requires_confirmation:number; result_json:string|null; failure_json:string|null; passed_checks_json:string; failed_checks_json:string; next_action:string|null; next_follow_up_at:string|null; parent_task_id:string|null; root_task_id:string|null; created_at:string; updated_at:string };
+type Row = { id:string; user_id:string; capability:string; standard_version:string; source_type:string|null; source_id:string|null; input_json:string; stage:AgentStage; requires_confirmation:number; result_json:string|null; failure_json:string|null; passed_checks_json:string; failed_checks_json:string; acceptance_details_json:string; validator_version:string; next_action:string|null; next_follow_up_at:string|null; parent_task_id:string|null; root_task_id:string|null; created_at:string; updated_at:string };
 const decodeJson = (value: string | null, fallback: unknown) => { if (!value) return fallback; try { return JSON.parse(decField(value)); } catch (_) { try { return JSON.parse(value); } catch (_) { return fallback; } } };
-const decode = (row: Row): PersistedAgentTask => ({ id: row.id, userId: row.user_id, capability: row.capability, standardVersion: row.standard_version, sourceType: row.source_type, sourceId: row.source_id, input: JSON.parse(decField(row.input_json)), stage: row.stage, requiresConfirmation: row.requires_confirmation === 1, result: decodeJson(row.result_json, null), failures: decodeJson(row.failure_json, []), passedChecks: decodeJson(row.passed_checks_json, []), failedChecks: decodeJson(row.failed_checks_json, []), acceptanceStatus: row.stage === "verified" ? "passed" : row.stage === "failed" ? "failed" : row.stage === "verifying" ? "running" : "pending", nextAction: row.next_action, nextFollowUpAt: row.next_follow_up_at, parentTaskId: row.parent_task_id, rootTaskId: row.root_task_id, createdAt: row.created_at, updatedAt: row.updated_at });
+const decode = (row: Row): PersistedAgentTask => ({ id: row.id, userId: row.user_id, capability: row.capability, standardVersion: row.standard_version, sourceType: row.source_type, sourceId: row.source_id, input: JSON.parse(decField(row.input_json)), stage: row.stage, requiresConfirmation: row.requires_confirmation === 1, result: decodeJson(row.result_json, null), failures: decodeJson(row.failure_json, []), passedChecks: decodeJson(row.passed_checks_json, []), failedChecks: decodeJson(row.failed_checks_json, []), acceptanceDetails: decodeJson(row.acceptance_details_json, []), validatorVersion: row.validator_version || "1.0", acceptanceStatus: row.stage === "verified" ? "passed" : row.stage === "failed" ? "failed" : row.stage === "verifying" ? "running" : "pending", nextAction: row.next_action, nextFollowUpAt: row.next_follow_up_at, parentTaskId: row.parent_task_id, rootTaskId: row.root_task_id, createdAt: row.created_at, updatedAt: row.updated_at });
 
 function event(task: PersistedAgentTask, fromStage: AgentStage | null, toStage: AgentStage, reason: string, payload?: unknown): void {
   db.prepare("INSERT INTO agent_task_events (id,task_id,user_id,from_stage,to_stage,reason,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?)").run(crypto.randomUUID(), task.id, task.userId, fromStage, toStage, reason.slice(0, 500), payload == null ? null : encField(JSON.stringify(payload)), new Date().toISOString());
@@ -125,12 +129,29 @@ export function refreshOrchestrationParent(userId: string, parentId: string): Pe
 
 export function verifyPersistentAgentTask(userId: string, id: string, result: unknown): PersistedAgentTask | null {
   const task = getPersistentAgentTask(id, userId); if (!task) return null;
-  const standard = capabilityStandard(task.capability); if (!standard) return transitionPersistentAgentTask(userId, id, "failed", "agent_standard_missing", ["能力标准不存在"]);
-  const memoryTask = createCapabilityTask({ id: task.id, capability: task.capability, input: task.input, requiresConfirmation: task.requiresConfirmation });
-  const checked = verifyAgentTask(memoryTask, result);
-  db.prepare("UPDATE agent_tasks SET passed_checks_json=?,failed_checks_json=? WHERE id=? AND user_id=?").run(encField(JSON.stringify(checked.acceptance.filter((item) => !checked.failures.includes(item.description)).map((item) => item.description))), encField(JSON.stringify(checked.failures)), id, userId);
+  const standard = capabilityStandard(task.capability, task.standardVersion); if (!standard) return transitionPersistentAgentTask(userId, id, "failed", "agent_standard_missing", [`能力标准不存在：${task.capability}@${task.standardVersion}`]);
+  const verifiedResult = withVerifiedSideEffectReceipts(userId, task.capability, task.input, result, task.sourceId);
+  const memoryTask = createCapabilityTask({ id: task.id, capability: task.capability, input: task.input, standardVersion: task.standardVersion, requiresConfirmation: task.requiresConfirmation });
+  const receipts = (verifiedResult as { _verifiedReceipts?: Record<string, unknown> } | null)?._verifiedReceipts || {};
+  const sideEffectReceiptRequired = ["todo", "reminder", "research", "document_ingest", "document_action", "desktop_action", "desktop_intake", "feedback_ticket"].includes(task.capability)
+    || (task.capability === "input_processing" && ["record", "save"].includes(String((verifiedResult as { kind?: unknown } | null)?.kind || "")));
+  if (sideEffectReceiptRequired) {
+    memoryTask.acceptance.push({
+      id: "server-side-effect-receipt",
+      description: "副作用具有服务端核对的持久化或外部执行回执",
+      check: () => ({ passed: Object.keys(receipts).length > 0, actual: receipts,
+        expected: "至少一个由服务端从持久化状态构造的回执", evidence: { source: "server_database" },
+        reason: Object.keys(receipts).length > 0 ? "已核对服务端回执" : "未找到可核对的服务端回执" }),
+    });
+  }
+  const checked = verifyAgentTask(memoryTask, verifiedResult);
+  db.prepare("UPDATE agent_tasks SET passed_checks_json=?,failed_checks_json=?,acceptance_details_json=?,validator_version=? WHERE id=? AND user_id=?").run(
+    encField(JSON.stringify(checked.acceptanceResults.filter(item => item.passed).map(item => item.description))),
+    encField(JSON.stringify(checked.failures)), encField(JSON.stringify(checked.acceptanceResults)),
+    ACCEPTANCE_VALIDATOR_VERSION, id, userId,
+  );
   for (const failure of checked.failures) recordAgentFailureSample(task, "acceptance", failure, result);
-  return transitionPersistentAgentTask(userId, id, checked.stage === "verified" ? "verified" : "failed", checked.stage === "verified" ? "acceptance_passed" : "acceptance_failed", checked.stage === "verified" ? result : checked.failures);
+  return transitionPersistentAgentTask(userId, id, checked.stage === "verified" ? "verified" : "failed", checked.stage === "verified" ? "acceptance_passed" : "acceptance_failed", checked.stage === "verified" ? verifiedResult : checked.failures);
 }
 
 export function recordPersistentAgentExecutionFailure(

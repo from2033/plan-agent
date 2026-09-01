@@ -247,7 +247,7 @@ export function readFeedbackAttachment(
 }
 
 const allowed: Record<FeedbackTicketStatus, FeedbackTicketStatus[]> = {
-  draft: ["submitted", "closed"],
+  draft: ["submitted", "resolved", "closed"],
   submitted: ["triaging", "deferred", "failed", "closed"],
   triaging: ["processing", "awaiting_confirmation", "deferred", "failed", "closed"],
   processing: ["awaiting_confirmation", "deferred", "verifying", "failed", "closed"],

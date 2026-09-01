@@ -51,3 +51,14 @@ test("反馈工单能力公开确认、重试和关闭验收契约", () => {
   assert.match(standard?.retryPolicy || "", /额度/);
   assert.match(standard?.followUpPolicy || "", /关闭/);
 });
+
+test("已解决工单可由用户确认关闭或报告仍有问题后重新处理", () => {
+  const userId = `feedback-satisfaction-${Date.now()}`;
+  const satisfied = createFeedbackTicket(userId, { title: "确认解决", description: "修复结果需要用户确认" });
+  transitionFeedbackTicket(satisfied.id, "resolved", "machine_resolved", "机器验收通过");
+  assert.equal(transitionFeedbackTicket(satisfied.id, "closed", "user_satisfied", "用户确认解决")?.status, "closed");
+
+  const unresolved = createFeedbackTicket(userId, { title: "仍有问题", description: "用户发现修复不完整" });
+  transitionFeedbackTicket(unresolved.id, "resolved", "machine_resolved", "机器验收通过");
+  assert.equal(transitionFeedbackTicket(unresolved.id, "processing", "user_unsatisfied", "重新打开")?.status, "processing");
+});

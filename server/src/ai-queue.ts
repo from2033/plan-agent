@@ -7,10 +7,10 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 11;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-08-30.2";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 12;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-09-01.1";
 
-export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse" | "world_discovery" | "research" | "feedback_triage" | "feedback_repair";
+export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse" | "world_discovery" | "research" | "feedback_triage" | "feedback_repair" | "standard_evolution";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
 
 export interface AiJob {
@@ -227,6 +227,31 @@ const FeedbackRepairResultSchema = z.object({
   errorKind: z.enum(["none", "quota", "worker_offline", "temporary", "blocked", "validation"]),
 });
 
+const DeclarativeRuleSchema = z.object({
+  id: z.string().min(1).max(100),
+  description: z.string().min(2).max(500),
+  type: z.enum(["required", "min_items", "equals", "regex", "contains_all", "count_equals", "https_sources", "time_range", "receipt", "unique", "semantic_advisory"]),
+  path: z.string().min(1).max(200),
+  expectedPath: z.string().max(200).optional().default(""),
+  value: z.array(z.string().max(500)).max(30).optional().default([]),
+  minimum: z.number().int().min(0).max(100).optional().default(0),
+  pattern: z.string().max(300).optional().default(""),
+  fields: z.array(z.string().min(1).max(100)).max(20).optional().default([]),
+});
+const StandardEvolutionResultSchema = z.object({
+  capability: z.string().min(1).max(100),
+  baseVersion: z.string().min(1).max(80),
+  rationale: z.string().min(5).max(4_000),
+  riskLevel: z.enum(["low", "medium", "high"]),
+  rules: z.array(DeclarativeRuleSchema).min(1).max(20),
+  cases: z.array(z.object({
+    name: z.string().min(1).max(120),
+    input: z.record(z.string(), z.unknown()),
+    result: z.record(z.string(), z.unknown()),
+    expectedPass: z.boolean(),
+  })).min(2).max(20),
+});
+
 export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "ingest") return IngestResultSchema.parse(value);
   if (kind === "correct") return CorrectResultSchema.parse(value);
@@ -238,6 +263,7 @@ export function validateAiResult(kind: AiJobKind, value: unknown): unknown {
   if (kind === "research") return ResearchResultSchema.parse(value);
   if (kind === "feedback_triage") return FeedbackTriageResultSchema.parse(value);
   if (kind === "feedback_repair") return FeedbackRepairResultSchema.parse(value);
+  if (kind === "standard_evolution") return StandardEvolutionResultSchema.parse(value);
   return SummaryResultSchema.parse(value);
 }
 

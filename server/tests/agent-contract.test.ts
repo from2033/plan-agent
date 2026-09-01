@@ -3,6 +3,7 @@ import test from "node:test";
 import { createAgentTask, registeredCapabilities, verifyAgentTask } from "../src/agent-contract.js";
 import { createPersistentAgentTask, getPersistentAgentTask, listAgentTaskEvents, schedulePersistentAgentFollowUp, transitionPersistentAgentTask, verifyPersistentAgentTask, wakeDueAgentFollowUps } from "../src/agent-runtime.js";
 import { agentQualityAudit, listAgentFailureSamples, recordAgentFailureSample } from "../src/agent-quality.js";
+import { insertEntry } from "../src/db.js";
 
 test("Agent 任务必须经过验收才能进入 verified", () => {
   const task = createAgentTask<{ items: string[] }, { checklist: string[] }>({
@@ -23,12 +24,14 @@ test("持久化 Agent 任务记录标准版本、事件和验收结果", () => {
   assert.equal(task.standardVersion, "1.1");
   assert.ok(transitionPersistentAgentTask("agent-test-user", task.id, "executing", "confirmed"));
   assert.ok(transitionPersistentAgentTask("agent-test-user", task.id, "verifying", "executed"));
-  const verified = verifyPersistentAgentTask("agent-test-user", task.id, {
-    id: "entry-1", type: "memo", description: "测试待办", done: false,
-  });
+  const entry = { id: `entry-${Date.now()}`, type: "memo" as const, raw: "测试待办", time: "",
+    description: "测试待办", category: "测试", done: false, timestamp: new Date().toISOString() };
+  insertEntry(entry, "agent-test-user");
+  const verified = verifyPersistentAgentTask("agent-test-user", task.id, entry);
   assert.equal(verified?.stage, "verified");
   assert.equal(getPersistentAgentTask(task.id, "other-user"), null);
   assert.equal(listAgentTaskEvents("agent-test-user", task.id).length, 4);
+  assert.equal(verified?.acceptanceDetails.some(item => item.id === "server-side-effect-receipt" && item.passed), true);
 });
 
 test("Agent 任务拒绝非法状态跳转", () => {
