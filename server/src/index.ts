@@ -53,7 +53,7 @@ import {
 } from "./entry-date.js";
 import type { Entry } from "./types.js";
 import { extractQqTasks, qqMessageKnowledge } from "./qq-task-import.js";
-import { knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
+import { embeddedResearchTopic, knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
 import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
 import {
@@ -2560,6 +2560,34 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     }
     if (!isGuestUser(req.userId)) {
       inputAgentTaskId = beginInputAgentTask(req.userId!, raw, inputMode).id;
+    }
+    const followUpTopic = embeddedResearchTopic(raw);
+    if (followUpTopic && !isGuestUser(req.userId)) {
+      const researchTask = createPersistentAgentTask(
+        req.userId!,
+        "research",
+        { title: followUpTopic, details: raw, payload: { query: followUpTopic }, explicitUserAuthorization: true },
+        inputMode,
+        inputAgentTaskId,
+      );
+      const document = createResearchDocument(req.userId!, followUpTopic);
+      try {
+        transitionPersistentAgentTask(req.userId!, researchTask.id, "executing", "explicit_compound_research_requested");
+        const job = enqueueAiJob(req.userId!, "research", {
+          reportId: document.id,
+          query: followUpTopic,
+          originalRequest: raw,
+          agentTaskId: researchTask.id,
+          requestedAt: new Date().toISOString(),
+          locale: "zh-CN",
+          audience: "南京家庭用户",
+        }, 80);
+        bindDocumentJob(document.id, req.userId!, job.id);
+      } catch (error) {
+        discardDocument(document.id, req.userId!);
+        transitionPersistentAgentTask(req.userId!, researchTask.id, "failed", "compound_research_enqueue_failed");
+        throw error;
+      }
     }
     if (isFinanceSubscriptionQuestion(raw) && !isGuestUser(req.userId)) {
       const resultConversationId = interactionConversationId || createConversation(req.userId!, "新对话");

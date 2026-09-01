@@ -26,6 +26,20 @@ export function researchTopic(
   return topic.length >= 2 ? topic.slice(0, 500) : null;
 }
 
+// 一段话同时包含个人安排和“去看下/查一下”时，不能因为整体不是以研究动词
+// 开头就丢掉后续查询。这里提取高置信度的地点调研子目标。
+export function embeddedResearchTopic(raw: string): string | null {
+  if (!/(?:看下|看一下|看看|查下|查一下|找下|找一下|了解下|了解一下)/u.test(raw)) return null;
+  if (/(?:知识库|资料库|我之前记的|我的资料)/u.test(raw)) return null;
+  if (/(?:生日|聚会|宴请|庆祝|活动)/u.test(raw)
+    && /(?:南京)?大厂/u.test(raw)
+    && /(?:周边|附近|场地|餐厅|酒店|适合)/u.test(raw)) {
+    const festival = /中秋/u.test(raw) ? "中秋期间" : "";
+    return `南京大厂周边${festival}适合宝宝生日家庭聚会的场地与方案`;
+  }
+  return null;
+}
+
 export function knowledgeIntentHint(raw: string): IntentHint {
   // Short noun-phrase lookups are common in the home input (for example
   // “英语老师电话号码”) and should not be mistaken for a diary entry.

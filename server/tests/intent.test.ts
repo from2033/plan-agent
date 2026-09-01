@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { knowledgeIntentHint, researchTopic } from "../src/intent.js";
+import { embeddedResearchTopic, knowledgeIntentHint, researchTopic } from "../src/intent.js";
 
 test("知识库的常见语音误识别仍识别为保存", () => {
   assert.equal(knowledgeIntentHint("记录到芝士库红烧肉一开始不能放盐。"), "save");
@@ -41,6 +41,13 @@ test("显式研究指令提取主题但不拦截个人资料查询", () => {
   assert.equal(researchTopic("查询一下最近的开学时间"), null);
   assert.equal(researchTopic("帮我查一下我的资料里的租赁合同"), null);
   assert.equal(researchTopic("今天吃了什么"), null);
+});
+
+test("复合生日安排保留南京大厂周边调研动作", () => {
+  assert.equal(
+    embeddedResearchTopic("宝宝生日准备安排在中秋，你再去看下南京大厂周边有没有适合的地方"),
+    "南京大厂周边中秋期间适合宝宝生日家庭聚会的场地与方案",
+  );
 });
 
 test("短语式联系人查询识别为资料查找", () => {
