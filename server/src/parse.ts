@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import type { ParsedFields } from "./types.js";
+import { inferReminderTimeFromText } from "./entry-date.js";
 
 // ─── 正则回退（从前端 src/app/App.tsx 移植） ──────────────────────────────────
 
@@ -60,7 +61,20 @@ export function parseWithRegex(raw: string): ParsedFields[] {
 
   const amountMatch = text.match(AMOUNT);
   const hasExpense = EXPENSE_KEYWORDS.test(text);
+  const reminderTime = inferReminderTimeFromText(text);
   const out: ParsedFields[] = [];
+
+  // “8点30拿药”这类短句没有“提醒我”，但明确时刻和用药动作本身
+  // 已足以表达提醒意图，不能退化成没有闹钟的普通活动。
+  if (!timeRange && reminderTime && /(?:拿药|取药|吃药|服药|喂药)/.test(text)) {
+    return [{
+      type: "memo",
+      description: cleanDescription(text).replace(/\d{1,2}点(?:\d{1,2}分?)?/, "").trim() || text,
+      category: "备忘",
+      priority: "medium",
+      reminderTime,
+    }];
+  }
 
   // 既有时间段又有花费时，正则也拆成「行程 + 账单」两条。
   if (timeRange) {

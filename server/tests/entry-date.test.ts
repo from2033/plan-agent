@@ -10,6 +10,7 @@ import {
   reminderTimestamp,
   type AssistantClock,
 } from "../src/entry-date.js";
+import { parseWithRegex } from "../src/parse.js";
 
 const clock: AssistantClock = {
   currentDate: "2026-08-18",
@@ -60,6 +61,13 @@ test("明确时刻的拿药短句自动作为提醒", () => {
     }),
     "2026-08-18T00:30:00.000Z",
   );
+});
+
+test("正则回退也能把8点30拿药解析为带提醒时间的备忘", () => {
+  const [entry] = parseWithRegex("8点30拿药");
+  assert.equal(entry.type, "memo");
+  assert.equal(entry.reminderTime, "08:30");
+  assert.equal(entry.category, "备忘");
 });
 
 test("明确未完成的权益即使没日期也是待办", () => {
