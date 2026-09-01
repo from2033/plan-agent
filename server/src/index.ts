@@ -1931,7 +1931,7 @@ app.post(`${API}/agent/tasks/:id/corrections`, (req, res) => {
   // 同时保留原失败任务和纠正事件，便于后续标准回归。
   if (task.stage === "failed" && task.capability === "input_processing") {
     if (!codexWorkerOnline()) { res.status(503).json({ error: "后台处理服务尚未就绪，问题已记录，请稍后重试" }); return; }
-    const input = task.input as { raw?: unknown; inputMode?: unknown };
+    const input = task.input as { raw?: unknown; title?: unknown; inputMode?: unknown };
     const raw = String(input.raw || input.title || "").trim();
     if (!raw) { res.status(409).json({ error: "原始问题缺失，问题已记录，请重新提交" }); return; }
     transitionPersistentAgentTask(req.userId!, task.id, "retrying", "user_correction_retry_requested", { correction: parsed.data.description });
