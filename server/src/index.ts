@@ -49,6 +49,7 @@ import {
   normalizeScheduledDescription,
   reminderTimeAt,
   reminderTimestamp,
+  validateTemporalModelFields,
   type AssistantClock,
 } from "./entry-date.js";
 import type { Entry } from "./types.js";
@@ -85,6 +86,17 @@ import {
   listConversations,
   respondToConversationInvitation,
 } from "./conversation-store.js";
+import {
+  bindAgentRun,
+  completeAgentRun,
+  completeAgentRunByJob,
+  createAgentRun,
+  failAgentRun,
+  failAgentRunByJob,
+  getAgentRun,
+  listAgentMessages,
+  listAgentRuns,
+} from "./agent-runs.js";
 import {
   CODEX_QUEUE_POLICY_VERSION,
   CODEX_QUEUE_PROTOCOL_VERSION,
@@ -188,6 +200,7 @@ import {
   transitionFeedbackTicket,
   type FeedbackTicket,
 } from "./feedback-tickets.js";
+import { buildFeedbackExecutionInput } from "./feedback-workflow.js";
 import {
   buildWorldPulseDiscoveryInput,
   currentWorldPulseDiscovery,
@@ -290,6 +303,7 @@ function dispatchActionPlan(
   raw: string,
   inputMode: "voice" | "text",
   conversation: InputConversationContext = {},
+  clock: AssistantClock = assistantClock(),
 ): string | undefined {
   const plan = getActionPlan(userId, taskId);
   if (!plan) return undefined;
@@ -302,6 +316,7 @@ function dispatchActionPlan(
           details: item.instruction,
           raw,
           inputMode,
+          context: clock,
           payload: { query: item.instruction },
           ...(conversation.conversationId ? { conversationId: conversation.conversationId } : {}),
           ...(conversation.conversationHistory?.length ? { conversationHistory: conversation.conversationHistory } : {}),
@@ -346,6 +361,7 @@ function beginInputAgentTask(
   inputMode: "voice" | "text",
   conversation: InputConversationContext = {},
 ) {
+  const clock = assistantClock();
   const task = createPersistentAgentTask(
     userId,
     "input_orchestration",
@@ -359,9 +375,9 @@ function beginInputAgentTask(
   transitionPersistentAgentTask(userId, task.id, "classified", "input_classified");
   transitionPersistentAgentTask(userId, task.id, "extracted", "goal_extracted");
   transitionPersistentAgentTask(userId, task.id, "executing", "plan_execution_started");
-  saveActionPlan(userId, task.id, raw, assistantClock().currentDate);
-  const processingTaskId = dispatchActionPlan(userId, task.id, raw, inputMode, conversation);
-  return { task: getPersistentAgentTask(task.id, userId)!, processingTaskId, plan: getActionPlan(userId, task.id)! };
+  saveActionPlan(userId, task.id, raw, clock.currentDate);
+  const processingTaskId = dispatchActionPlan(userId, task.id, raw, inputMode, conversation, clock);
+  return { task: getPersistentAgentTask(task.id, userId)!, processingTaskId, plan: getActionPlan(userId, task.id)!, context: clock };
 }
 
 function finishInputAgentTask(userId: string, taskId: string | undefined, result: unknown): void {
@@ -793,6 +809,8 @@ interface WorkerIngestResult {
   fields?: Array<Omit<Entry, "id" | "raw" | "time" | "timestamp" | "scheduledDate" | "reminderAt"> & {
     date?: string;
     reminderTime?: string;
+    dateEvidence?: string;
+    timeEvidence?: string;
   }>;
   title?: string;
   content?: string;
@@ -976,18 +994,17 @@ function shanghaiMinuteOfDay(now: Date): number {
   return value("hour") * 60 + value("minute");
 }
 
-function feedbackJobInput(ticket: FeedbackTicket): Record<string, unknown> {
-  return {
-    ticketId: ticket.id,
-    title: ticket.title,
-    description: ticket.description,
-    sourceTaskId: ticket.sourceTaskId,
-    attachmentIds: ticket.attachments.map(item => item.id),
-    plan: ticket.plan,
-    acceptanceChecks: ticket.acceptanceChecks,
-    previousResolution: ticket.resolution,
-    attempt: ticket.attempts + 1,
-  };
+function feedbackJobInput(ticket: FeedbackTicket, confirmedByPrimary = false): Record<string, unknown> {
+  const sourceTask = ticket.sourceTaskId
+    ? getPersistentAgentTask(ticket.sourceTaskId, ticket.userId)
+    : null;
+  return buildFeedbackExecutionInput(ticket, {
+    sourceTask,
+    sourceTaskEvents: sourceTask ? listAgentTaskEvents(ticket.userId, sourceTask.id) : [],
+    recoveredContext: sourceTask ? findBestAiJobContextForAgentTask(ticket.userId, sourceTask.id) : null,
+    ticketEvents: listFeedbackTicketEvents(ticket.id, ticket.userId, PRIMARY_USER),
+    confirmedByPrimary,
+  });
 }
 
 function queueFeedbackTriage(ticket: FeedbackTicket): FeedbackTicket {
@@ -1001,13 +1018,15 @@ function queueFeedbackTriage(ticket: FeedbackTicket): FeedbackTicket {
   )!;
 }
 
-function queueFeedbackRepair(ticket: FeedbackTicket): FeedbackTicket {
-  const job = enqueueAiJob(ticket.userId, "feedback_repair", feedbackJobInput(ticket), 125);
+function queueFeedbackRepair(ticket: FeedbackTicket, confirmedByPrimary = false): FeedbackTicket {
+  const job = enqueueAiJob(ticket.userId, "feedback_repair", feedbackJobInput(ticket, confirmedByPrimary), 125);
   const updated = transitionFeedbackTicket(
     ticket.id,
     "processing",
     "repair_started",
-    "方案已确认，Agent 开始修复并运行验收",
+    confirmedByPrimary
+      ? "主账号已确认关键步骤，Agent 继续处理并运行验收"
+      : "Agent 已接单，正在结合原对话直接处理并验证结果",
     { jobId: job.id, incrementAttempts: true, nextAttemptAt: null, confirmationQuestion: null },
   )!;
   const task = updated.agentTaskId ? getPersistentAgentTask(updated.agentTaskId, updated.userId) : null;
@@ -1035,7 +1054,7 @@ function deferFeedbackTicket(ticket: FeedbackTicket, reason: string, minutes: nu
 }
 
 function wakeDueFeedbackWork(now = new Date()): FeedbackTicket[] {
-  return dueFeedbackTickets(now).map(ticket => ticket.plan ? queueFeedbackRepair(ticket) : queueFeedbackTriage(ticket));
+  return dueFeedbackTickets(now).map(ticket => queueFeedbackRepair(ticket));
 }
 
 async function ensureScheduledWorldDiscovery(now = new Date()): Promise<void> {
@@ -1397,8 +1416,12 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
 
   const now = new Date();
   const clock = input.context || assistantClock(now);
+  const temporalValidation = validateTemporalModelFields(input.raw, clock, result.fields || [], true);
+  if (!temporalValidation.ok) {
+    throw new Error(`ingest_semantic_invalid:${temporalValidation.issues.join(",")}`);
+  }
   const entries = (result.fields || []).map((fields, i): Entry => {
-    const { date: modelDate, reminderTime, ...entryFields } = fields;
+    const { date: modelDate, reminderTime, dateEvidence: _dateEvidence, timeEvidence: _timeEvidence, ...entryFields } = fields;
     const date = hasExplicitDateExpression(input.raw) ? modelDate : undefined;
     const forceMemo = isFutureObligation(input.raw, date, reminderTime, clock);
     if (forceMemo) {
@@ -1466,6 +1489,7 @@ app.post(`${WORKER_API}/jobs/:id/result`, requireWorker, (req, res) => {
       return;
     }
     completeAiInteraction(job.userId, job.id, job.kind, job.result);
+    completeAgentRunByJob(job.userId, job.id, job.result);
     res.json({ ok: true, jobId: job.id });
   } catch (error) {
     console.error("[codex-worker result] 校验失败:", error);
@@ -1527,6 +1551,7 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
   }
   if (leased && current?.status === "FAILED") {
     failAiInteraction(leased.userId, leased.id);
+    failAgentRunByJob(leased.userId, leased.id, current.error || "worker_failed");
     const agentTaskId = String((leased.input as { agentTaskId?: unknown })?.agentTaskId || "");
     const agentTask = agentTaskId ? getPersistentAgentTask(agentTaskId, leased.userId) : null;
     if (agentTask?.stage === "executing") {
@@ -2202,7 +2227,7 @@ app.post(`${API}/feedback/tickets/:id/submit`, (req, res) => {
   );
   transitionPersistentAgentTask(ticket.userId, task.id, "classified", "feedback_received");
   transitionPersistentAgentTask(ticket.userId, task.id, "extracted", "feedback_goal_extracted");
-  transitionPersistentAgentTask(ticket.userId, task.id, "executing", "feedback_triage_started");
+  transitionPersistentAgentTask(ticket.userId, task.id, "executing", "feedback_direct_execution_started");
   const submitted = transitionFeedbackTicket(
     ticket.id, "submitted", "submitted", "反馈已提交，Agent 将持续跟踪直到解决或明确关闭", { agentTaskId: task.id },
   )!;
@@ -2210,7 +2235,7 @@ app.post(`${API}/feedback/tickets/:id/submit`, (req, res) => {
     res.status(202).json(deferFeedbackTicket(submitted, "后台处理服务暂时离线", 30));
     return;
   }
-  res.status(202).json(queueFeedbackTriage(submitted));
+  res.status(202).json(queueFeedbackRepair(submitted));
 });
 
 app.get(`${API}/feedback/tickets/:id`, (req, res) => {
@@ -2242,7 +2267,7 @@ app.post(`${API}/feedback/tickets/:id/confirm`, (req, res) => {
   if (["processing", "verifying", "resolved", "closed"].includes(ticket.status)) { res.json(ticket); return; }
   if (ticket.status !== "awaiting_confirmation") { res.status(409).json({ error: "当前工单不在等待确认状态" }); return; }
   if (!codexWorkerOnline()) { res.status(202).json(deferFeedbackTicket(ticket, "后台处理服务暂时离线", 30)); return; }
-  res.status(202).json(queueFeedbackRepair(ticket));
+  res.status(202).json(queueFeedbackRepair(ticket, true));
 });
 
 app.post(`${API}/feedback/tickets/:id/retry`, (req, res) => {
@@ -2254,7 +2279,7 @@ app.post(`${API}/feedback/tickets/:id/retry`, (req, res) => {
     res.status(409).json({ error: "当前工单不能重试" }); return;
   }
   if (!codexWorkerOnline()) { res.status(202).json(deferFeedbackTicket(ticket, "后台处理服务暂时离线", 30)); return; }
-  res.status(202).json(ticket.plan ? queueFeedbackRepair(ticket) : queueFeedbackTriage(ticket));
+  res.status(202).json(queueFeedbackRepair(ticket));
 });
 
 app.post(`${API}/feedback/tickets/:id/satisfied`, (req, res) => {
@@ -2887,6 +2912,24 @@ app.get(`${API}/ai-jobs/:id`, (req, res) => {
   res.json({ status: job.status, result: job.result, error: job.error });
 });
 
+app.get(`${API}/agent-runs`, (req, res) => {
+  if (isGuestUser(req.userId)) {
+    res.json([]);
+    return;
+  }
+  const limit = Number(req.query.limit || 50);
+  res.json(listAgentRuns(req.userId!, Number.isFinite(limit) ? limit : 50));
+});
+
+app.get(`${API}/agent-runs/:id`, (req, res) => {
+  const run = getAgentRun(req.params.id, req.userId!);
+  if (!run) {
+    res.status(404).json({ error: "Agent 任务不存在" });
+    return;
+  }
+  res.json({ ...run, messages: listAgentMessages(run.id, req.userId!) || [] });
+});
+
 app.get(`${API}/conversations`, (req, res) => {
   if (isGuestUser(req.userId)) {
     res.json([]);
@@ -3134,6 +3177,9 @@ app.get(`${API}/entries`, (req, res) => {
 app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) => {
   const raw = typeof req.body?.raw === "string" ? req.body.raw.trim() : "";
   const inputMode = req.body?.inputMode === "text" ? "text" as const : "voice" as const;
+  const clientRequestId = typeof req.body?.clientRequestId === "string"
+    ? req.body.clientRequestId.trim().slice(0, 120)
+    : "";
   const conversationId = typeof req.body?.conversationId === "string"
     ? req.body.conversationId.trim().slice(0, 100)
     : "";
@@ -3147,6 +3193,8 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
   let synchronousInteractionId: string | null = null;
   let inputAgentTaskId: string | undefined;
   let orchestrationTaskId: string | undefined;
+  let agentRunId: string | undefined;
+  let requestClock = assistantClock();
   const interactionConversationId = conversationId;
   if (!raw) {
     res.status(400).json({ error: "raw 不能为空" });
@@ -3154,14 +3202,41 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
   }
   try {
     if (!isGuestUser(req.userId)) {
+      const run = createAgentRun(req.userId!, raw, {
+        ...(clientRequestId ? { clientRequestId } : {}),
+        ...(conversationId ? { conversationId } : {}),
+        inputMode,
+      });
+      agentRunId = run.id;
+      if (run.status === "completed" && run.result && typeof run.result === "object") {
+        res.json({ ...(run.result as Record<string, unknown>), agentRunId: run.id, recovered: true });
+        return;
+      }
+      if (run.status !== "received") {
+        res.status(202).json({
+          kind: "pending",
+          agentRunId: run.id,
+          jobId: run.jobId,
+          agentTaskId: run.rootTaskId,
+          status: run.status,
+          statusText: run.statusText,
+        });
+        return;
+      }
       const orchestration = beginInputAgentTask(req.userId!, raw, inputMode, {
         ...(conversationId ? { conversationId } : {}),
         ...(conversationHistory?.length ? { conversationHistory } : {}),
       });
       orchestrationTaskId = orchestration.task.id;
       inputAgentTaskId = orchestration.processingTaskId;
+      bindAgentRun(req.userId!, run.id, { rootTaskId: orchestrationTaskId });
+      requestClock = orchestration.context;
       if (!inputAgentTaskId) {
-        res.status(202).json({ kind: "pending", agentTaskId: orchestrationTaskId, plan: orchestration.plan });
+        bindAgentRun(req.userId!, run.id, {
+          status: "awaiting_confirmation",
+          statusText: "等待你确认后继续",
+        });
+        res.status(202).json({ kind: "pending", agentRunId: run.id, agentTaskId: orchestrationTaskId, plan: orchestration.plan });
         return;
       }
     }
@@ -3188,13 +3263,16 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           audience: "中国普通用户",
           ...(conversationHistory?.length ? { conversationHistory } : {}),
           conversationId: researchConversationId,
+          ...(agentRunId ? { agentRunId } : {}),
         }, 70);
+        if (agentRunId) bindAgentRun(req.userId!, agentRunId, { jobId: job.id, rootTaskId: orchestrationTaskId });
         beginAiInteraction(req.userId!, job.id, raw, inputMode, researchConversationId);
         bindDocumentJob(document.id, req.userId!, job.id);
         res.status(201).json({
           kind: "research",
           reportId: document.id,
           jobId: job.id,
+          agentRunId,
           status: "QUEUED",
           title: `研究报告：${topic}`,
         });
@@ -3216,6 +3294,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         conversationTitle: "数码订阅账单明细",
         conversationId: resultConversationId,
       };
+      if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
       completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
       finishInputAgentTask(req.userId!, inputAgentTaskId, response);
       res.json(response);
@@ -3226,19 +3305,21 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       const knowledge = knowledgeFromRequest(req, conversationId);
       const job = enqueueAiJob(req.userId!, "ingest", {
         raw,
+        ...(agentRunId ? { agentRunId } : {}),
         ...(inputAgentTaskId ? { agentTaskId: inputAgentTaskId } : {}),
         intentHint,
         interactionMode: interactionConversationId ? "conversation" : "home",
         inputMode,
-        context: assistantClock(),
+        context: requestClock,
         knowledge,
         ...(conversationHistory?.length ? { conversationHistory } : {}),
         ...(interactionConversationId ? { conversationId: interactionConversationId } : {}),
       });
+      if (agentRunId) bindAgentRun(req.userId!, agentRunId, { jobId: job.id, rootTaskId: orchestrationTaskId });
       if (!isGuestUser(req.userId) && interactionConversationId) {
         beginAiInteraction(req.userId!, job.id, raw, inputMode, interactionConversationId || undefined);
       }
-      res.status(202).json({ kind: "pending", jobId: job.id, agentTaskId: orchestrationTaskId || inputAgentTaskId });
+      res.status(202).json({ kind: "pending", jobId: job.id, agentRunId, agentTaskId: orchestrationTaskId || inputAgentTaskId });
       return;
     }
     if (!isGuestUser(req.userId) && interactionConversationId) {
@@ -3255,6 +3336,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           }
         : insertKnowledge(req.userId!, knowledge.title, knowledge.content);
       const response = { kind: "save", item };
+      if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
       if (synchronousInteractionId) {
         completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
       }
@@ -3275,6 +3357,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           }
         : insertKnowledge(req.userId!, result.title, result.content);
       const response = { kind: "save", item };
+      if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
       if (synchronousInteractionId) {
         completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
       }
@@ -3305,6 +3388,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         sources: ans.sources,
         ...(resultConversationId ? { conversationId: resultConversationId } : {}),
       };
+      if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
       if (synchronousInteractionId) {
         completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
       }
@@ -3315,10 +3399,14 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
 
     // 默认：记录入库
     const now = new Date();
-    const clock = assistantClock(now);
+    const clock = requestClock;
+    const temporalValidation = validateTemporalModelFields(raw, clock, result.fields, result.via === "claude");
+    if (!temporalValidation.ok) {
+      throw new Error(`ingest_semantic_invalid:${temporalValidation.issues.join(",")}`);
+    }
     // 一句话可能拆成多条；逐条入库。timestamp 加毫秒偏移，保证拆出的顺序稳定。
     const entries: Entry[] = result.fields.map((f, i) => {
-      const { date: modelDate, reminderTime, ...entryFields } = f;
+      const { date: modelDate, reminderTime, dateEvidence: _dateEvidence, timeEvidence: _timeEvidence, ...entryFields } = f;
       const date = hasExplicitDateExpression(raw) ? modelDate : undefined;
       const forceMemo = isFutureObligation(raw, date, reminderTime, clock);
       if (forceMemo) {
@@ -3359,12 +3447,14 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       for (const entry of entries) insertEntry(entry, req.userId!);
     }
     const response = { kind: "record", entries, via: result.via };
+    if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
     if (synchronousInteractionId) {
       completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
     }
     finishInputAgentTask(req.userId!, inputAgentTaskId, response);
     res.status(201).json(response);
   } catch (err) {
+    if (agentRunId) failAgentRun(req.userId!, agentRunId, "input_processing_failed");
     if (synchronousInteractionId) failAiInteraction(req.userId!, synchronousInteractionId);
     if (inputAgentTaskId) {
       const task = getPersistentAgentTask(inputAgentTaskId, req.userId!);

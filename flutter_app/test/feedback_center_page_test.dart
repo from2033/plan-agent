@@ -39,6 +39,18 @@ void main() {
     expect(find.text('提交反馈'), findsOneWidget);
   });
 
+  testWidgets('提交页说明工单会直接处理而不是只做分析', (tester) async {
+    final api = ApiClient(
+      httpClient: MockClient((request) async => http.Response('{}', 200)),
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: NewFeedbackTicketPage(api: api)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('像持续对话一样直接检查、处理并验收'), findsOneWidget);
+    expect(find.textContaining('不可逆、高风险'), findsOneWidget);
+  });
+
   testWidgets('工单详情显示主账号确认方案和处理日志', (tester) async {
     final api = ApiClient(
       httpClient: MockClient((request) async {

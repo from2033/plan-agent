@@ -101,6 +101,26 @@ test("用户对上传资料的补充说明在任务数据库中加密", () => {
   inspection.close();
 });
 
+test("工单执行上下文在任务数据库中加密", () => {
+  const job = enqueueAiJob("user-1", "feedback_repair", {
+    ticketId: crypto.randomUUID(),
+    description: "刚才的表格没有使用上一轮回答，请直接重新处理。",
+    conversationContext: {
+      conversationHistory: [{ role: "assistant", content: "上一轮包含家庭账单明细。" }],
+    },
+  });
+  const inspection = new DatabaseSync(process.env.DB_PATH!);
+  const queued = inspection.prepare("SELECT input_json FROM ai_jobs WHERE id=?")
+    .get(job.id) as unknown as { input_json: string };
+  assert.match(queued.input_json, /^enc1:/);
+  assert.doesNotMatch(queued.input_json, /家庭账单明细/);
+  assert.match(JSON.stringify(getAiJob(job.id, "user-1")?.input), /家庭账单明细/);
+  const claimed = claimAiJob("feedback-encryption-cleanup");
+  assert.equal(claimed?.job.id, job.id);
+  failAiJob(job.id, claimed!.leaseToken, "test cleanup", false);
+  inspection.close();
+});
+
 test("统一提问任务保留家庭资料的原文证据", () => {
   const job = enqueueAiJob("user-1", "ingest", {
     raw: "租赁合同什么时候到期？",

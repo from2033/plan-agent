@@ -36,6 +36,8 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>用于拍摄并上传家庭资料，以及扫描电脑端的一次性登录二维码。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于从照片图库选择图片，作为知识资料、聊天附件或反馈截图上传；只有你主动选择的照片会被读取。</string>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>用于在你指定的时间为备忘事项响铃提醒。</string>
 	<key>UIApplicationSceneManifest</key>

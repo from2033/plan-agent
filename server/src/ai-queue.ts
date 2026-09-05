@@ -68,6 +68,8 @@ const EntryFieldsSchema = z.object({
   priority: z.enum(["low", "medium", "high"]).nullish().transform((value) => value ?? undefined),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish().transform((value) => value ?? undefined),
   reminderTime: z.string().regex(/^\d{2}:\d{2}$/).nullish().transform((value) => value ?? undefined),
+  dateEvidence: z.string().max(80).nullish().transform((value) => value?.trim() || undefined),
+  timeEvidence: z.string().max(80).nullish().transform((value) => value?.trim() || undefined),
 });
 
 const DocumentEvidenceSchema = z.object({
@@ -340,7 +342,7 @@ export function enqueueAiJob(
       id,
       userId,
       kind,
-      kind === "document" || kind === "document_question" || kind === "document_note" || kind === "world_pulse" || kind === "world_discovery" || kind === "research"
+      kind === "document" || kind === "document_question" || kind === "document_note" || kind === "world_pulse" || kind === "world_discovery" || kind === "research" || kind === "feedback_triage" || kind === "feedback_repair"
         ? encField(JSON.stringify(input))
         : JSON.stringify(input),
       priority,

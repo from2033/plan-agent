@@ -1,4 +1,5 @@
-import { registerCapabilityStandard, type CapabilityStandard } from "./agent-contract.js";
+import { activateCapabilityStandard, registerCapabilityStandard, type CapabilityStandard } from "./agent-contract.js";
+import { validateTemporalModelFields, type AssistantClock } from "./entry-date.js";
 
 type StandardInput = Omit<CapabilityStandard, "acceptance">;
 const common = (value: StandardInput): StandardInput => value;
@@ -25,6 +26,38 @@ registerCapabilityStandard({
       && !((result as { missingRequirements?: unknown[] }).missingRequirements || []).length,
   }],
 });
+
+registerCapabilityStandard({
+  ...common({
+    capability: "feedback_ticket", version: "1.1", description: "反馈工单复用完整对话上下文并持续执行到验收或明确关闭",
+    requiresConfirmation: false,
+    allowedSideEffects: ["diagnose_feedback", "retry_original_task", "apply_recoverable_repair", "deploy_with_rollbackback", "request_risk_confirmation"],
+    failurePolicy: "follow_up",
+    inputContract: "反馈标题、详细描述、关联任务、原对话、失败记录和可选截图",
+    outputContract: "实际处理摘要、改动、测试、提交编号、验收结论和必要的确认问题",
+    confirmationPolicy: "提交即授权直接诊断和执行低风险可恢复处理；仅不可逆、高风险、对外副作用或关键方案选择由主账号确认",
+    idempotencyRule: "同一工单同时只能有一个执行任务；确认只恢复同一任务，不重复已完成副作用",
+    retryPolicy: "额度、服务离线和临时错误自动续办；上下文型问题恢复原对话后重试，不把短句孤立处理",
+    followUpPolicy: "处理过程保留事件；机器验收后请用户确认，仍有问题则携带完整历史继续处理",
+  }),
+  acceptance: () => [{
+    id: "feedback-work-performed", description: "工单记录了实际处理或明确的风险确认点，而非只给建议",
+    check: (result) => {
+      const value = result as { outcome?: unknown; changes?: unknown[]; tests?: unknown[]; confirmationQuestion?: unknown };
+      if (value?.outcome === "needs_confirmation") return Boolean(String(value.confirmationQuestion || "").trim());
+      return value?.outcome === "resolved" && Boolean(value.changes?.length || value.tests?.length);
+    },
+  }, {
+    id: "feedback-resolution-present", description: "工单具有可核对的处理摘要、改动和测试记录",
+    check: (result) => Boolean(String((result as { summary?: unknown })?.summary || "").trim().length >= 5
+      && Array.isArray((result as { changes?: unknown[] })?.changes)
+      && Array.isArray((result as { tests?: unknown[] })?.tests)),
+  }, {
+    id: "feedback-resolution-terminal", description: "通过验收的工单明确标记为已解决",
+    check: (result) => (result as { outcome?: unknown })?.outcome === "resolved",
+  }],
+});
+activateCapabilityStandard("feedback_ticket", "1.1");
 
 registerCapabilityStandard({
   ...common({
@@ -126,6 +159,63 @@ registerCapabilityStandard({
     },
   }],
 });
+
+registerCapabilityStandard({
+  ...common({
+    capability: "input_processing", version: "1.3", description: "输入结果必须可用，并且日期、时刻与用户原话一致",
+    requiresConfirmation: false, allowedSideEffects: ["create_conversation", "create_entry", "save_knowledge"], failurePolicy: "retry",
+    inputContract: "原始文本、输入方式、上海当前日期时间和对话上下文",
+    outputContract: "通过语义与时间一致性验收的 ask 答案 / record 记录 / save 资料之一",
+    confirmationPolicy: "回答无确认；明确记录请求按既有授权执行",
+    idempotencyRule: "同一请求 ID 只能形成一次副作用；时间验收失败不得写入记录或闹钟",
+    retryPolicy: "模型时间推理冲突时由更强模型重试；仍不一致则明确失败，不静默修正",
+    followUpPolicy: "时间证据不足或多次推理失败时提示用户重试或补充明确日期时刻",
+  }),
+  acceptance: (input) => [{
+    id: "usable-result", description: "输入处理产生可用且非答非所问的结果",
+    check: (result) => {
+      const value = result as { kind?: string; answer?: string; entries?: unknown[]; item?: unknown } | null;
+      if (!value) return false;
+      if (value.kind === "ask") {
+        const answer = String(value.answer || "").trim();
+        return answer.length > 0 && !/没有明确写出|无法查询|没有找到相关|未配置 AI/.test(answer);
+      }
+      if (value.kind === "record") return Array.isArray(value.entries) && value.entries.length > 0;
+      if (value.kind === "save") return value.item != null;
+      return false;
+    },
+  }, {
+    id: "requested-format", description: "明确要求表格时结果必须包含可读表格",
+    check: (result) => {
+      const raw = String((input as { raw?: unknown; title?: unknown })?.raw
+        || (input as { title?: unknown })?.title || "");
+      if (!/表格/u.test(raw)) return true;
+      const answer = String((result as { answer?: unknown })?.answer || "");
+      return /\|[^\n]+\|\s*\n\s*\|?\s*:?-{3,}/u.test(answer);
+    },
+  }, {
+    id: "temporal-consistency", description: "日期和提醒时刻与原话及提交时的上海时间一致",
+    check: (result) => {
+      const value = result as { kind?: string; entries?: Array<{ type?: string; time?: string; scheduledDate?: string }> };
+      if (value.kind !== "record" || !Array.isArray(value.entries)) return true;
+      const source = input as { raw?: unknown; title?: unknown; context?: Partial<AssistantClock> };
+      const context = source.context;
+      if (!context || !/^\d{4}-\d{2}-\d{2}$/.test(String(context.currentDate || ""))
+        || !/^\d{2}:\d{2}$/.test(String(context.currentTime || ""))) return false;
+      return validateTemporalModelFields(
+        String(source.raw || source.title || ""),
+        { currentDate: context.currentDate!, currentTime: context.currentTime!, timeZone: "Asia/Shanghai" },
+        value.entries.map((entry) => ({
+          type: String(entry.type || ""),
+          date: entry.scheduledDate,
+          reminderTime: entry.time || undefined,
+        })),
+        false,
+      ).ok;
+    },
+  }],
+});
+activateCapabilityStandard("input_processing", "1.3");
 
 registerCapabilityStandard({
   ...common({

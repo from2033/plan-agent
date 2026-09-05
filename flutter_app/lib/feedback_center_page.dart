@@ -364,7 +364,7 @@ class _NewFeedbackTicketPageState extends State<NewFeedbackTicketPage> {
           ),
           const SizedBox(height: 8),
           const Text(
-            '遇到额度不足或临时服务故障时，工单会自动安排后续处理；涉及不确定或高风险方案时只允许主账号确认。',
+            '提交后 Agent 会像持续对话一样直接检查、处理并验收；只有不可逆、高风险或需要你做关键选择时，才会暂停等待主账号确认。',
             style: TextStyle(fontSize: 12, color: Color(0xff78716c)),
           ),
         ],

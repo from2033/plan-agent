@@ -46,10 +46,20 @@ test("额度不足的反馈会延期，并在到期后重新进入待处理集�
 
 test("反馈工单能力公开确认、重试和关闭验收契约", () => {
   const standard = registeredCapabilities().find(item => item.capability === "feedback_ticket");
-  assert.equal(standard?.version, "1.0");
+  assert.equal(standard?.version, "1.1");
   assert.match(standard?.confirmationPolicy || "", /主账号/);
   assert.match(standard?.retryPolicy || "", /额度/);
-  assert.match(standard?.followUpPolicy || "", /关闭/);
+  assert.match(standard?.followUpPolicy || "", /完整历史/);
+});
+
+test("新工单可跳过只分析阶段直接进入实际处理", () => {
+  const userId = `feedback-direct-${Date.now()}`;
+  const ticket = createFeedbackTicket(userId, { title: "消息没有同步", description: "请直接检查并恢复" });
+  transitionFeedbackTicket(ticket.id, "submitted", "submitted", "已提交");
+  const processing = transitionFeedbackTicket(ticket.id, "processing", "repair_started", "正在实际处理");
+  assert.equal(processing?.status, "processing");
+  assert.ok(listFeedbackTicketEvents(ticket.id, userId, "primary")
+    .some((event: any) => event.eventType === "repair_started"));
 });
 
 test("已解决工单可由用户确认关闭或报告仍有问题后重新处理", () => {

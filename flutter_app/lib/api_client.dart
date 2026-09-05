@@ -310,6 +310,20 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<Map<String, dynamic>>> agentRuns({int limit = 50}) async {
+    if (_isGuest) return const [];
+    final value =
+        await _request('GET', '/agent-runs?limit=$limit') as List<dynamic>;
+    return value
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> agentRun(String id) async =>
+      (await _request('GET', '/agent-runs/${Uri.encodeComponent(id)}'))
+          as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> agentTask(String id) async =>
       (await _request('GET', '/agent/tasks/${Uri.encodeComponent(id)}'))
           as Map<String, dynamic>;
@@ -919,6 +933,7 @@ class ApiClient {
     void Function()? onQueued,
     String inputMode = 'voice',
     String? conversationId,
+    String? clientRequestId,
     bool waitForCompletion = true,
   }) async {
     final body = <String, dynamic>{
@@ -926,6 +941,8 @@ class ApiClient {
       'inputMode': inputMode == 'text' ? 'text' : 'voice',
       if (conversationId != null && conversationId.isNotEmpty)
         'conversationId': conversationId,
+      if (clientRequestId != null && clientRequestId.isNotEmpty)
+        'clientRequestId': clientRequestId,
     };
     if (_isGuest) {
       body['knowledge'] = (await _guestStore.knowledge())

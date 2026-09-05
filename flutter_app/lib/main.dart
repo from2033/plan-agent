@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
@@ -24,7 +25,51 @@ import 'qq_group_center_page.dart';
 import 'voice_service.dart';
 import 'world_pulse_page.dart';
 
+const _defaultSentryDsn =
+    'https://5063cb4de7cdcfbaad0a8430962ff46b@o4512028110028800.ingest.us.sentry.io/4512028123267072';
+const _sendSentryTestEvent = bool.fromEnvironment(
+  'SENTRY_TEST_EVENT',
+  defaultValue: false,
+);
+
 Future<void> main() async {
+  const sentryDsn = String.fromEnvironment(
+    'SENTRY_DSN',
+    defaultValue: _defaultSentryDsn,
+  );
+  const appEnvironment = String.fromEnvironment(
+    'APP_ENV',
+    defaultValue: 'development',
+  );
+
+  if (sentryDsn.isEmpty) {
+    await _startApp();
+    return;
+  }
+
+  await SentryFlutter.init(
+    (options) {
+      options
+        ..dsn = sentryDsn
+        ..environment = appEnvironment
+        ..sendDefaultPii = false
+        ..attachScreenshot = false
+        ..captureFailedRequests = false
+        ..tracesSampleRate = 0;
+    },
+    appRunner: () async {
+      await _startApp();
+      if (_sendSentryTestEvent) {
+        await Sentry.captureException(
+          StateError('Sentry integration test'),
+          stackTrace: StackTrace.current,
+        );
+      }
+    },
+  );
+}
+
+Future<void> _startApp() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   await initializeDateFormatting('zh_CN');
@@ -544,6 +589,8 @@ class _PendingVoiceTask {
   final bool fromHome;
   String status = '等待处理';
   String? errorMessage;
+  String? agentRunId;
+  String? clientRequestId;
 
   bool get failed => errorMessage != null;
 }
@@ -558,6 +605,42 @@ class _HomeAnswer {
   final String question;
   final String answer;
   final String? conversationId;
+}
+
+List<Map<String, dynamic>> selectHomeAgentTasks(
+  List<Map<String, dynamic>> tasks, {
+  DateTime? now,
+}) {
+  const activeStages = {
+    'received',
+    'classified',
+    'extracted',
+    'executing',
+    'verifying',
+    'retrying',
+  };
+  const attentionStages = {'awaiting_confirmation', 'awaiting_user'};
+  final recentCutoff = (now ?? DateTime.now()).subtract(
+    const Duration(hours: 24),
+  );
+  bool wasUpdatedRecently(Map<String, dynamic> task) {
+    final updated = DateTime.tryParse(task['updatedAt']?.toString() ?? '');
+    return updated != null && updated.isAfter(recentCutoff);
+  }
+
+  final activeTasks = tasks.where(
+    (task) => activeStages.contains(task['stage']),
+  );
+  final attentionTasks = tasks.where(
+    (task) =>
+        attentionStages.contains(task['stage']) && wasUpdatedRecently(task),
+  );
+  return <Map<String, dynamic>>[
+    ...activeTasks,
+    ...attentionTasks.where(
+      (task) => !activeTasks.any((item) => item['id'] == task['id']),
+    ),
+  ].take(1).toList();
 }
 
 class HomeScreen extends StatefulWidget {
@@ -645,7 +728,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _refreshAgentProgress() async {
     try {
-      final value = await widget.api.agentTasks();
+      final values = await Future.wait([
+        widget.api.agentTasks(),
+        widget.api.agentRuns(limit: 30),
+      ]);
+      final value = values[0];
+      final runs = values[1];
       if (!_agentStagesInitialized) {
         for (final task in value) {
           _knownAgentStages[task['id'].toString()] =
@@ -683,9 +771,63 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           );
         }
       }
-      if (mounted && !_disposing) setState(() => agentTasks = value);
+      if (mounted && !_disposing) {
+        setState(() {
+          agentTasks = value;
+          _mergeAgentRuns(runs);
+        });
+      }
     } catch (_) {
       // 首页继续显示本地处理状态；网络恢复后下一次轮询会自动补齐。
+    }
+  }
+
+  void _mergeAgentRuns(List<Map<String, dynamic>> runs) {
+    const activeStatuses = {
+      'received',
+      'queued',
+      'processing',
+      'deferred',
+      'awaiting_confirmation',
+    };
+    final byId = {
+      for (final task in pendingTasks)
+        if (task.agentRunId != null) task.agentRunId!: task,
+    };
+    for (final run in runs) {
+      final id = run['id']?.toString() ?? '';
+      final status = run['status']?.toString() ?? '';
+      final existing = byId[id];
+      if (activeStatuses.contains(status)) {
+        final task =
+            existing ??
+            _PendingVoiceTask(
+              id: _nextPendingId++,
+              text: run['raw']?.toString() ?? '正在处理输入',
+              fromHome: true,
+            );
+        task.agentRunId = id;
+        task.status = run['statusText']?.toString() ?? '等待Codex处理';
+        if (existing == null) pendingTasks.insert(0, task);
+      } else if (existing != null) {
+        pendingTasks.remove(existing);
+      }
+    }
+
+    final latestAnswer = runs.cast<Map<String, dynamic>?>().firstWhere((run) {
+      final result = run?['result'];
+      return run?['status'] == 'completed' &&
+          result is Map &&
+          result['kind'] == 'ask' &&
+          (result['answer']?.toString().isNotEmpty ?? false);
+    }, orElse: () => null);
+    if (latestAnswer != null) {
+      final result = (latestAnswer['result'] as Map).cast<String, dynamic>();
+      _homeAnswer = _HomeAnswer(
+        question: latestAnswer['raw']?.toString() ?? '',
+        answer: result['answer']?.toString() ?? '',
+        conversationId: result['conversationId']?.toString(),
+      );
     }
   }
 
@@ -957,18 +1099,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     void Function()? onQueued,
   }) async {
     try {
-      final result = await widget.api
-          .ingest(
-            task.text,
-            onQueued: () {
-              if (mounted && !_disposing) {
-                setState(() => task.status = '信息处理中');
-              }
-              onQueued?.call();
-            },
-          )
-          // ApiClient 自己会持续轮询任务；这里留足本地模型失败后回退云端的时间。
-          .timeout(const Duration(seconds: 95));
+      task.clientRequestId ??=
+          'daynote-${DateTime.now().microsecondsSinceEpoch}-${task.id}';
+      final result = await widget.api.ingest(
+        task.text,
+        clientRequestId: task.clientRequestId,
+        waitForCompletion: false,
+        onQueued: () {
+          if (mounted && !_disposing) {
+            setState(() => task.status = '信息处理中');
+          }
+          onQueued?.call();
+        },
+      );
+      if (result['kind'] == 'pending') {
+        if (mounted && !_disposing) {
+          setState(() {
+            task.agentRunId = result['agentRunId']?.toString();
+            task.status = result['statusText']?.toString() ?? '等待Codex处理';
+          });
+        }
+        unawaited(_refreshAgentProgress());
+        return;
+      }
       await refresh();
       if (mounted && !_disposing) {
         setState(() {
@@ -1004,18 +1157,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             }
           }
         }
-      }
-    } on TimeoutException {
-      if (mounted && !_disposing) {
-        setState(() => task.status = '后台处理中');
-      }
-      await Future<void>.delayed(const Duration(seconds: 15));
-      await refresh();
-      if (mounted && !_disposing) {
-        setState(() {
-          pendingTasks.removeWhere((item) => item.id == task.id);
-          _conversationRevision += 1;
-        });
       }
     } catch (exception) {
       if (mounted && !_disposing) {
@@ -1311,7 +1452,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _openFeedbackCenter() async {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => FeedbackCenterPage(api: widget.api)),
+      MaterialPageRoute<void>(
+        builder: (_) => FeedbackCenterPage(api: widget.api),
+      ),
     );
     unawaited(_refreshAgentProgress());
   }
@@ -2283,51 +2426,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   );
 
   Widget _buildPendingTasks() {
-    const activeStages = {
-      'received',
-      'classified',
-      'extracted',
-      'executing',
-      'verifying',
-      'retrying',
-    };
-    const attentionStages = {
-      'awaiting_confirmation',
-      'awaiting_user',
-      'failed',
-      'follow_up',
-    };
-    final recentCutoff = DateTime.now().subtract(const Duration(hours: 24));
-    final attentionAgentTasks = agentTasks
-        .where((task) => attentionStages.contains(task['stage']))
-        .take(3)
-        .toList();
-    final activeAgentTasks = agentTasks
-        .where((task) => activeStages.contains(task['stage']))
-        .take(3)
-        .toList();
-    final completedDesktopTasks = agentTasks
-        .where((task) {
-          if (task['capability'] != 'desktop_intake' ||
-              task['stage'] != 'verified') {
-            return false;
-          }
-          final updated = DateTime.tryParse(
-            task['updatedAt']?.toString() ?? '',
-          );
-          return updated != null && updated.isAfter(recentCutoff);
-        })
-        .take(2)
-        .toList();
-    final visibleAgentTasks = <Map<String, dynamic>>[
-      ...attentionAgentTasks,
-      ...activeAgentTasks.where(
-        (task) => !attentionAgentTasks.any((item) => item['id'] == task['id']),
-      ),
-      ...completedDesktopTasks.where(
-        (task) => !attentionAgentTasks.any((item) => item['id'] == task['id']),
-      ),
-    ].take(4).toList();
+    // 首页只承担实时进度提示，不承载 Agent 历史。最多保留一条当前状态，
+    // 避免长期失败、已完成任务或多条记录持续挤压首页的主要内容。
+    final visibleAgentTasks = selectHomeAgentTasks(agentTasks);
     if (pendingTasks.isEmpty && visibleAgentTasks.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -2356,12 +2457,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   SizedBox(width: 7),
                   Expanded(
                     child: Text(
-                      'Agent 处理与结果',
+                      'Agent 当前状态',
                       style: TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),
                   Text(
-                    '查看过程',
+                    '全部记录',
                     style: TextStyle(fontSize: 11, color: Color(0xff8a8680)),
                   ),
                   Icon(
@@ -2407,7 +2508,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               trailing: const Icon(Icons.chevron_right_rounded, size: 19),
             ),
-          for (final task in pendingTasks.take(3))
+          for (final task in pendingTasks.take(1))
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
