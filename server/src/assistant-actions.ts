@@ -41,6 +41,11 @@ type SuggestedAction = {
   confidence?: unknown;
 };
 
+export function shouldSuggestMediaResearch(note: string, title: string): boolean {
+  return /(查|搜|找|什么时候|何时)/u.test(note)
+    && /(电影|影片|电视剧|剧集|节目|上映|院线|上线|播出)/u.test(`${note} ${title}`);
+}
+
 export function proposeDocumentActions(
   userId: string,
   documentId: string,
@@ -51,7 +56,8 @@ export function proposeDocumentActions(
 ): void {
   const text = `${note} ${title}`;
   const suggested = Array.isArray(suggestedActions) ? suggestedActions as SuggestedAction[] : [];
-  if (!suggested.length && !/(查|搜|找|上映|上线|提醒|待办|记录)/u.test(text)) return;
+  const mediaResearchRequested = shouldSuggestMediaResearch(note, title);
+  if (!suggested.length && !mediaResearchRequested && !/(提醒|待办|代办)/u.test(note)) return;
   const now = new Date().toISOString();
   const add = (kind: string, actionTitle: string, details: string, payload: unknown) => {
     const exists = db.prepare("SELECT id FROM assistant_actions WHERE user_id=? AND source_document_id=? AND kind=? AND status IN ('PENDING','CONFIRMED') LIMIT 1").get(userId, documentId, kind);
@@ -60,14 +66,23 @@ export function proposeDocumentActions(
     const agentTask = createPersistentAgentTask(
       userId,
       capability,
-      { title: actionTitle, details, payload, confirmationReason: "该动作会修改待办、提醒或启动新的处理" },
+      {
+        title: actionTitle,
+        details,
+        payload,
+        confirmationReason: kind === "research"
+          ? "确认后会启动一项只读研究，不会修改原资料"
+          : kind === "reminder"
+            ? "确认后会创建一条系统提醒"
+            : "确认后会创建一条待办",
+      },
       "document",
       documentId,
       rootTaskId ? { rootTaskId } : undefined,
     );
     db.prepare("INSERT INTO assistant_actions (id,user_id,source_document_id,kind,title,details,payload_json,agent_task_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'PENDING',?,?)").run(crypto.randomUUID(), userId, documentId, kind, encField(actionTitle), encField(details), encField(JSON.stringify(payload)), agentTask.id, now, now);
   };
-  if (/(上映|上线|什么时候|何时|查|搜|找)/u.test(note)) add("research", `查询「${title}」上映/上线时间`, "我会查找官方或影院信息，并把结果反馈给你。", { query: `${title} 上映时间 官方` });
+  if (mediaResearchRequested) add("research", `查询「${title}」上映/上线时间`, "确认后会查找官方或影院信息，并把结果反馈给你。", { query: `${title} 上映时间 官方` });
   if (/(提醒|待办|代办)/u.test(note)) add("todo", `加入待办：关注「${title}」`, "确认后会加入待办，并在有明确日期时补充提醒。", { description: `关注「${title}」的上映/上线时间`, category: "电影", priority: "medium" });
   for (const item of suggested.slice(0, 5)) {
     const kind = item.kind === "reminder" ? "reminder" : item.kind === "todo" ? "todo" : null;
