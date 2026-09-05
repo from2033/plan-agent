@@ -354,12 +354,8 @@ export function readDocumentUploadForViewer(
 }
 
 export function completeDocument(id: string, userId: string, result: unknown): void {
-  const document = getDocument(id, userId);
   db.prepare("UPDATE documents SET status='COMPLETE',result_json=?,error=NULL,updated_at=? WHERE id=? AND user_id=?")
     .run(encField(JSON.stringify(result)), new Date().toISOString(), id, userId);
-  if (!document?.mimeType.startsWith("audio/")) {
-    fs.rmSync(uploadPath(id), { force: true });
-  }
 }
 
 export function failDocument(id: string, userId: string, error: string): void {

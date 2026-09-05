@@ -49,6 +49,21 @@ test("录音原文只能由所属账号完整读取", () => {
   assert.deepEqual(readDocumentUpload(stored.id, "user-1")?.content, content);
 });
 
+test("照片识别完成后仍加密保留原图供资料页查看", () => {
+  const content = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+  const stored = storeDocumentUpload(
+    "user-1",
+    "通知照片.jpg",
+    "image/jpeg",
+    content,
+  );
+  completeDocument(stored.id, "user-1", {
+    documentId: stored.id,
+    title: "通知照片",
+  });
+  assert.deepEqual(readDocumentUpload(stored.id, "user-1")?.content, content);
+});
+
 test("删除会议录音会同时删除所属账号的记录和原始音频", () => {
   const content = Buffer.from("meeting-to-delete", "utf8");
   const stored = storeDocumentUpload("user-1", "待删除会议.wav", "audio/wav", content);
