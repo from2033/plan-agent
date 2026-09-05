@@ -36,7 +36,7 @@ const visionOcrScript = path.join(scriptDir, "vision-ocr.swift");
 const documentSearchScript = path.join(scriptDir, "document-search.py");
 const pythonBin = process.env.ASSISTANT_PYTHON_BIN || "/usr/bin/python3";
 const once = process.argv.includes("--once");
-const queueProtocolVersion = 12;
+const queueProtocolVersion = 13;
 const researchModel = process.env.ASSISTANT_RESEARCH_MODEL || "gpt-5.6-sol";
 const researchTimeoutMs = Math.max(120_000, Number(process.env.ASSISTANT_RESEARCH_TIMEOUT_MS || 600_000));
 const projectRoot = process.env.ASSISTANT_PROJECT_ROOT || path.resolve(scriptDir, "..");
@@ -1166,13 +1166,23 @@ export async function runCodex(job) {
       child.once("exit", code => { clearTimeout(timer); resolve(code); });
     });
     if (exitCode !== 0) {
-      const safeHint = /not logged in|authentication|unauthorized/i.test(stderr) ? "codex_auth_failed" : `codex_exit_${exitCode}`;
+      const safeHint = codexFailureHint(stderr, exitCode);
       throw new Error(safeHint);
     }
     return JSON.parse(fs.readFileSync(resultFile, "utf8"));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+export function codexFailureHint(stderr, exitCode) {
+  const text = String(stderr || "");
+  if (/usage limit|rate limit|quota|credits|too many requests|\b429\b/i.test(text)) return "codex_quota_exhausted";
+  if (/not logged in|authentication|unauthorized|invalid token|\b401\b|\b403\b/i.test(text)) return "codex_auth_failed";
+  if (/ECONN|ENOTFOUND|network|socket|connection|fetch failed|timed?\s*out/i.test(text)) return "codex_network_failed";
+  if (/unavailable|overloaded|bad gateway|gateway timeout|\b502\b|\b503\b|\b504\b/i.test(text)) return "codex_service_unavailable";
+  if (/output schema|invalid json|validation|parse error/i.test(text)) return "codex_validation_failed";
+  return `codex_exit_${exitCode}`;
 }
 
 async function feedbackInputWithScreenshots(job, leaseToken) {
@@ -1235,9 +1245,7 @@ async function runFeedbackRepair(job, leaseToken) {
       child.once("exit", code => { clearTimeout(timer); resolve(code); });
     });
     if (exitCode !== 0) {
-      if (/usage limit|rate limit|quota|credits/i.test(stderr)) throw new Error("feedback_quota_exhausted");
-      if (/not logged in|authentication|unauthorized/i.test(stderr)) throw new Error("codex_auth_failed");
-      throw new Error(`feedback_codex_exit_${exitCode}`);
+      throw new Error(codexFailureHint(stderr, exitCode).replace(/^codex_/, "feedback_codex_"));
     }
     return JSON.parse(fs.readFileSync(resultFile, "utf8"));
   } finally {

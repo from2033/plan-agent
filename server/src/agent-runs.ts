@@ -266,6 +266,25 @@ export function failAgentRunByJob(userId: string, jobId: string, errorKind: stri
   return current ? failAgentRun(userId, current.id, errorKind) : null;
 }
 
+export function deferAgentRunByJob(
+  userId: string,
+  jobId: string,
+  errorKind: string,
+  nextAttemptAt: string | null,
+): AgentRun | null {
+  const current = getAgentRunByJob(jobId, userId);
+  if (!current || ["completed", "cancelled"].includes(current.status)) return current;
+  const now = new Date().toISOString();
+  const statusText = errorKind === "quota"
+    ? "Codex额度暂不可用，任务已保存"
+    : "Codex服务暂不可用，任务已保存";
+  db.prepare(`UPDATE agent_runs SET status='deferred',status_text=?,error_kind=?,next_attempt_at=?,
+    updated_at=? WHERE id=? AND user_id=?`)
+    .run(statusText, errorKind.slice(0, 120), nextAttemptAt, now, current.id, normalizeUserId(userId));
+  appendMessage(current.id, "status", statusText, { errorKind, nextAttemptAt }, now);
+  return getAgentRun(current.id, userId);
+}
+
 export function failAgentRun(userId: string, runId: string, errorKind: string): AgentRun | null {
   const current = getAgentRun(runId, userId);
   if (!current || current.status === "cancelled") return current;

@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  codexFailureHint,
   appendVaultDocumentNote,
   conversationRecordProposal,
   deduplicateEvidenceSources,
@@ -43,6 +44,14 @@ const ingestJob = {
     knowledge: [],
   },
 };
+
+test("Codex 非零退出保留可处理的真实错误类别", () => {
+  assert.equal(codexFailureHint("Usage limit reached", 1), "codex_quota_exhausted");
+  assert.equal(codexFailureHint("Not logged in", 1), "codex_auth_failed");
+  assert.equal(codexFailureHint("fetch failed: ECONNRESET", 1), "codex_network_failed");
+  assert.equal(codexFailureHint("503 service unavailable", 1), "codex_service_unavailable");
+  assert.equal(codexFailureHint("unexpected internal issue", 7), "codex_exit_7");
+});
 
 test("follow-up retrieval includes recent conversation context", () => {
   const question = retrievalQuestionForIngest({

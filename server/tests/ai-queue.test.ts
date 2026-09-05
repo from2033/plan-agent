@@ -11,6 +11,7 @@ process.env.DB_PATH = path.join(temporaryDir, "queue.db");
 process.env.DB_ENCRYPTION_KEY = crypto.randomBytes(32).toString("base64");
 
 const {
+  classifyCodexFailure,
   claimAiJob,
   completeAiJob,
   enqueueAiJob,
@@ -18,6 +19,8 @@ const {
   findBestAiJobContextForAgentTask,
   getAiJob,
   getLatestAiJob,
+  laneForKind,
+  retryDelayMinutes,
 } = await import("../src/ai-queue.js");
 
 test("Agent 重试恢复最完整的原始聊天上下文，而不是采用最近一次盲重试", () => {
@@ -234,6 +237,64 @@ test("研究主题和报告加密存储且必须有可核对来源", () => {
   completeAiJob(job.id, claimed!.leaseToken, result);
   assert.deepEqual(getAiJob(job.id, "user-1")?.result, result);
   inspection.close();
+});
+
+test("队列按交互、用户后台、维护顺序取任务", () => {
+  const maintenance = enqueueAiJob("lane-user", "summary", { entries: [] }, 999);
+  const background = enqueueAiJob("lane-user", "document", { documentId: crypto.randomUUID() }, 999);
+  const interactive = enqueueAiJob("lane-user", "ingest", { raw: "现在回答我" }, 1);
+  assert.equal(laneForKind(maintenance.kind), "maintenance");
+  assert.equal(laneForKind(background.kind), "user_background");
+  assert.equal(laneForKind(interactive.kind), "interactive");
+
+  const first = claimAiJob("lane-worker-1");
+  assert.equal(first?.job.id, interactive.id);
+  assert.equal(claimAiJob("another-worker"), null, "已有 Codex 任务运行时必须全局单并发");
+  failAiJob(first!.job.id, first!.leaseToken, "test cleanup", false);
+  const second = claimAiJob("lane-worker-2");
+  assert.equal(second?.job.id, background.id);
+  failAiJob(second!.job.id, second!.leaseToken, "test cleanup", false);
+  const third = claimAiJob("lane-worker-3");
+  assert.equal(third?.job.id, maintenance.id);
+  failAiJob(third!.job.id, third!.leaseToken, "test cleanup", false);
+});
+
+test("五十个文档任务不会堵住新交互问题", () => {
+  const documents = Array.from({ length: 50 }, (_, index) =>
+    enqueueAiJob("stress-user", "document", {
+      documentId: crypto.randomUUID(),
+      fileName: `批量资料-${index}.pdf`,
+    }, 200));
+  const question = enqueueAiJob("stress-user", "ingest", { raw: "一个简单问题" }, 1);
+  const claimed = claimAiJob("stress-worker");
+  assert.equal(claimed?.job.id, question.id);
+  failAiJob(question.id, claimed!.leaseToken, "test cleanup", false);
+  for (const document of documents) {
+    const next = claimAiJob(`stress-cleanup-${document.id}`);
+    assert.ok(next);
+    failAiJob(next!.job.id, next!.leaseToken, "test cleanup", false);
+  }
+});
+
+test("Codex 临时异常进入熔断和分级退避，不立即重发完整任务", () => {
+  assert.equal(classifyCodexFailure("usage limit exceeded"), "quota");
+  assert.equal(classifyCodexFailure("fetch failed ECONNRESET"), "network");
+  assert.deepEqual([1, 2, 3, 4, 9].map(retryDelayMinutes), [1, 5, 15, 60, 60]);
+
+  const startedAt = new Date();
+  const job = enqueueAiJob("deferred-user", "ingest", { raw: "保留这个问题" });
+  const claimed = claimAiJob("deferred-worker", startedAt);
+  assert.equal(claimed?.job.id, job.id);
+  failAiJob(job.id, claimed!.leaseToken, "network timeout", true);
+  const deferred = getAiJob(job.id, "deferred-user");
+  assert.equal(deferred?.status, "DEFERRED");
+  assert.equal(deferred?.errorKind, "network");
+  const availableAt = new Date(deferred!.availableAt!);
+  assert.ok(availableAt.getTime() >= startedAt.getTime() + 59_000);
+  assert.equal(claimAiJob("too-early", new Date(startedAt.getTime() + 30_000)), null);
+  const resumed = claimAiJob("resume-worker", new Date(availableAt.getTime() + 1_000));
+  assert.equal(resumed?.job.id, job.id);
+  failAiJob(job.id, resumed!.leaseToken, "test cleanup", false);
 });
 
 test.after(() => {

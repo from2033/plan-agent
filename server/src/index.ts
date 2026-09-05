@@ -91,6 +91,7 @@ import {
   completeAgentRun,
   completeAgentRunByJob,
   createAgentRun,
+  deferAgentRunByJob,
   failAgentRun,
   failAgentRunByJob,
   getAgentRun,
@@ -685,6 +686,10 @@ app.post(`${WORKER_API}/claim`, requireWorker, (req, res) => {
     res.status(204).end();
     return;
   }
+  bindAgentRun(claimed.job.userId, String((claimed.job.input as { agentRunId?: unknown })?.agentRunId || ""), {
+    status: "processing",
+    statusText: "总管Agent正在处理",
+  });
   const requestedConversationId = String(
     (claimed.job.input as { conversationId?: unknown })?.conversationId || "",
   );
@@ -1532,6 +1537,14 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
     }
   }
   const current = leased ? getAiJob(leased.id, leased.userId) : null;
+  if (leased && current?.status === "DEFERRED") {
+    deferAgentRunByJob(
+      leased.userId,
+      leased.id,
+      current.errorKind || "service_unavailable",
+      current.availableAt,
+    );
+  }
   if (leased && current?.status === "FAILED" && (leased.kind === "feedback_triage" || leased.kind === "feedback_repair")) {
     const ticketId = String((leased.input as { ticketId?: unknown })?.ticketId || "");
     const ticket = getFeedbackTicket(ticketId, leased.userId, PRIMARY_USER);
@@ -2909,7 +2922,14 @@ app.get(`${API}/ai-jobs/:id`, (req, res) => {
     res.status(404).json({ error: "任务不存在" });
     return;
   }
-  res.json({ status: job.status, result: job.result, error: job.error });
+  res.json({
+    status: job.status,
+    result: job.result,
+    error: job.error,
+    errorKind: job.errorKind,
+    availableAt: job.availableAt,
+    lane: job.lane,
+  });
 });
 
 app.get(`${API}/agent-runs`, (req, res) => {

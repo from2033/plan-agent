@@ -7,20 +7,24 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 12;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-09-01.1";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 13;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-09-05.1";
 
 export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse" | "world_discovery" | "research" | "feedback_triage" | "feedback_repair" | "standard_evolution";
-export type AiJobStatus = "QUEUED" | "PROCESSING" | "COMPLETE" | "FAILED";
+export type AiJobStatus = "QUEUED" | "PROCESSING" | "DEFERRED" | "COMPLETE" | "FAILED";
+export type AiJobLane = "interactive" | "user_background" | "maintenance";
 
 export interface AiJob {
   id: string;
   userId: string;
   kind: AiJobKind;
   status: AiJobStatus;
+  lane: AiJobLane;
   input: unknown;
   result: unknown | null;
   error: string | null;
+  errorKind: string | null;
+  availableAt: string | null;
   attempts: number;
   createdAt: string;
   updatedAt: string;
@@ -37,6 +41,9 @@ db.exec(`
     error           TEXT,
     attempts        INTEGER NOT NULL DEFAULT 0,
     priority        INTEGER NOT NULL DEFAULT 50,
+    lane            TEXT NOT NULL DEFAULT 'user_background',
+    available_at    TEXT,
+    error_kind      TEXT,
     worker_id       TEXT,
     lease_hash      TEXT,
     lease_until     TEXT,
@@ -50,10 +57,32 @@ db.exec(`
     worker_id TEXT PRIMARY KEY,
     last_seen_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS codex_service_state (
+    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    error_kind TEXT,
+    open_until TEXT,
+    updated_at TEXT NOT NULL
+  );
 `);
 const hasPriority = (db.prepare("PRAGMA table_info(ai_jobs)").all() as unknown as { name: string }[])
   .some((column) => column.name === "priority");
 if (!hasPriority) db.exec("ALTER TABLE ai_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 50");
+const jobColumns = new Set((db.prepare("PRAGMA table_info(ai_jobs)").all() as unknown as { name: string }[])
+  .map(column => column.name));
+if (!jobColumns.has("lane")) db.exec("ALTER TABLE ai_jobs ADD COLUMN lane TEXT NOT NULL DEFAULT 'user_background'");
+if (!jobColumns.has("available_at")) db.exec("ALTER TABLE ai_jobs ADD COLUMN available_at TEXT");
+if (!jobColumns.has("error_kind")) db.exec("ALTER TABLE ai_jobs ADD COLUMN error_kind TEXT");
+db.exec(`
+  UPDATE ai_jobs SET lane='interactive'
+    WHERE kind IN ('ingest','correct','document_question','document_note')
+      AND status IN ('QUEUED','PROCESSING','DEFERRED');
+  UPDATE ai_jobs SET lane='maintenance'
+    WHERE kind IN ('summary','world_pulse','world_discovery','standard_evolution')
+      AND status IN ('QUEUED','PROCESSING','DEFERRED');
+  CREATE INDEX IF NOT EXISTS idx_ai_jobs_dispatch
+    ON ai_jobs(status,lane,priority,available_at,created_at);
+`);
 
 const EntryFieldsSchema = z.object({
   type: z.enum(["activity", "expense", "memo", "wish"]),
@@ -302,9 +331,12 @@ interface JobRow {
   user_id: string;
   kind: AiJobKind;
   status: AiJobStatus;
+  lane: AiJobLane;
   input_json: string;
   result_json: string | null;
   error: string | null;
+  error_kind?: string | null;
+  available_at?: string | null;
   attempts: number;
   created_at: string;
   updated_at: string;
@@ -319,13 +351,22 @@ function rowToJob(row: JobRow): AiJob {
     userId: row.user_id,
     kind: row.kind,
     status: row.status,
+    lane: row.lane || laneForKind(row.kind),
     input: JSON.parse(decField(row.input_json)),
     result: row.result_json ? JSON.parse(decField(row.result_json)) : null,
     error: row.error,
+    errorKind: row.error_kind || null,
+    availableAt: row.available_at || null,
     attempts: row.attempts,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+export function laneForKind(kind: AiJobKind): AiJobLane {
+  if (["ingest", "correct", "document_question", "document_note"].includes(kind)) return "interactive";
+  if (["summary", "world_pulse", "world_discovery", "standard_evolution"].includes(kind)) return "maintenance";
+  return "user_background";
 }
 
 export function enqueueAiJob(
@@ -336,9 +377,10 @@ export function enqueueAiJob(
 ): AiJob {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
+  const lane = laneForKind(kind);
   db.prepare(`INSERT INTO ai_jobs
-    (id,user_id,kind,status,input_json,priority,created_at,updated_at)
-    VALUES (?,?,?,'QUEUED',?,?,?,?)`).run(
+    (id,user_id,kind,status,input_json,priority,lane,created_at,updated_at)
+    VALUES (?,?,?,'QUEUED',?,?,?,?,?)`).run(
       id,
       userId,
       kind,
@@ -346,6 +388,7 @@ export function enqueueAiJob(
         ? encField(JSON.stringify(input))
         : JSON.stringify(input),
       priority,
+      lane,
       now,
       now,
     );
@@ -423,7 +466,7 @@ export function findActiveSummaryJob(
   inputHash: string,
 ): AiJob | null {
   const row = db.prepare(`SELECT * FROM ai_jobs
-    WHERE user_id=? AND kind='summary' AND status IN ('QUEUED','PROCESSING')
+    WHERE user_id=? AND kind='summary' AND status IN ('QUEUED','PROCESSING','DEFERRED')
       AND json_extract(input_json,'$.reportCache.periodKey')=?
       AND json_extract(input_json,'$.reportCache.scope')=?
       AND json_extract(input_json,'$.reportCache.inputHash')=?
@@ -431,22 +474,26 @@ export function findActiveSummaryJob(
   return row ? rowToJob(row) : null;
 }
 
-export function claimAiJob(workerId: string): { job: AiJob; leaseToken: string; leaseSeconds: number } | null {
-  const now = new Date();
+export function claimAiJob(workerId: string, now = new Date()): { job: AiJob; leaseToken: string; leaseSeconds: number } | null {
   const nowIso = now.toISOString();
   db.prepare(`INSERT INTO codex_workers (worker_id,last_seen_at) VALUES (?,?)
     ON CONFLICT(worker_id) DO UPDATE SET last_seen_at=excluded.last_seen_at`).run(workerId, nowIso);
   const leaseSeconds = Math.max(30, Number(process.env.CODEX_WORKER_LEASE_SECONDS || 180));
-  const maxAttempts = Math.max(1, Number(process.env.CODEX_WORKER_MAX_ATTEMPTS || 3));
-  const active = db.prepare(`SELECT id FROM ai_jobs WHERE worker_id=? AND status='PROCESSING' AND lease_until>? LIMIT 1`)
-    .get(workerId, nowIso);
+  const service = db.prepare("SELECT open_until FROM codex_service_state WHERE singleton_id=1")
+    .get() as { open_until: string | null } | undefined;
+  if (service?.open_until && service.open_until > nowIso) return null;
+  const active = db.prepare(`SELECT id FROM ai_jobs WHERE status='PROCESSING' AND lease_until>? LIMIT 1`)
+    .get(nowIso);
   if (active) return null;
 
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare(`SELECT * FROM ai_jobs
-      WHERE attempts < ? AND (status='QUEUED' OR (status='PROCESSING' AND lease_until<=?))
-      ORDER BY priority DESC, created_at ASC LIMIT 1`).get(maxAttempts, nowIso) as unknown as JobRow | undefined;
+      WHERE status='QUEUED'
+        OR (status='DEFERRED' AND available_at<=?)
+        OR (status='PROCESSING' AND lease_until<=?)
+      ORDER BY CASE lane WHEN 'interactive' THEN 3 WHEN 'user_background' THEN 2 ELSE 1 END DESC,
+        priority DESC, created_at ASC LIMIT 1`).get(nowIso, nowIso) as unknown as JobRow | undefined;
     if (!row) {
       db.exec("COMMIT");
       return null;
@@ -454,7 +501,7 @@ export function claimAiJob(workerId: string): { job: AiJob; leaseToken: string; 
     const leaseToken = crypto.randomBytes(32).toString("base64url");
     const leaseUntil = new Date(now.getTime() + leaseSeconds * 1000).toISOString();
     db.prepare(`UPDATE ai_jobs SET status='PROCESSING',worker_id=?,lease_hash=?,lease_until=?,heartbeat_at=?,
-      attempts=attempts+1,error=NULL,updated_at=? WHERE id=?`)
+      attempts=attempts+1,error=NULL,error_kind=NULL,available_at=NULL,updated_at=? WHERE id=?`)
       .run(workerId, hashSecret(leaseToken), leaseUntil, nowIso, nowIso, row.id);
     db.exec("COMMIT");
     const claimed = db.prepare("SELECT * FROM ai_jobs WHERE id=?").get(row.id) as unknown as JobRow;
@@ -503,17 +550,48 @@ export function completeAiJob(
     ? encField(JSON.stringify(result))
     : JSON.stringify(result);
   db.prepare(`UPDATE ai_jobs SET status='COMPLETE',result_json=?,lease_hash=NULL,lease_until=NULL,
-    heartbeat_at=NULL,error=NULL,updated_at=? WHERE id=?`).run(storedResult, now, id);
+    heartbeat_at=NULL,error=NULL,error_kind=NULL,available_at=NULL,updated_at=? WHERE id=?`).run(storedResult, now, id);
+  db.prepare(`INSERT INTO codex_service_state(singleton_id,failure_count,error_kind,open_until,updated_at)
+    VALUES(1,0,NULL,NULL,?) ON CONFLICT(singleton_id) DO UPDATE SET
+    failure_count=0,error_kind=NULL,open_until=NULL,updated_at=excluded.updated_at`).run(now);
   return rowToJob(db.prepare("SELECT * FROM ai_jobs WHERE id=?").get(id) as unknown as JobRow);
 }
 
 export function failAiJob(id: string, leaseToken: string, reason: string, retryable: boolean): boolean {
   const row = leasedRow(id, leaseToken);
   if (!row) return false;
-  const maxAttempts = Math.max(1, Number(process.env.CODEX_WORKER_MAX_ATTEMPTS || 3));
-  const status: AiJobStatus = retryable && row.attempts < maxAttempts ? "QUEUED" : "FAILED";
-  const now = new Date().toISOString();
-  db.prepare(`UPDATE ai_jobs SET status=?,error=?,worker_id=NULL,lease_hash=NULL,lease_until=NULL,
-    heartbeat_at=NULL,updated_at=? WHERE id=?`).run(status, reason.slice(0, 500), now, id);
+  const errorKind = classifyCodexFailure(reason);
+  const availabilityFailure = ["quota", "authentication", "network", "service_unavailable"].includes(errorKind);
+  const maxAttempts = Math.max(1, Number(process.env.CODEX_WORKER_MAX_ATTEMPTS || 2));
+  const shouldDefer = availabilityFailure || (retryable && row.attempts < maxAttempts);
+  const status: AiJobStatus = shouldDefer ? "DEFERRED" : "FAILED";
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  const delayMinutes = retryDelayMinutes(row.attempts);
+  const availableAt = shouldDefer
+    ? new Date(nowDate.getTime() + delayMinutes * 60_000).toISOString()
+    : null;
+  db.prepare(`UPDATE ai_jobs SET status=?,error=?,error_kind=?,available_at=?,worker_id=NULL,
+    lease_hash=NULL,lease_until=NULL,heartbeat_at=NULL,updated_at=? WHERE id=?`)
+    .run(status, reason.slice(0, 500), errorKind, availableAt, now, id);
+  if (availabilityFailure) {
+    db.prepare(`INSERT INTO codex_service_state(singleton_id,failure_count,error_kind,open_until,updated_at)
+      VALUES(1,1,?,?,?) ON CONFLICT(singleton_id) DO UPDATE SET
+      failure_count=failure_count+1,error_kind=excluded.error_kind,open_until=excluded.open_until,
+      updated_at=excluded.updated_at`).run(errorKind, availableAt, now);
+  }
   return true;
+}
+
+export function retryDelayMinutes(attempts: number): number {
+  return [1, 5, 15, 60][Math.min(3, Math.max(0, attempts - 1))];
+}
+
+export function classifyCodexFailure(reason: string): string {
+  if (/usage|limit|quota|credit|429/i.test(reason)) return "quota";
+  if (/auth|login|unauthorized|401|forbidden|403/i.test(reason)) return "authentication";
+  if (/network|socket|ECONN|ENOTFOUND|fetch failed|timed?\s*out/i.test(reason)) return "network";
+  if (/unavailable|overloaded|502|503|504/i.test(reason)) return "service_unavailable";
+  if (/invalid|schema|validation|parse|json/i.test(reason)) return "validation";
+  return "worker_error";
 }
