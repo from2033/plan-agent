@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   auditStaleFeedbackTickets,
+  claimFeedbackTicketProcessing,
   createFeedbackTicket,
   dueFeedbackTickets,
   getFeedbackTicket,
@@ -44,6 +45,17 @@ test("额度不足的反馈会延期，并在到期后重新进入待处理集�
   transitionFeedbackTicket(ticket.id, "deferred", "retry_scheduled", "额度不足，稍后继续", { nextAttemptAt: retryAt });
   assert.ok(!dueFeedbackTickets(new Date(), 5_000).some(item => item.id === ticket.id));
   assert.ok(dueFeedbackTickets(new Date(Date.now() + 120_000), 5_000).some(item => item.id === ticket.id));
+});
+
+test("蓝绿实例同时续办同一工单时只有一个实例能原子认领", () => {
+  const userId = `feedback-claim-${Date.now()}`;
+  const ticket = createFeedbackTicket(userId, { title: "并发续办", description: "避免重复执行" });
+  transitionFeedbackTicket(ticket.id, "submitted", "submitted", "已提交");
+  const deferred = transitionFeedbackTicket(ticket.id, "deferred", "retry_scheduled", "稍后续办", {
+    nextAttemptAt: new Date(Date.now() + 60_000).toISOString(),
+  })!;
+  assert.equal(claimFeedbackTicketProcessing(deferred)?.status, "processing");
+  assert.equal(claimFeedbackTicketProcessing(deferred), null);
 });
 
 test("反馈工单能力公开确认、重试和关闭验收契约", () => {

@@ -193,6 +193,7 @@ import { getFinanceCategoryTransactions, getFinanceOverview, importAlipayBill } 
 import {
   auditStaleFeedbackTickets,
   addFeedbackAttachment,
+  claimFeedbackTicketProcessing,
   createFeedbackTicket,
   deleteFeedbackAccountData,
   dueFeedbackTickets,
@@ -1036,15 +1037,17 @@ function queueFeedbackTriage(ticket: FeedbackTicket): FeedbackTicket {
 }
 
 function queueFeedbackRepair(ticket: FeedbackTicket, confirmedByPrimary = false): FeedbackTicket {
-  const job = enqueueAiJob(ticket.userId, "feedback_repair", feedbackJobInput(ticket, confirmedByPrimary), 125);
+  const claimed = claimFeedbackTicketProcessing(ticket);
+  if (!claimed) return getFeedbackTicket(ticket.id, ticket.userId, PRIMARY_USER) || ticket;
+  const job = enqueueAiJob(claimed.userId, "feedback_repair", feedbackJobInput(claimed, confirmedByPrimary), 125);
   const updated = transitionFeedbackTicket(
-    ticket.id,
+    claimed.id,
     "processing",
     "repair_started",
     confirmedByPrimary
       ? "主账号已确认关键步骤，Agent 继续处理并运行验收"
       : "Agent 已接单，正在结合原对话直接处理并验证结果",
-    { jobId: job.id, incrementAttempts: true, nextAttemptAt: null, confirmationQuestion: null },
+    { jobId: job.id, nextAttemptAt: null, confirmationQuestion: null },
   )!;
   const task = updated.agentTaskId ? getPersistentAgentTask(updated.agentTaskId, updated.userId) : null;
   if (task?.stage === "awaiting_confirmation" || task?.stage === "retrying" || task?.stage === "follow_up") {

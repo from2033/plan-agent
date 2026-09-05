@@ -315,6 +315,21 @@ export function transitionFeedbackTicket(
   return decode(rawTicket(id)!);
 }
 
+/** Atomically reserves one ticket before a repair job is enqueued.
+ * The updatedAt compare-and-swap also protects blue/green overlap during deploys.
+ */
+export function claimFeedbackTicketProcessing(ticket: FeedbackTicket): FeedbackTicket | null {
+  const row = rawTicket(ticket.id);
+  if (!row || row.status !== ticket.status || row.updated_at !== ticket.updatedAt) return null;
+  const now = new Date().toISOString();
+  const result = db.prepare(`UPDATE feedback_tickets
+    SET status='processing',job_id=NULL,next_attempt_at=NULL,attempts=attempts+1,updated_at=?
+    WHERE id=? AND status=? AND updated_at=?`).run(now, ticket.id, ticket.status, ticket.updatedAt);
+  if (Number(result.changes) !== 1) return null;
+  addEvent(row, "repair_claimed", row.status, "processing", "Agent 已原子认领工单，准备建立唯一执行任务");
+  return decode(rawTicket(ticket.id)!);
+}
+
 export function updateFeedbackAnalysis(
   id: string,
   analysis: {
