@@ -17,6 +17,7 @@ db.exec(`
     user_id TEXT NOT NULL,
     title TEXT NOT NULL,
     description TEXT NOT NULL,
+    context_json TEXT,
     source_task_id TEXT,
     agent_task_id TEXT,
     job_id TEXT,
@@ -61,6 +62,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_feedback_ticket_events_ticket
     ON feedback_ticket_events(ticket_id, created_at);
 `);
+const ticketColumns = new Set((db.prepare("PRAGMA table_info(feedback_tickets)").all() as unknown as { name: string }[])
+  .map(column => column.name));
+if (!ticketColumns.has("context_json")) db.exec("ALTER TABLE feedback_tickets ADD COLUMN context_json TEXT");
 
 export type FeedbackTicketStatus =
   | "draft"
@@ -87,6 +91,7 @@ export interface FeedbackTicket {
   userId: string;
   title: string;
   description: string;
+  context: Record<string, unknown>;
   sourceTaskId: string | null;
   agentTaskId: string | null;
   jobId: string | null;
@@ -106,6 +111,7 @@ export interface FeedbackTicket {
 
 type TicketRow = {
   id: string; user_id: string; title: string; description: string;
+  context_json: string | null;
   source_task_id: string | null; agent_task_id: string | null; job_id: string | null;
   status: FeedbackTicketStatus; priority: "low" | "normal" | "high";
   plan_json: string | null; acceptance_json: string; resolution_json: string | null;
@@ -139,6 +145,7 @@ function decode(row: TicketRow): FeedbackTicket {
     userId: row.user_id,
     title: decField(row.title),
     description: decField(row.description),
+    context: row.context_json ? JSON.parse(decField(row.context_json)) : {},
     sourceTaskId: row.source_task_id,
     agentTaskId: row.agent_task_id,
     jobId: row.job_id,
@@ -184,14 +191,24 @@ function addEvent(
 
 export function createFeedbackTicket(
   userId: string,
-  value: { title: string; description: string; sourceTaskId?: string; priority?: "low" | "normal" | "high" },
+  value: {
+    title?: string;
+    description?: string;
+    transcript?: string;
+    context?: Record<string, unknown>;
+    sourceTaskId?: string;
+    priority?: "low" | "normal" | "high";
+  },
 ): FeedbackTicket {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
+  const description = (value.transcript || value.description || "").trim().slice(0, 10_000);
+  const title = value.title?.trim().slice(0, 160)
+    || (description ? description.replace(/[。！？!?\n].*$/u, "").slice(0, 40) : `图片反馈 ${now.slice(0, 10)}`);
   db.prepare(`INSERT INTO feedback_tickets
-    (id,user_id,title,description,source_task_id,status,priority,acceptance_json,created_at,updated_at)
-    VALUES (?,?,?,?,?,'draft',?,?,?,?)`).run(
-      id, userId, encField(value.title.trim().slice(0, 160)), encField(value.description.trim().slice(0, 10_000)),
+    (id,user_id,title,description,context_json,source_task_id,status,priority,acceptance_json,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,'draft',?,?,?,?)`).run(
+      id, userId, encField(title), encField(description), encField(JSON.stringify(value.context || {})),
       value.sourceTaskId || null, value.priority || "normal", encField("[]"), now, now,
     );
   const row = rawTicket(id)!;
@@ -221,7 +238,7 @@ export function addFeedbackAttachment(
   db.prepare(`INSERT INTO feedback_attachments
     (id,ticket_id,user_id,file_name,mime_type,byte_size,created_at) VALUES (?,?,?,?,?,?,?)`)
     .run(id, ticketId, userId, encField(fileName.slice(0, 240)), mimeType, content.length, now);
-  addEvent(ticket, "attachment_added", ticket.status, ticket.status, `已添加截图：${fileName}`, { attachmentId: id });
+  addEvent(ticket, "attachment_added", ticket.status, ticket.status, `已添加图片：${fileName}`, { attachmentId: id });
   return attachments(ticketId).find(item => item.id === id) || null;
 }
 
@@ -298,6 +315,37 @@ export function transitionFeedbackTicket(
   return decode(rawTicket(id)!);
 }
 
+export function updateFeedbackAnalysis(
+  id: string,
+  analysis: {
+    ticketTitle: string;
+    issueSummary: string;
+    reproductionClues: string[];
+    proposedPlan: string[];
+    acceptanceChecks: string[];
+  },
+): FeedbackTicket | null {
+  const ticket = rawTicket(id);
+  if (!ticket) return null;
+  const now = new Date().toISOString();
+  const plan = {
+    diagnosis: analysis.issueSummary,
+    reproductionClues: analysis.reproductionClues,
+    proposedPlan: analysis.proposedPlan,
+  };
+  db.prepare(`UPDATE feedback_tickets SET title=?,description=?,plan_json=?,acceptance_json=?,updated_at=? WHERE id=?`)
+    .run(
+      encField(analysis.ticketTitle.trim().slice(0, 160)),
+      encField(analysis.issueSummary.trim().slice(0, 2_000)),
+      encField(JSON.stringify(plan)),
+      encField(JSON.stringify(analysis.acceptanceChecks.slice(0, 20))),
+      now,
+      id,
+    );
+  addEvent(ticket, "analysis_ready", ticket.status, ticket.status, "Agent 已自动生成标题、问题摘要、复现线索和验收标准", plan);
+  return decode(rawTicket(id)!);
+}
+
 export function getFeedbackTicket(id: string, userId: string, primaryUser: string): FeedbackTicket | null {
   const row = rawTicket(id);
   return visible(row, userId, primaryUser) ? decode(row!) : null;
@@ -333,6 +381,20 @@ export function dueFeedbackTickets(now = new Date()): FeedbackTicket[] {
   return (db.prepare(`SELECT * FROM feedback_tickets
     WHERE status='deferred' AND next_attempt_at IS NOT NULL AND next_attempt_at<=?
     ORDER BY next_attempt_at LIMIT 50`).all(now.toISOString()) as unknown as TicketRow[]).map(decode);
+}
+
+export function auditStaleFeedbackTickets(now = new Date(), staleMinutes = 15): FeedbackTicket[] {
+  const cutoff = new Date(now.getTime() - Math.max(5, staleMinutes) * 60_000).toISOString();
+  const stale = db.prepare(`SELECT * FROM feedback_tickets
+    WHERE status IN ('triaging','processing','verifying') AND updated_at<=?
+    ORDER BY updated_at LIMIT 50`).all(cutoff) as unknown as TicketRow[];
+  return stale.map(row => transitionFeedbackTicket(
+    row.id,
+    "deferred",
+    "stale_watchdog",
+    "处理心跳已超时，工单已保留并安排自动续办",
+    { nextAttemptAt: now.toISOString(), jobId: null },
+  )!);
 }
 
 export function deleteFeedbackAccountData(userId: string): void {

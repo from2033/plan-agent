@@ -388,8 +388,8 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> createFeedbackTicket({
-    required String title,
-    required String description,
+    String transcript = '',
+    Map<String, dynamic> context = const {},
     String? sourceTaskId,
     String priority = 'normal',
   }) async =>
@@ -397,8 +397,8 @@ class ApiClient {
             'POST',
             '/feedback/tickets',
             body: {
-              'title': title.trim(),
-              'description': description.trim(),
+              'transcript': transcript.trim(),
+              'context': context,
               'priority': priority,
               if (sourceTaskId?.isNotEmpty == true)
                 'sourceTaskId': sourceTaskId,

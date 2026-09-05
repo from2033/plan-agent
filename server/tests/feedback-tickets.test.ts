@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  auditStaleFeedbackTickets,
   createFeedbackTicket,
   dueFeedbackTickets,
   getFeedbackTicket,
   listFeedbackTicketEvents,
   transitionFeedbackTicket,
+  updateFeedbackAnalysis,
 } from "../src/feedback-tickets.js";
 import { registeredCapabilities } from "../src/agent-contract.js";
 import "../src/agent-standards.js";
@@ -71,4 +73,34 @@ test("已解决工单可由用户确认关闭或报告仍有问题后重新处�
   const unresolved = createFeedbackTicket(userId, { title: "仍有问题", description: "用户发现修复不完整" });
   transitionFeedbackTicket(unresolved.id, "resolved", "machine_resolved", "机器验收通过");
   assert.equal(transitionFeedbackTicket(unresolved.id, "processing", "user_unsatisfied", "重新打开")?.status, "processing");
+});
+
+test("无标题反馈由 Agent 自动生成标题、摘要、计划和验收标准", () => {
+  const userId = `feedback-auto-summary-${Date.now()}`;
+  const ticket = createFeedbackTicket(userId, {
+    transcript: "首页一直显示处理记录，把下面内容挡住了。",
+    context: { page: "home", appVersion: "1.0.0", requestId: "request-1" },
+  });
+  assert.match(ticket.title, /首页一直显示处理记录/);
+  assert.equal(ticket.context.requestId, "request-1");
+  const analyzed = updateFeedbackAnalysis(ticket.id, {
+    ticketTitle: "首页处理记录遮挡内容",
+    issueSummary: "首页状态卡持续占据主要区域。",
+    reproductionClues: ["打开首页"],
+    proposedPlan: ["只显示当前任务"],
+    acceptanceChecks: ["无任务时状态卡隐藏"],
+  });
+  assert.equal(analyzed?.title, "首页处理记录遮挡内容");
+  assert.deepEqual(analyzed?.acceptanceChecks, ["无任务时状态卡隐藏"]);
+});
+
+test("处理或验收超过心跳期限的历史工单自动延期续办", () => {
+  const userId = `feedback-watchdog-${Date.now()}`;
+  const ticket = createFeedbackTicket(userId, { transcript: "这个工单不要永久卡住" });
+  transitionFeedbackTicket(ticket.id, "submitted", "submitted", "已提交");
+  transitionFeedbackTicket(ticket.id, "processing", "started", "处理中");
+  const future = new Date(Date.now() + 16 * 60_000);
+  const repaired = auditStaleFeedbackTickets(future, 15);
+  assert.ok(repaired.some(item => item.id === ticket.id && item.status === "deferred"));
+  assert.equal(getFeedbackTicket(ticket.id, userId, "primary")?.nextAttemptAt, future.toISOString());
 });

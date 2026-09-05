@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import 'api_client.dart';
+import 'voice_service.dart';
 
 String feedbackStatusLabel(String? status) => switch (status) {
   'draft' => '草稿',
@@ -154,7 +155,7 @@ class _FeedbackCenterPageState extends State<FeedbackCenterPage> {
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                         subtitle: Text(
-                          '${feedbackStatusLabel(ticket['status']?.toString())}${ticket['attachments'] is List ? ' · ${(ticket['attachments'] as List).length} 张截图' : ''}',
+                          '${feedbackStatusLabel(ticket['status']?.toString())}${ticket['attachments'] is List ? ' · ${(ticket['attachments'] as List).length} 张图片' : ''}',
                         ),
                         trailing: const Icon(Icons.chevron_right_rounded),
                       ),
@@ -187,19 +188,58 @@ class NewFeedbackTicketPage extends StatefulWidget {
 }
 
 class _NewFeedbackTicketPageState extends State<NewFeedbackTicketPage> {
-  final title = TextEditingController();
-  final description = TextEditingController();
+  late final VoiceService voice = VoiceService(widget.api);
   final screenshots = <_PickedScreenshot>[];
   bool busy = false;
+  bool recording = false;
+  bool transcribing = false;
+  String transcript = '';
   String? error;
   String? ticketId;
   int uploadedScreenshotCount = 0;
 
   @override
   void dispose() {
-    title.dispose();
-    description.dispose();
+    unawaited(voice.dispose());
     super.dispose();
+  }
+
+  Future<void> startVoice() async {
+    if (busy || recording || transcribing || ticketId != null) return;
+    setState(() {
+      recording = true;
+      error = null;
+    });
+    try {
+      await voice.start();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          recording = false;
+          error = e.toString();
+        });
+      }
+    }
+  }
+
+  Future<void> stopVoice() async {
+    if (!recording) return;
+    setState(() {
+      recording = false;
+      transcribing = true;
+    });
+    try {
+      final audio = await voice.stopRecording(
+        shortRecordingMessage: '按住多说一会儿再松手',
+      );
+      final text = (await voice.transcribeLong(audio)).trim();
+      if (text.isEmpty) throw const ApiException('没有识别到反馈内容，请再说一次');
+      if (mounted) setState(() => transcript = text);
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    } finally {
+      if (mounted) setState(() => transcribing = false);
+    }
   }
 
   Future<void> pickScreenshots() async {
@@ -229,8 +269,8 @@ class _NewFeedbackTicketPageState extends State<NewFeedbackTicketPage> {
   }
 
   Future<void> submit() async {
-    if (title.text.trim().length < 2 || description.text.trim().length < 2) {
-      setState(() => error = '请填写标题和具体问题');
+    if (screenshots.isEmpty && transcript.isEmpty) {
+      setState(() => error = '请添加图片或按住说话后再提交');
       return;
     }
     setState(() {
@@ -240,8 +280,17 @@ class _NewFeedbackTicketPageState extends State<NewFeedbackTicketPage> {
     try {
       if (ticketId == null) {
         final ticket = await widget.api.createFeedbackTicket(
-          title: title.text,
-          description: description.text,
+          transcript: transcript,
+          context: {
+            'page': 'feedback_center',
+            'appVersion': const String.fromEnvironment(
+              'APP_VERSION',
+              defaultValue: '1.0.0',
+            ),
+            'requestId': 'feedback-${DateTime.now().microsecondsSinceEpoch}',
+            'submittedAt': DateTime.now().toUtc().toIso8601String(),
+            if (widget.sourceTaskId != null) 'taskId': widget.sourceTaskId,
+          },
           sourceTaskId: widget.sourceTaskId,
         );
         ticketId = ticket['id'].toString();
@@ -276,34 +325,82 @@ class _NewFeedbackTicketPageState extends State<NewFeedbackTicketPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(
-            enabled: ticketId == null && !busy,
-            controller: title,
-            maxLength: 160,
-            decoration: const InputDecoration(
-              labelText: '问题标题',
-              hintText: '例如：明日管家漏掉了物品',
+          const Text(
+            '你只需要发图或说出来',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            '标题、问题摘要和复现线索由 Agent 自动整理。',
+            style: TextStyle(color: Color(0xff78716c)),
+          ),
+          const SizedBox(height: 18),
+          Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (_) => unawaited(startVoice()),
+            onPointerUp: (_) => unawaited(stopVoice()),
+            onPointerCancel: (_) => unawaited(stopVoice()),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              height: 58,
+              decoration: BoxDecoration(
+                color: recording
+                    ? const Color(0xffffe2e2)
+                    : const Color(0xfffff7ed),
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(
+                  color: recording
+                      ? const Color(0xffdc2626)
+                      : const Color(0xfffed7aa),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (transcribing)
+                    const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(
+                      recording ? Icons.graphic_eq_rounded : Icons.mic_rounded,
+                      color: recording
+                          ? const Color(0xffdc2626)
+                          : const Color(0xffc45d08),
+                    ),
+                  const SizedBox(width: 9),
+                  Text(
+                    recording
+                        ? '正在聆听 · 松开发送'
+                        : transcribing
+                        ? '正在转写…'
+                        : transcript.isEmpty
+                        ? '按住说话'
+                        : '重新按住说话',
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 10),
-          TextField(
-            enabled: ticketId == null && !busy,
-            controller: description,
-            minLines: 5,
-            maxLines: 10,
-            maxLength: 10000,
-            decoration: const InputDecoration(
-              labelText: '详细说明',
-              hintText: '请说明期望结果、实际结果和复现步骤',
+          if (transcript.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xfff5f5f4),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(transcript),
             ),
-          ),
+          ],
           const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: busy || ticketId != null || screenshots.length >= 9
                 ? null
                 : pickScreenshots,
             icon: const Icon(Icons.add_photo_alternate_outlined),
-            label: Text('添加截图（${screenshots.length}/9）'),
+            label: Text('添加图片（${screenshots.length}/9）'),
           ),
           if (screenshots.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -347,7 +444,7 @@ class _NewFeedbackTicketPageState extends State<NewFeedbackTicketPage> {
           if (ticketId != null && error != null) ...[
             const SizedBox(height: 6),
             Text(
-              '已保留当前草稿，再次提交会从第 ${uploadedScreenshotCount + 1} 张截图继续。',
+              '已保留当前草稿，再次提交会从第 ${uploadedScreenshotCount + 1} 张图片继续。',
               style: const TextStyle(fontSize: 12, color: Color(0xff78716c)),
             ),
           ],
@@ -542,7 +639,7 @@ class _FeedbackTicketDetailPageState extends State<FeedbackTicketDetailPage> {
                   if ((value['attachments'] as List?)?.isNotEmpty == true) ...[
                     const SizedBox(height: 12),
                     Text(
-                      '截图 ${(value['attachments'] as List).length} 张',
+                      '图片 ${(value['attachments'] as List).length} 张',
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 8),

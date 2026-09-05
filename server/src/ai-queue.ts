@@ -247,6 +247,11 @@ const FeedbackTriageResultSchema = z.object({
 });
 
 const FeedbackRepairResultSchema = z.object({
+  ticketTitle: z.string().min(2).max(160),
+  issueSummary: z.string().min(2).max(2_000),
+  reproductionClues: z.array(z.string().min(1).max(500)).max(20),
+  proposedPlan: z.array(z.string().min(1).max(500)).max(20),
+  acceptanceChecks: z.array(z.string().min(1).max(500)).max(20),
   outcome: z.enum(["resolved", "needs_confirmation", "deferred", "failed"]),
   summary: z.string().min(5).max(2_000),
   changes: z.array(z.string().min(1).max(500)).max(30),

@@ -35,18 +35,21 @@ void main() {
 
     expect(find.text('反馈中心'), findsOneWidget);
     expect(find.text('明日管家漏项'), findsOneWidget);
-    expect(find.text('已安排自动续办 · 2 张截图'), findsOneWidget);
+    expect(find.text('已安排自动续办 · 2 张图片'), findsOneWidget);
     expect(find.text('提交反馈'), findsOneWidget);
   });
 
-  testWidgets('提交页说明工单会直接处理而不是只做分析', (tester) async {
+  testWidgets('提交页只保留图片、语音和提交，不要求用户填写标题', (tester) async {
     final api = ApiClient(
       httpClient: MockClient((request) async => http.Response('{}', 200)),
     );
-    await tester.pumpWidget(
-      MaterialApp(home: NewFeedbackTicketPage(api: api)),
-    );
+    await tester.pumpWidget(MaterialApp(home: NewFeedbackTicketPage(api: api)));
     await tester.pumpAndSettle();
+    expect(find.text('问题标题'), findsNothing);
+    expect(find.text('详细说明'), findsNothing);
+    expect(find.text('按住说话'), findsOneWidget);
+    expect(find.text('添加图片（0/9）'), findsOneWidget);
+    expect(find.textContaining('标题、问题摘要和复现线索由 Agent 自动整理'), findsOneWidget);
     expect(find.textContaining('像持续对话一样直接检查、处理并验收'), findsOneWidget);
     expect(find.textContaining('不可逆、高风险'), findsOneWidget);
   });

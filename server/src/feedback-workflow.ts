@@ -40,6 +40,7 @@ export function buildFeedbackExecutionInput(
     ticketId: ticket.id,
     title: ticket.title,
     description: ticket.description,
+    clientContext: ticket.context,
     sourceTaskId: ticket.sourceTaskId,
     attachmentIds: ticket.attachments.map(item => item.id),
     handlingMode: "direct_execution",

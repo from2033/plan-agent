@@ -190,6 +190,7 @@ import {
 } from "./desktop-intake.js";
 import { getFinanceCategoryTransactions, getFinanceOverview, importAlipayBill } from "./finance.js";
 import {
+  auditStaleFeedbackTickets,
   addFeedbackAttachment,
   createFeedbackTicket,
   deleteFeedbackAccountData,
@@ -199,6 +200,7 @@ import {
   listFeedbackTickets,
   readFeedbackAttachment,
   transitionFeedbackTicket,
+  updateFeedbackAnalysis,
   type FeedbackTicket,
 } from "./feedback-tickets.js";
 import { buildFeedbackExecutionInput } from "./feedback-workflow.js";
@@ -1152,10 +1154,13 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     const ticket = getFeedbackTicket(ticketId, job.userId, PRIMARY_USER);
     if (!ticket || ticket.status !== "processing") throw new Error("feedback_ticket_missing_or_stale");
     const result = value as {
+      ticketTitle: string; issueSummary: string; reproductionClues: string[];
+      proposedPlan: string[]; acceptanceChecks: string[];
       outcome: "resolved" | "needs_confirmation" | "deferred" | "failed";
       summary: string; needsConfirmation: boolean; confirmationQuestion: string;
       retryAfterMinutes: number; errorKind: string;
     };
+    updateFeedbackAnalysis(ticket.id, result);
     if (result.outcome === "resolved") {
       const verifying = transitionFeedbackTicket(
         ticket.id, "verifying", "repair_finished", "修复已完成，正在执行工单验收", { resolution: value },
@@ -2183,8 +2188,11 @@ app.get(`${API}/agent/failure-samples`, (req, res) => {
 });
 
 const FeedbackTicketSchema = z.object({
-  title: z.string().trim().min(2).max(160),
-  description: z.string().trim().min(2).max(10_000),
+  // 旧版 App 仍可在分阶段发布期间提交；新版界面不会再显示这两个字段。
+  title: z.string().trim().max(160).optional(),
+  description: z.string().trim().max(10_000).optional(),
+  transcript: z.string().trim().max(10_000).optional().default(""),
+  context: z.record(z.string(), z.unknown()).optional().default({}),
   sourceTaskId: z.string().uuid().optional(),
   priority: z.enum(["low", "normal", "high"]).default("normal"),
 });
@@ -2198,11 +2206,21 @@ app.get(`${API}/feedback/tickets`, (req, res) => {
 app.post(`${API}/feedback/tickets`, (req, res) => {
   if (isGuestUser(req.userId)) { res.status(403).json({ error: "请先登录后再提交反馈" }); return; }
   const parsed = FeedbackTicketSchema.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "请填写反馈标题和详细说明" }); return; }
+  if (!parsed.success) { res.status(400).json({ error: "反馈内容无效" }); return; }
   if (parsed.data.sourceTaskId && !getPersistentAgentTask(parsed.data.sourceTaskId, req.userId!)) {
     res.status(404).json({ error: "关联的 Agent 任务不存在" }); return;
   }
-  res.status(201).json(createFeedbackTicket(req.userId!, parsed.data));
+  res.status(201).json(createFeedbackTicket(req.userId!, {
+    ...parsed.data,
+    context: {
+      ...parsed.data.context,
+      receivedAt: new Date().toISOString(),
+      requestId: String(parsed.data.context.requestId || crypto.randomUUID()).slice(0, 160),
+      currentPage: String(parsed.data.context.page || "unknown").slice(0, 120),
+      appVersion: String(parsed.data.context.appVersion || req.header("x-app-version") || "unknown").slice(0, 80),
+      ...(parsed.data.sourceTaskId ? { taskId: parsed.data.sourceTaskId } : {}),
+    },
+  }));
 });
 
 app.post(
@@ -2222,7 +2240,7 @@ app.post(
       res.status(201).json(attachment);
     } catch (error) {
       res.status(error instanceof Error && error.message === "feedback_attachment_limit" ? 409 : 500)
-        .json({ error: error instanceof Error && error.message === "feedback_attachment_limit" ? "每张工单最多添加 9 张截图" : "截图保存失败" });
+        .json({ error: error instanceof Error && error.message === "feedback_attachment_limit" ? "每张工单最多添加 9 张图片" : "图片保存失败" });
     }
   },
 );
@@ -2231,6 +2249,10 @@ app.post(`${API}/feedback/tickets/:id/submit`, (req, res) => {
   const ticket = getFeedbackTicket(req.params.id, req.userId!, PRIMARY_USER);
   if (!ticket || ticket.userId !== req.userId!) { res.status(404).json({ error: "工单不存在" }); return; }
   if (ticket.status !== "draft") { res.json(ticket); return; }
+  if (!ticket.description.trim() && ticket.attachments.length === 0) {
+    res.status(400).json({ error: "请添加图片或按住说话后再提交" });
+    return;
+  }
   const task = createPersistentAgentTask(
     ticket.userId,
     "feedback_ticket",
@@ -3748,6 +3770,7 @@ tomorrowBriefTimer.unref();
 // 主动闭环：唤醒到期跟进，并把长时间无进展的任务转成可见失败，禁止静默卡住。
 wakeDueAgentFollowUps();
 wakeDueFeedbackWork();
+auditStaleFeedbackTickets();
 auditStaleAgentTasks();
 function auditAndReportAcceptanceRollbacks(): void {
   for (const proposal of auditActiveAcceptanceStandards()) {
@@ -3766,6 +3789,7 @@ auditAndReportAcceptanceRollbacks();
 const agentFollowUpTimer = setInterval(() => {
   wakeDueAgentFollowUps();
   wakeDueFeedbackWork();
+  auditStaleFeedbackTickets();
   auditStaleAgentTasks();
   auditAndReportAcceptanceRollbacks();
 }, 60_000);
