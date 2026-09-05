@@ -402,6 +402,10 @@ export function auditStaleFeedbackTickets(now = new Date(), staleMinutes = 15): 
   const cutoff = new Date(now.getTime() - Math.max(5, staleMinutes) * 60_000).toISOString();
   const stale = db.prepare(`SELECT * FROM feedback_tickets
     WHERE status IN ('triaging','processing','verifying') AND updated_at<=?
+      AND (job_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM ai_jobs job
+        WHERE job.id=feedback_tickets.job_id AND job.status IN ('QUEUED','PROCESSING')
+      ))
     ORDER BY updated_at LIMIT 50`).all(cutoff) as unknown as TicketRow[];
   return stale.map(row => transitionFeedbackTicket(
     row.id,

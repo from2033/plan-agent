@@ -12,6 +12,7 @@ import {
   updateFeedbackAnalysis,
 } from "../src/feedback-tickets.js";
 import { registeredCapabilities } from "../src/agent-contract.js";
+import { enqueueAiJob } from "../src/ai-queue.js";
 import "../src/agent-standards.js";
 
 test("反馈工单保存账号、状态和完整处理事件", () => {
@@ -115,4 +116,14 @@ test("处理或验收超过心跳期限的历史工单自动延期续办", () =>
   const repaired = auditStaleFeedbackTickets(future, 15);
   assert.ok(repaired.some(item => item.id === ticket.id && item.status === "deferred"));
   assert.equal(getFeedbackTicket(ticket.id, userId, "primary")?.nextAttemptAt, future.toISOString());
+});
+
+test("关联队列仍在等待或执行时看门狗不会重复排反馈任务", () => {
+  const userId = `feedback-active-job-${Date.now()}`;
+  const ticket = createFeedbackTicket(userId, { title: "等待额度", description: "队列仍有效" });
+  transitionFeedbackTicket(ticket.id, "submitted", "submitted", "已提交");
+  const job = enqueueAiJob(userId, "feedback_repair", { ticketId: ticket.id });
+  transitionFeedbackTicket(ticket.id, "processing", "repair_started", "已排队", { jobId: job.id });
+  const audited = auditStaleFeedbackTickets(new Date(Date.now() + 20 * 60_000));
+  assert.ok(audited.every((item) => item.id !== ticket.id));
 });
