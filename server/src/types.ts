@@ -24,7 +24,12 @@ export interface Entry {
 export type ParsedFields = Pick<
   Entry,
   "type" | "description" | "category" | "amount" | "currency" | "timeRange" | "priority"
-> & { date?: string; reminderTime?: string };
+> & {
+  date?: string;
+  reminderTime?: string;
+  dateEvidence?: string;
+  timeEvidence?: string;
+};
 
 // 知识库条目（长期参考型知识，独立于日常 entries）。
 export interface KnowledgeItem {

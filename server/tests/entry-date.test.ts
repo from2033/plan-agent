@@ -5,9 +5,11 @@ import {
   isFutureObligation,
   hasExplicitDateExpression,
   hasFutureRelativeDateExpression,
+  inferReminderTimeFromText,
   normalizeScheduledDescription,
   reminderTimeAt,
   reminderTimestamp,
+  validateTemporalModelFields,
   type AssistantClock,
 } from "../src/entry-date.js";
 import { parseWithRegex } from "../src/parse.js";
@@ -119,4 +121,54 @@ test("有日期没时间的必做事项仍然是待办但不生成闹钟", () =>
     reminderTimestamp("明天需要交水费", "2026-08-19", undefined, clock),
     undefined,
   );
+});
+
+test("重复口述时选择最后一个更完整的时刻", () => {
+  assert.equal(
+    inferReminderTimeFromText("今天六点今天晚上6点40，提醒我把风扇带上去充电"),
+    "18:40",
+  );
+});
+
+test("模型时间结果必须与原话证据一致", () => {
+  const context: AssistantClock = {
+    currentDate: "2026-09-02",
+    currentTime: "13:00",
+    timeZone: "Asia/Shanghai",
+  };
+  assert.equal(validateTemporalModelFields(
+    "今晚6点40提醒我把风扇带上去充电",
+    context,
+    [{ type: "memo", date: "2026-09-02", reminderTime: "18:40", dateEvidence: "今晚", timeEvidence: "今晚6点40" }],
+  ).ok, true);
+  const invalid = validateTemporalModelFields(
+    "今晚6点40提醒我把风扇带上去充电",
+    context,
+    [{ type: "memo", date: "2026-09-02", reminderTime: "20:40", dateEvidence: "今晚", timeEvidence: "今晚6点40" }],
+  );
+  assert.equal(invalid.ok, false);
+  assert.ok(invalid.issues.includes("field_0_time_mismatch"));
+});
+
+test("今晚十二点允许跨到次日但证据仍须来自原话", () => {
+  const context: AssistantClock = {
+    currentDate: "2026-09-02",
+    currentTime: "13:00",
+    timeZone: "Asia/Shanghai",
+  };
+  assert.equal(validateTemporalModelFields(
+    "今晚12点提醒我上线",
+    context,
+    [{ type: "memo", date: "2026-09-03", reminderTime: "00:00", dateEvidence: "今晚", timeEvidence: "今晚12点" }],
+  ).ok, true);
+});
+
+test("没有待办语义的健康记录不能误分为备忘", () => {
+  const result = validateTemporalModelFields(
+    "记录9月2号体重120.7斤",
+    { currentDate: "2026-09-03", currentTime: "08:00", timeZone: "Asia/Shanghai" },
+    [{ type: "memo", date: "2026-09-02", dateEvidence: "9月2号" }],
+  );
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.includes("field_0_memo_without_action_evidence"));
 });

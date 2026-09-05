@@ -160,11 +160,87 @@ export function inferTimeRangeFromText(
 }
 
 export function inferReminderTimeFromText(raw: string): string | undefined {
-  const match = raw.match(
-    /(凌晨|早上|上午|中午|下午|晚上|今晚|夜里)?\s*(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})(?:[:：](\d{1,2}|[零〇一二两三四五六七八九十]{1,3})|点(?:(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})分?)?)/,
-  );
-  if (!match) return undefined;
-  return hhmm(match[2], match[3] || match[4], match[1]);
+  const matches = [...raw.matchAll(
+    /(凌晨|早上|上午|中午|下午|晚上|今晚|夜里)?\s*(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})(?:[:：](\d{1,2}|[零〇一二两三四五六七八九十]{1,3})|点(?:(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})分?)?)/g,
+  )].map((match) => ({
+    match,
+    time: hhmm(match[2], match[3] || match[4], match[1]),
+    score: Number(Boolean(match[1])) * 100 + Number(Boolean(match[3] || match[4])) * 10 + (match.index || 0),
+  })).filter((candidate) => candidate.time);
+  matches.sort((left, right) => left.score - right.score);
+  return matches.at(-1)?.time;
+}
+
+export interface TemporalModelField {
+  type: string;
+  date?: string;
+  reminderTime?: string;
+  dateEvidence?: string;
+  timeEvidence?: string;
+}
+
+export interface TemporalValidationResult {
+  ok: boolean;
+  issues: string[];
+}
+
+function hasUnambiguousClock(raw: string): boolean {
+  return /(?:凌晨|早上|上午|中午|下午|晚上|今晚|夜里)\s*(?:\d{1,2}|[零〇一二两三四五六七八九十]{1,3})(?:[:：]|点)/.test(raw)
+    || /(?:1[3-9]|2[0-3])[:：点]/.test(raw);
+}
+
+export function validateTemporalModelFields(
+  raw: string,
+  clock: AssistantClock,
+  fields: TemporalModelField[],
+  requireEvidence = true,
+): TemporalValidationResult {
+  const issues: string[] = [];
+  const single = fields.length === 1;
+  let explicitDate = single ? inferDateFromText(raw, clock.currentDate) : undefined;
+  const explicitTime = single && hasUnambiguousClock(raw) ? inferReminderTimeFromText(raw) : undefined;
+  if (explicitDate && explicitTime === "00:00" && /今晚\s*(?:12|十二)点/.test(raw)) {
+    explicitDate = addDays(explicitDate, 1);
+  }
+  fields.forEach((field, index) => {
+    const dateEvidence = field.dateEvidence?.trim() || "";
+    const timeEvidence = field.timeEvidence?.trim() || "";
+    if (field.date) {
+      if (requireEvidence && (!dateEvidence || !raw.includes(dateEvidence))) issues.push(`field_${index}_date_evidence`);
+      let evidenceDate = dateEvidence ? inferDateFromText(dateEvidence, clock.currentDate) : undefined;
+      if (
+        evidenceDate
+        && field.reminderTime === "00:00"
+        && /今晚\s*(?:12|十二)点/.test(`${dateEvidence}${timeEvidence}`)
+      ) {
+        evidenceDate = addDays(evidenceDate, 1);
+      }
+      if (evidenceDate && evidenceDate !== field.date) issues.push(`field_${index}_date_mismatch`);
+    } else if (dateEvidence) {
+      issues.push(`field_${index}_unexpected_date_evidence`);
+    }
+    if (explicitDate && field.date !== explicitDate) issues.push(`field_${index}_explicit_date_mismatch`);
+    if (field.reminderTime) {
+      if (requireEvidence && (!timeEvidence || !raw.includes(timeEvidence))) issues.push(`field_${index}_time_evidence`);
+      const evidenceTime = timeEvidence ? inferReminderTimeFromText(timeEvidence) : undefined;
+      if (evidenceTime && evidenceTime !== field.reminderTime) issues.push(`field_${index}_time_mismatch`);
+    } else if (timeEvidence) {
+      issues.push(`field_${index}_unexpected_time_evidence`);
+    }
+    if (explicitTime && field.type === "memo" && field.reminderTime !== explicitTime) {
+      issues.push(`field_${index}_explicit_time_mismatch`);
+    }
+    if (field.type === "expense" && !/(?:花了?|消费|付款|支付|买了?|充值|转账|打车|元|块钱?|￥|¥|rmb)/i.test(raw)) {
+      issues.push(`field_${index}_expense_without_money_evidence`);
+    }
+    if (
+      field.type === "memo"
+      && !/(?:提醒我|别忘|记得|待办|待使用|待领取|待兑换|待处理|待办理|待支付|待缴费|待提交|待回复|待确认|未使用|未领取|未兑换|还没使用|还没处理|需要|必须|务必|一定要|得要|得去|拿药|取药|吃药|服药|喂药)/.test(raw)
+    ) {
+      issues.push(`field_${index}_memo_without_action_evidence`);
+    }
+  });
+  return { ok: issues.length === 0, issues: [...new Set(issues)] };
 }
 
 export function reminderTimestamp(

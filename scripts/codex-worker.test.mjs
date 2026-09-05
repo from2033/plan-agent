@@ -28,6 +28,7 @@ import {
   searchAccessibleDocuments,
   searchLocalDocuments,
   shouldSearchDocumentsForIngest,
+  validateIngestTemporalResult,
   writeVaultDocument,
 } from "./codex-worker.mjs";
 
@@ -187,6 +188,8 @@ test("runOllama sends a constrained non-thinking request and parses JSON", async
               priority: "medium",
               date: "2026-08-19",
               reminderTime: "15:00",
+              dateEvidence: "明天",
+              timeEvidence: "下午三点",
             }],
             title: "",
             content: "",
@@ -220,7 +223,10 @@ test("runOllama sends a constrained non-thinking request and parses JSON", async
 });
 
 test("runInference falls back to Codex when Ollama is unavailable", async () => {
-  const expected = { kind: "record", fields: [] };
+  const expected = {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-08-19", reminderTime: "15:00", dateEvidence: "明天", timeEvidence: "下午三点" }],
+  };
   const inference = await runInference(ingestJob, {
     provider: "ollama",
     localRunner: async () => { throw new Error("ollama_offline"); },
@@ -325,8 +331,8 @@ test("conversation record proposals are limited to useful long-term or actionabl
   assert.equal(conversationRecordProposal("帮我记一下我不吃香菜"), null);
 });
 
-test("daily input uses the small model while complex jobs use the large model", () => {
-  assert.equal(ollamaModelForJob({ kind: "ingest" }), "qwen3:4b");
+test("all ingest input uses the large model", () => {
+  assert.equal(ollamaModelForJob({ kind: "ingest" }), "qwen3:14b");
   assert.equal(ollamaModelForJob({ kind: "world_discovery" }), "qwen3:4b");
   assert.equal(ollamaModelForJob({ kind: "summary" }), "qwen3:14b");
   assert.equal(ollamaModelForJob({ kind: "document" }), "qwen3:14b");
@@ -341,24 +347,80 @@ test("only explicit clock ranges are accepted from a local model", () => {
   assert.equal(hasExplicitTimeRange("2026-08-20去医院"), false);
 });
 
-test("invalid small-model output escalates to the large local model before Codex", async () => {
+test("invalid large-model output falls back to Codex", async () => {
   const calls = [];
-  const expected = { kind: "record", fields: [] };
+  const expected = {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-08-19", reminderTime: "15:00", dateEvidence: "明天", timeEvidence: "下午三点" }],
+  };
   const inference = await runInference(ingestJob, {
     provider: "ollama",
     localRunner: async (_job, options) => {
       calls.push(options.model);
-      throw new Error("small_invalid");
+      throw new Error("large_invalid");
     },
-    largeLocalRunner: async (_job, options) => {
-      calls.push(options.model);
-      return expected;
-    },
-    cloudRunner: async () => { throw new Error("cloud_should_not_run"); },
+    cloudRunner: async () => expected,
   });
-  assert.deepEqual(calls, ["qwen3:4b", "qwen3:14b"]);
-  assert.equal(inference.provider, "ollama-large-fallback");
+  assert.deepEqual(calls, ["qwen3:14b"]);
+  assert.equal(inference.provider, "codex-fallback");
   assert.equal(inference.result, expected);
+});
+
+test("temporal validation rejects both observed voice failures", () => {
+  const context = { currentDate: "2026-09-02", currentTime: "12:11", timeZone: "Asia/Shanghai" };
+  const first = validateIngestTemporalResult({
+    raw: "今天六点今天晚上6点40，提醒我把这个风扇带上去充电。",
+    context,
+  }, {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-09-03", reminderTime: "18:40", dateEvidence: "今天", timeEvidence: "晚上6点40" }],
+  });
+  assert.equal(first.ok, false);
+  assert.ok(first.issues.includes("field_0_explicit_date_mismatch"));
+
+  const second = validateIngestTemporalResult({
+    raw: "今晚6点40提醒我把那个风扇带上去充电。",
+    context: { ...context, currentTime: "13:00" },
+  }, {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-09-02", reminderTime: "20:40", dateEvidence: "今晚", timeEvidence: "今晚6点40" }],
+  });
+  assert.equal(second.ok, false);
+  assert.ok(second.issues.includes("field_0_time_mismatch"));
+});
+
+test("temporal validation accepts the corrected 14B result", () => {
+  const validation = validateIngestTemporalResult({
+    raw: "今晚6点40提醒我把那个风扇带上去充电。",
+    context: { currentDate: "2026-09-02", currentTime: "13:00", timeZone: "Asia/Shanghai" },
+  }, {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-09-02", reminderTime: "18:40", dateEvidence: "今晚", timeEvidence: "今晚6点40" }],
+  });
+  assert.deepEqual(validation, { ok: true, issues: [] });
+});
+
+test("temporal validation accepts tonight at midnight as the following date", () => {
+  const validation = validateIngestTemporalResult({
+    raw: "今晚12点提醒我上线。",
+    context: { currentDate: "2026-09-02", currentTime: "13:00", timeZone: "Asia/Shanghai" },
+  }, {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-09-03", reminderTime: "00:00", dateEvidence: "今晚", timeEvidence: "今晚12点" }],
+  });
+  assert.deepEqual(validation, { ok: true, issues: [] });
+});
+
+test("temporal validation rejects a memo classification without action evidence", () => {
+  const validation = validateIngestTemporalResult({
+    raw: "记录9月2号体重120.7斤。",
+    context: { currentDate: "2026-09-03", currentTime: "08:00", timeZone: "Asia/Shanghai" },
+  }, {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-09-02", dateEvidence: "9月2号" }],
+  });
+  assert.equal(validation.ok, false);
+  assert.ok(validation.issues.includes("field_0_memo_without_action_evidence"));
 });
 
 test("runInference can disable the cloud fallback", async () => {

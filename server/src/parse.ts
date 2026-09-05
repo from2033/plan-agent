@@ -137,6 +137,9 @@ const EntrySchema = z.object({
   timeRange: z.object({ start: z.string(), end: z.string() }).optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  reminderTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  dateEvidence: z.string().max(80).optional(),
+  timeEvidence: z.string().max(80).optional(),
 });
 
 // 一次调用同时完成「意图判定」与（record/save 的）解析。
@@ -186,7 +189,8 @@ function buildSystemPrompt(nowStr: string): string {
 - wish（心愿/期待）：**没有具体时间**的将来愿望、打算、想做的事（如"找个时间去丽江旅游"、"有空想学钢琴"、"以后想买房"、"总有一天去看极光"）。和 memo 的区别：memo 是近期要落实的待办，wish 是没排期的长期心愿。category 固定为 "心愿"。
 - activity（活动/行程）：日常记录，既包括**已经做过的事**，也包括**有明确时间安排的计划**（如"15:00-16:00去唱歌"）。category 从这些里选最贴切的一个：${ACTIVITY_CATS.join("、")}。有时间段就填 timeRange（start/end 用 "HH:MM" 24 小时制）。
 
-date：把今天/明天/后天/下周一/某月某日换算为 YYYY-MM-DD；没有日期时省略。
+date：只以“当前时间”给出的上海日期为基准，把今天/明天/后天/下周一/某月某日换算为 YYYY-MM-DD；没有日期时省略。reminderTime：memo 中有明确提醒时刻时换算成 HH:mm。
+dateEvidence 和 timeEvidence：分别逐字引用支持 date 和 reminderTime 的原文短语；对应结果为空时省略。出现重复口述或自我修正时，以最后一次更完整、带上午/下午/晚上和分钟的表达为准。
 description：简洁描述（去掉"记得/提醒/花了/在"等口头词、去掉金额）。activity 和 expense 的 description 去掉时间表达；memo 的 description 可保留时间，方便提醒。
 category 必须从上面对应的列表里选，不要自创新分类。每条只输出与该 type 相关的字段。`;
 }

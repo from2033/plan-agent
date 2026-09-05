@@ -75,6 +75,34 @@ test("明确要求表格时，普通段落不能通过呈现格式验收", () =>
   assert.equal(verify("| 项目 | 笔数 |\n| --- | ---: |\n| 数码订阅 | 30 |")?.stage, "verified");
 });
 
+test("input_processing 1.3 拒绝与原话冲突的提醒时间", () => {
+  const verify = (time: string) => {
+    const userId = `agent-time-${time}-${Date.now()}`;
+    const id = `entry-time-${time}-${Date.now()}`;
+    const task = createPersistentAgentTask(userId, "input_processing", {
+      raw: "今晚6点40提醒我把风扇带上去充电",
+      context: { currentDate: "2026-09-02", currentTime: "13:00", timeZone: "Asia/Shanghai" },
+    });
+    assert.equal(task.standardVersion, "1.3");
+    transitionPersistentAgentTask(userId, task.id, "classified", "classified");
+    transitionPersistentAgentTask(userId, task.id, "extracted", "extracted");
+    transitionPersistentAgentTask(userId, task.id, "executing", "executing");
+    transitionPersistentAgentTask(userId, task.id, "verifying", "result_ready");
+    insertEntry({
+      id, type: "memo", raw: "今晚6点40提醒我把风扇带上去充电", time,
+      description: "把风扇带上去充电", category: "备忘", done: false,
+      scheduledDate: "2026-09-02", reminderAt: `2026-09-02T${time === "18:40" ? "10:40" : "12:40"}:00.000Z`,
+      timestamp: `2026-09-02T${time === "18:40" ? "10:40" : "12:40"}:00.000Z`,
+    }, userId);
+    return verifyPersistentAgentTask(userId, task.id, {
+      kind: "record",
+      entries: [{ id, type: "memo", time, scheduledDate: "2026-09-02" }],
+    });
+  };
+  assert.equal(verify("20:40")?.stage, "failed");
+  assert.equal(verify("18:40")?.stage, "verified");
+});
+
 test("能力注册表公开任务契约、幂等和跟进策略", () => {
   const desktop = registeredCapabilities().find((item) => item.capability === "desktop_intake");
   assert.equal(desktop?.version, "1.1");
