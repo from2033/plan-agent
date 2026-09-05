@@ -1,8 +1,20 @@
-import { activateCapabilityStandard, registerCapabilityStandard, type CapabilityStandard } from "./agent-contract.js";
+import { activateCapabilityStandard, capabilityStandard, registerCapabilityStandard, type CapabilityStandard } from "./agent-contract.js";
 import { validateTemporalModelFields, type AssistantClock } from "./entry-date.js";
 
-type StandardInput = Omit<CapabilityStandard, "acceptance">;
-const common = (value: StandardInput): StandardInput => value;
+type ContractFields = "contextTypes" | "allowedTools" | "reasoningEffort" | "maxCalls" | "maxRetries"
+  | "programmaticAcceptance" | "semanticAcceptance";
+type StandardInput = Omit<CapabilityStandard, "acceptance" | ContractFields>
+  & Partial<Pick<CapabilityStandard, ContractFields>>;
+const common = (value: StandardInput): Omit<CapabilityStandard, "acceptance"> => ({
+  contextTypes: ["current_request", "structured_facts", "dependency_outputs", "failure_delta"],
+  allowedTools: [],
+  reasoningEffort: "medium",
+  maxCalls: 1,
+  maxRetries: 1,
+  programmaticAcceptance: ["schema", "non_empty", "idempotency"],
+  semanticAcceptance: [],
+  ...value,
+});
 const compact = (value: unknown) => String(value || "").replace(/[\s，。！？、,.!?：:]/g, "");
 
 registerCapabilityStandard({
@@ -273,11 +285,11 @@ registerCapabilityStandard({
 
 registerCapabilityStandard({
   ...common({
-    capability: "todo", version: "1.1", description: "确认后创建字段一致且可追踪的待办",
-    requiresConfirmation: true, allowedSideEffects: ["create_todo"], failurePolicy: "awaiting_user",
+    capability: "todo", version: "1.2", description: "自动创建字段一致且可追踪的待办",
+    requiresConfirmation: false, allowedSideEffects: ["create_todo"], failurePolicy: "retry",
     inputContract: "标题、description、分类、优先级和可选日期",
     outputContract: "数据库 memo 条目，包含 id、description、priority、done=false",
-    confirmationPolicy: "写入待办前必须确认",
+    confirmationPolicy: "用户明确提出的低风险待办直接写入；系统额外推断的动作使用 document_action 另行确认",
     idempotencyRule: "同一 Agent 任务只允许生成一个条目",
     retryPolicy: "写入失败不改变确认状态，用户可重试",
     followUpPolicy: "权限或字段缺失时展示原因并等待补充",
@@ -298,11 +310,11 @@ registerCapabilityStandard({
 
 registerCapabilityStandard({
   ...common({
-    capability: "reminder", version: "1.2", description: "确认后创建日期正确、可验收的提醒条目",
-    requiresConfirmation: true, allowedSideEffects: ["create_reminder"], failurePolicy: "awaiting_user",
+    capability: "reminder", version: "1.3", description: "自动创建日期正确、可验收的提醒条目",
+    requiresConfirmation: false, allowedSideEffects: ["create_reminder"], failurePolicy: "retry",
     inputContract: "提醒标题、description、ISO reminderAt，以及无日期时的当前日期/时间上下文",
     outputContract: "数据库 memo 条目、有效 reminderAt 和系统闹钟结果",
-    confirmationPolicy: "创建系统提醒前必须确认",
+    confirmationPolicy: "用户明确提出的低风险提醒直接创建；权限、日期歧义或高风险内容才请求用户处理",
     idempotencyRule: "同一 Agent 任务只允许创建一次提醒",
     retryPolicy: "权限失败不静默，保留任务供重试；日期错误时按原文和当前时间重新计算",
     followUpPolicy: "权限拒绝、时间无效或日期不一致时提示用户修正并保留失败原因",
@@ -326,8 +338,8 @@ registerCapabilityStandard({
 
 registerCapabilityStandard({
   ...common({
-    capability: "research", version: "1.1", description: "研究必须形成有来源、可核对的完整报告",
-    requiresConfirmation: true, allowedSideEffects: ["start_web_research", "archive_report"], failurePolicy: "retry",
+    capability: "research", version: "1.2", description: "研究必须形成有来源、可核对的完整报告",
+    requiresConfirmation: false, allowedSideEffects: ["start_web_research", "archive_report"], failurePolicy: "retry",
     inputContract: "明确研究主题、原始请求和查询范围",
     outputContract: "摘要、要点、至少两节正文、行动建议与至少两个 HTTPS 来源",
     confirmationPolicy: "资料推断出的新研究需确认；用户直接发起时视为已授权",
@@ -407,3 +419,19 @@ registerCapabilityStandard({
       && (result as { auditEventId?: string }).auditEventId),
   }],
 });
+
+// 已创建任务会固化旧契约版本；行为升级使用新版本，不能原地改写历史契约。
+for (const [capability, currentVersion, legacyVersion, legacyConfirmation] of [
+  ["todo", "1.2", "1.1", true],
+  ["reminder", "1.3", "1.2", true],
+  ["research", "1.2", "1.1", true],
+] as const) {
+  const current = capabilityStandard(capability, currentVersion)!;
+  registerCapabilityStandard({
+    ...current,
+    version: legacyVersion,
+    requiresConfirmation: legacyConfirmation,
+    description: `${current.description}（历史确认策略）`,
+  });
+  activateCapabilityStandard(capability, currentVersion);
+}

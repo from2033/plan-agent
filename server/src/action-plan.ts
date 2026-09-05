@@ -21,11 +21,13 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_agent_plan_items_task ON agent_plan_items(user_id, task_id, plan_version, position);
 `);
+try { db.exec("ALTER TABLE agent_plan_items ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'"); } catch (_) { /* migrated */ }
 
 export type PlanItemStatus = "planned" | "awaiting_confirmation" | "executing" | "verifying" | "verified" | "failed" | "awaiting_user";
 export interface ActionPlanItem {
   id: string; kind: string; capability: string; title: string; instruction: string;
   evidence: string; risk: "none" | "internal" | "sensitive"; requiresConfirmation: boolean;
+  dependsOn: string[];
   required: boolean; status: PlanItemStatus; childTaskId: string | null; result: unknown; failure: string | null;
 }
 export interface ActionPlanSnapshot {
@@ -43,7 +45,8 @@ function festivalDate(year: number, month: string, day: number): string | null {
 }
 export const resolveMidAutumnDate = (year: number): string | null => festivalDate(year, "八月", 15);
 
-export function buildActionPlan(raw: string, currentDate: string): { facts: string[]; goals: string[]; actions: Omit<ActionPlanItem, "id" | "status" | "childTaskId" | "result" | "failure">[] } {
+type PlannedAction = Omit<ActionPlanItem, "id" | "status" | "childTaskId" | "result" | "failure" | "dependsOn"> & { dependsOn?: string[] };
+export function buildActionPlan(raw: string, currentDate: string): { facts: string[]; goals: string[]; actions: PlannedAction[] } {
   const birthday = /(?:宝宝|孩子|小孩).{0,12}生日/u.test(raw) && /中秋/u.test(raw);
   const dachang = /(?:看下|看一下|看看|查下|查一下|找下|找一下|了解下|了解一下)/u.test(raw)
     && /(?:南京)?大厂/u.test(raw) && /(?:周边|附近|场地|餐厅|酒店|适合)/u.test(raw);
@@ -58,13 +61,13 @@ export function buildActionPlan(raw: string, currentDate: string): { facts: stri
         instruction: "将今年中秋转换为公历日期", evidence: "安排在中秋", risk: "none", requiresConfirmation: false, required: true,
       }, {
         kind: "todo", capability: "todo", title: "筹备宝宝中秋生日活动",
-        instruction: `建立宝宝生日筹备待办${midAutumn ? `，日期为${midAutumn}` : ""}`, evidence: "宝宝生日准备安排在中秋", risk: "internal", requiresConfirmation: false, required: true,
+        instruction: `建立宝宝生日筹备待办${midAutumn ? `，日期为${midAutumn}` : ""}`, evidence: "宝宝生日准备安排在中秋", risk: "internal", requiresConfirmation: false, required: true, dependsOn: ["resolve_date"],
       }, {
         kind: "research", capability: "research", title: "调研南京大厂周边宝宝生日场地",
         instruction: "查询南京大厂周边中秋期间适合家庭生日聚会的场地，比较位置、环境、适合人数、价格线索和预订注意事项", evidence: "去看下南京大厂周边", risk: "none", requiresConfirmation: false, required: true,
       }, {
         kind: "feedback", capability: "feedback", title: "汇总生日安排方案",
-        instruction: "把中秋日期、地点调研结果、优缺点和下一步建议反馈给用户", evidence: "完整输入", risk: "none", requiresConfirmation: false, required: true,
+        instruction: "把中秋日期、地点调研结果、优缺点和下一步建议反馈给用户", evidence: "完整输入", risk: "none", requiresConfirmation: false, required: true, dependsOn: ["resolve_date", "todo", "research"],
       }],
     };
   }
@@ -74,7 +77,7 @@ export function buildActionPlan(raw: string, currentDate: string): { facts: stri
     actions: [{ kind: "research", capability: "research", title: `研究：${directResearch}`, instruction: directResearch,
       evidence: raw, risk: "none", requiresConfirmation: false, required: true },
     { kind: "feedback", capability: "feedback", title: "反馈研究结果", instruction: "汇总研究结论、来源和下一步建议",
-      evidence: raw, risk: "none", requiresConfirmation: false, required: true }],
+      evidence: raw, risk: "none", requiresConfirmation: false, required: true, dependsOn: ["research"] }],
   };
   const embeddedResearch = embeddedResearchTopic(raw);
   if (embeddedResearch) return {
@@ -84,7 +87,7 @@ export function buildActionPlan(raw: string, currentDate: string): { facts: stri
     { kind: "research", capability: "research", title: `调研：${embeddedResearch}`, instruction: embeddedResearch,
       evidence: embeddedResearch, risk: "none", requiresConfirmation: false, required: true },
     { kind: "feedback", capability: "feedback", title: "汇总并反馈处理结果", instruction: "汇总记录和调研结果",
-      evidence: raw, risk: "none", requiresConfirmation: false, required: true }],
+      evidence: raw, risk: "none", requiresConfirmation: false, required: true, dependsOn: ["process", "research"] }],
   };
   return {
     facts: [raw], goals: ["完整处理用户输入"],
@@ -101,14 +104,15 @@ export function saveActionPlan(userId: string, taskId: string, raw: string, curr
   db.prepare("INSERT INTO agent_action_plans (task_id,user_id,version,facts_json,goals_json,created_at) VALUES (?,?,?,?,?,?)")
     .run(taskId, userId, version, encField(JSON.stringify(plan.facts)), encField(JSON.stringify(plan.goals)), now);
   const insert = db.prepare(`INSERT INTO agent_plan_items
-    (id,task_id,user_id,plan_version,position,kind,capability,title,instruction,evidence,risk,requires_confirmation,required,status,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'planned',?,?)`);
+    (id,task_id,user_id,plan_version,position,kind,capability,title,instruction,evidence,risk,requires_confirmation,required,status,depends_on_json,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'planned',?,?,?)`);
   plan.actions.forEach((item, position) => {
     const reused = previous?.planItems.find((old) => old.kind === item.kind && old.title === item.title
       && Boolean(old.childTaskId) && !["failed", "awaiting_user"].includes(old.status));
     const id = crypto.randomUUID();
     insert.run(id, taskId, userId, version, position, item.kind, item.capability,
-      encField(item.title), encField(item.instruction), encField(item.evidence), item.risk, item.requiresConfirmation ? 1 : 0, item.required ? 1 : 0, now, now);
+      encField(item.title), encField(item.instruction), encField(item.evidence), item.risk, item.requiresConfirmation ? 1 : 0, item.required ? 1 : 0,
+      encField(JSON.stringify(item.dependsOn || [])), now, now);
     if (reused) db.prepare("UPDATE agent_plan_items SET status=?,child_task_id=?,result_json=?,failure=?,updated_at=? WHERE id=?")
       .run(reused.status, reused.childTaskId, reused.result == null ? null : encField(JSON.stringify(reused.result)), reused.failure ? encField(reused.failure) : null, now, id);
   });
@@ -122,6 +126,7 @@ export function getActionPlan(userId: string, taskId: string): ActionPlanSnapsho
   const planItems = rows.map((row): ActionPlanItem => ({
     id: String(row.id), kind: String(row.kind), capability: String(row.capability), title: decField(String(row.title)), instruction: decField(String(row.instruction)), evidence: decField(String(row.evidence)),
     risk: row.risk as ActionPlanItem["risk"], requiresConfirmation: Number(row.requires_confirmation) === 1, required: Number(row.required) === 1,
+    dependsOn: row.depends_on_json ? JSON.parse(decField(String(row.depends_on_json))) : [],
     status: row.status as PlanItemStatus, childTaskId: row.child_task_id ? String(row.child_task_id) : null,
     result: row.result_json ? JSON.parse(decField(String(row.result_json))) : null, failure: row.failure ? decField(String(row.failure)) : null,
   }));

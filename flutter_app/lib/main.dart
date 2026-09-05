@@ -660,6 +660,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+const primaryNavigationLabels = ['Agent', '事项', '资料'];
+
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const shortcutChannel = MethodChannel(
     'com.from2033.assistant/shortcuts',
@@ -701,10 +703,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _agentStagesInitialized = false;
 
   static const List<(String, IconData)> tabs = [
-    ('首页', Icons.mic_none_rounded),
-    ('待办', Icons.checklist_rounded),
-    ('对话', Icons.forum_outlined),
-    ('资料库', Icons.folder_copy_outlined),
+    ('Agent', Icons.auto_awesome_rounded),
+    ('事项', Icons.checklist_rounded),
+    ('资料', Icons.folder_copy_outlined),
   ];
 
   @override
@@ -851,7 +852,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _requestMeetingRecording() {
     if (!mounted) return;
     setState(() {
-      tab = 3;
+      tab = 2;
       _startMeetingRecordingRequest += 1;
     });
   }
@@ -1130,7 +1131,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         });
         if (result['kind'] == 'save') {
           setState(() {
-            tab = 3;
+            tab = 2;
             _knowledgeRevision += 1;
           });
           ScaffoldMessenger.of(
@@ -1153,7 +1154,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 );
               });
             } else {
-              setState(() => tab = 2);
+              setState(() {
+                tab = 0;
+                _homeAnswer = _HomeAnswer(
+                  question: task.text,
+                  answer: answer,
+                  conversationId: result['conversationId'] as String?,
+                );
+              });
             }
           }
         }
@@ -1336,21 +1344,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildPageHeader() {
-    final homeTitle = DateUtils.isSameDay(selectedDate, DateTime.now())
-        ? '今天'
-        : DateUtils.isSameDay(
-            selectedDate,
-            DateUtils.dateOnly(DateTime.now()).add(const Duration(days: 1)),
-          )
-        ? '明天'
-        : DateFormat('M月d日').format(selectedDate);
-    final titles = [homeTitle, '待办', '对话', '资料库'];
-    const subtitles = [
-      '说一句，我来记录和查询',
-      '把没做完的事情理清楚',
-      '每次提问和回答都会保留',
-      '长期保存的资料与知识',
-    ];
+    const titles = primaryNavigationLabels;
+    const subtitles = ['只管输入，其余交给总管 Agent', '把没做完的事情理清楚', '长期保存的资料与知识'];
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
       child: Row(
@@ -1385,15 +1380,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           if (tab == 0)
             IconButton(
-              onPressed: _openTrendPage,
-              tooltip: '今日新闻与趋势',
-              icon: const Icon(Icons.public_rounded, size: 21),
+              onPressed: _openConversationPage,
+              tooltip: '最近对话',
+              icon: const Icon(Icons.forum_outlined, size: 21),
             ),
           if (tab == 0)
             IconButton(
-              onPressed: _openTomorrowBrief,
-              tooltip: '明日管家',
-              icon: const Icon(Icons.event_note_outlined, size: 21),
+              onPressed: _openHousekeepingPage,
+              tooltip: '更多能力',
+              icon: const Icon(Icons.grid_view_rounded, size: 21),
             ),
           if (tab == 0)
             IconButton(
@@ -1421,8 +1416,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return switch (tab) {
       0 => _buildHomePage(),
       1 => _buildReminderPage(),
-      2 => _buildConversationPage(),
-      3 => _buildLibraryPage(),
+      2 => _buildLibraryPage(),
       _ => _buildHomePage(),
     };
   }
@@ -1448,6 +1442,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
     unawaited(_refreshAgentProgress());
+  }
+
+  Future<void> _openConversationPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Agent 对话')),
+          body: _buildConversationPage(),
+        ),
+      ),
+    );
+    if (mounted) setState(() => _requestedConversationId = null);
   }
 
   Future<void> _openFeedbackCenter() async {
@@ -1854,8 +1860,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   setState(() {
                     _requestedConversationId = value.conversationId;
                     _conversationRevision += 1;
-                    tab = 2;
                   });
+                  unawaited(_openConversationPage());
                 },
                 icon: const Icon(Icons.forum_outlined, size: 17),
                 label: const Text('进入聊天继续追问'),
@@ -2276,15 +2282,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _openTrendPage() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            WorldPulsePage(api: widget.api, initialData: worldPulse),
-      ),
-    );
-  }
-
   Future<void> _openTomorrowBrief() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -2543,46 +2540,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     padding: const EdgeInsets.fromLTRB(24, 6, 24, 12),
     child: Column(
       children: [
-        Listener(
-          behavior: HitTestBehavior.opaque,
-          onPointerDown: (_) => startVoice(),
-          onPointerUp: (_) => queueStopVoice(),
-          onPointerCancel: (_) => queueStopVoice(),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            width: 92,
-            height: 92,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: recognizing
-                  ? const Color(0xffede9e1)
-                  : recording
-                  ? const Color(0xffffe2e2)
-                  : const Color(0xffd97706),
-              boxShadow: recording || recognizing
-                  ? const []
-                  : [
-                      BoxShadow(
-                        color: const Color(0xffd97706).withValues(alpha: .32),
-                        blurRadius: 20,
-                        offset: const Offset(0, 7),
-                      ),
-                    ],
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton.filledTonal(
+              onPressed: _openConversationPage,
+              tooltip: '文字输入',
+              icon: const Icon(Icons.keyboard_alt_outlined),
             ),
-            child: recognizing
-                ? const Padding(
-                    padding: EdgeInsets.all(34),
-                    child: CircularProgressIndicator(
-                      color: Color(0xff8a8680),
-                      strokeWidth: 2.5,
-                    ),
-                  )
-                : Icon(
-                    recording ? Icons.graphic_eq_rounded : Icons.mic_rounded,
-                    size: 38,
-                    color: recording ? const Color(0xffdc2626) : Colors.white,
-                  ),
-          ),
+            const SizedBox(width: 22),
+            Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (_) => startVoice(),
+              onPointerUp: (_) => queueStopVoice(),
+              onPointerCancel: (_) => queueStopVoice(),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                width: 92,
+                height: 92,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: recognizing
+                      ? const Color(0xffede9e1)
+                      : recording
+                      ? const Color(0xffffe2e2)
+                      : const Color(0xffd97706),
+                  boxShadow: recording || recognizing
+                      ? const []
+                      : [
+                          BoxShadow(
+                            color: const Color(
+                              0xffd97706,
+                            ).withValues(alpha: .32),
+                            blurRadius: 20,
+                            offset: const Offset(0, 7),
+                          ),
+                        ],
+                ),
+                child: recognizing
+                    ? const Padding(
+                        padding: EdgeInsets.all(34),
+                        child: CircularProgressIndicator(
+                          color: Color(0xff8a8680),
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : Icon(
+                        recording
+                            ? Icons.graphic_eq_rounded
+                            : Icons.mic_rounded,
+                        size: 38,
+                        color: recording
+                            ? const Color(0xffdc2626)
+                            : Colors.white,
+                      ),
+              ),
+            ),
+            const SizedBox(width: 22),
+            IconButton.filledTonal(
+              onPressed: _openConversationPage,
+              tooltip: '添加图片或文件',
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+            ),
+          ],
         ),
         const SizedBox(height: 7),
         Text(
@@ -2592,7 +2612,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ? '正在发送语音…'
               : pendingTasks.isNotEmpty
               ? '信息处理中 · 可继续录入'
-              : '按住说话 · 可以记录，也可以直接问',
+              : '输入文字、语音或图片，其余交给 Agent',
           style: const TextStyle(color: Color(0xff9b968e), fontSize: 11),
         ),
       ],

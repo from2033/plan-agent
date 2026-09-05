@@ -5,6 +5,10 @@ import 'package:assistant/main.dart';
 void main() {
   final now = DateTime.utc(2026, 9, 5, 8);
 
+  test('主导航只保留 Agent、事项和资料', () {
+    expect(primaryNavigationLabels, ['Agent', '事项', '资料']);
+  });
+
   test('首页不展示已完成、失败和跟进历史', () {
     final visible = selectHomeAgentTasks([
       {

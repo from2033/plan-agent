@@ -377,10 +377,10 @@ export function listFeedbackTicketEvents(id: string, userId: string, primaryUser
   }));
 }
 
-export function dueFeedbackTickets(now = new Date()): FeedbackTicket[] {
+export function dueFeedbackTickets(now = new Date(), limit = 50): FeedbackTicket[] {
   return (db.prepare(`SELECT * FROM feedback_tickets
     WHERE status='deferred' AND next_attempt_at IS NOT NULL AND next_attempt_at<=?
-    ORDER BY next_attempt_at LIMIT 50`).all(now.toISOString()) as unknown as TicketRow[]).map(decode);
+    ORDER BY next_attempt_at LIMIT ?`).all(now.toISOString(), Math.min(5_000, Math.max(1, limit))) as unknown as TicketRow[]).map(decode);
 }
 
 export function auditStaleFeedbackTickets(now = new Date(), staleMinutes = 15): FeedbackTicket[] {

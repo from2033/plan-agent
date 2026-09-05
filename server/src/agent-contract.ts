@@ -88,6 +88,13 @@ export interface CapabilityStandard {
   capability: string; version: string; description: string; requiresConfirmation: boolean;
   allowedSideEffects: string[]; inputContract: string; outputContract: string; confirmationPolicy: string;
   idempotencyRule: string; retryPolicy: string; followUpPolicy: string;
+  contextTypes: string[];
+  allowedTools: string[];
+  reasoningEffort: "low" | "medium" | "high";
+  maxCalls: number;
+  maxRetries: number;
+  programmaticAcceptance: string[];
+  semanticAcceptance: string[];
   failurePolicy: "retry" | "awaiting_user" | "follow_up";
   acceptance: (input: unknown) => AcceptanceCheck[];
 }

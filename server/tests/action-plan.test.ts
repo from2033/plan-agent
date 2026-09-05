@@ -8,6 +8,7 @@ const birthdayRequest = "宝宝生日准备安排在中秋，你再去看下南�
 test("复合生日输入生成日期、待办、研究和反馈四项计划", () => {
   const plan = buildActionPlan(birthdayRequest, "2026-09-01");
   assert.deepEqual(plan.actions.map((item) => item.kind), ["resolve_date", "todo", "research", "feedback"]);
+  assert.deepEqual(plan.actions.at(-1)?.dependsOn, ["resolve_date", "todo", "research"]);
   assert.ok(plan.actions.every((item) => item.required && item.evidence.length > 0));
   assert.match(plan.actions.find((item) => item.kind === "research")?.instruction || "", /南京大厂/);
 });

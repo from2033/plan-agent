@@ -98,6 +98,7 @@ import {
   listAgentMessages,
   listAgentRuns,
 } from "./agent-runs.js";
+import { createContextPack } from "./context-packs.js";
 import {
   CODEX_QUEUE_POLICY_VERSION,
   CODEX_QUEUE_PROTOCOL_VERSION,
@@ -346,8 +347,17 @@ function dispatchActionPlan(
     } else if (item.kind === "research") {
       progressAutomaticTask(userId, child.id);
       const document = createResearchDocument(userId, item.title);
+      const contextPack = createContextPack(userId, {
+        runId: null,
+        stepId: child.id,
+        capabilityRef: "research@1.2",
+        originalRequest: raw,
+        facts: { instruction: item.instruction, context: clock },
+        conversation: (conversation.conversationHistory || []).map((message) => ({ ...message })),
+      });
       const job = enqueueAiJob(userId, "research", { reportId: document.id, query: item.instruction, originalRequest: raw,
         agentTaskId: child.id, orchestrationTaskId: taskId, requestedAt: new Date().toISOString(), locale: "zh-CN", audience: "南京家庭用户",
+        contextPackId: contextPack.id,
         ...(conversation.conversationId ? { conversationId: conversation.conversationId } : {}),
         ...(conversation.conversationHistory?.length ? { conversationHistory: conversation.conversationHistory } : {}),
       }, 80);
@@ -903,7 +913,7 @@ function addUnifiedSources(
     });
   }
   if (conversationId) {
-    const history = conversationContextForAi(conversationId, req.userId!, 30) || [];
+    const history = conversationContextForAi(conversationId, req.userId!, 6) || [];
     history.forEach((message, index) => {
       const id = `conversation-${conversationId}-${index}`;
       if (seen.has(id)) return;
@@ -3226,7 +3236,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     ? req.body.conversationId.trim().slice(0, 100)
     : "";
   const conversationHistory = conversationId
-    ? conversationContextForAi(conversationId, req.userId!, 16)
+    ? conversationContextForAi(conversationId, req.userId!, 6)
     : null;
   if (conversationId && !conversationHistory) {
     res.status(404).json({ error: "对话不存在或当前账号无权访问" });
@@ -3296,6 +3306,14 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       const researchConversationId = interactionConversationId
         || createConversation(req.userId!, "新对话");
       try {
+        const contextPack = createContextPack(req.userId!, {
+          runId: agentRunId || null,
+          stepId: inputAgentTaskId || null,
+          capabilityRef: "research@1.2",
+          originalRequest: raw,
+          facts: { topic, inputMode, requestedAt: new Date().toISOString(), context: requestClock },
+          conversation: (conversationHistory || []).map((message) => ({ ...message })),
+        });
         const job = enqueueAiJob(req.userId!, "research", {
           reportId: document.id,
           query: topic,
@@ -3306,6 +3324,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
           ...(conversationHistory?.length ? { conversationHistory } : {}),
           conversationId: researchConversationId,
           ...(agentRunId ? { agentRunId } : {}),
+          contextPackId: contextPack.id,
         }, 70);
         if (agentRunId) bindAgentRun(req.userId!, agentRunId, { jobId: job.id, rootTaskId: orchestrationTaskId });
         beginAiInteraction(req.userId!, job.id, raw, inputMode, researchConversationId);
@@ -3345,6 +3364,14 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
     const intentHint = knowledgeIntentHint(raw);
     if (codexWorkerOnline()) {
       const knowledge = knowledgeFromRequest(req, conversationId);
+      const contextPack = createContextPack(req.userId!, {
+        runId: agentRunId || null,
+        stepId: inputAgentTaskId || null,
+        capabilityRef: "input_processing@1.3",
+        originalRequest: raw,
+        facts: { intentHint, inputMode, context: requestClock },
+        conversation: (conversationHistory || []).map((message) => ({ ...message })),
+      });
       const job = enqueueAiJob(req.userId!, "ingest", {
         raw,
         ...(agentRunId ? { agentRunId } : {}),
@@ -3354,6 +3381,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         inputMode,
         context: requestClock,
         knowledge,
+        contextPackId: contextPack.id,
         ...(conversationHistory?.length ? { conversationHistory } : {}),
         ...(interactionConversationId ? { conversationId: interactionConversationId } : {}),
       });

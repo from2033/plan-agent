@@ -2021,7 +2021,7 @@ export async function rerankKnowledgeSources(question, candidates, inferenceRunn
   // derived copies prevents old model answers from becoming circular evidence.
   const primary = selected.filter(source => !/^(?:conversation|entry)-/.test(String(source.id || "")));
   if (primary.length) selected = primary;
-  return evidenceWithinBudget(selected.length ? selected : deduplicated, 8);
+  return evidenceWithinBudget(selected.length ? selected : deduplicated, 6);
 }
 
 export async function processIngestJob(job) {

@@ -20,9 +20,11 @@ test("Agent 任务必须经过验收才能进入 verified", () => {
 
 test("持久化 Agent 任务记录标准版本、事件和验收结果", () => {
   const task = createPersistentAgentTask("agent-test-user", "todo", { payload: { description: "测试待办" } }, "test", "source-1");
-  assert.equal(task.stage, "awaiting_confirmation");
-  assert.equal(task.standardVersion, "1.1");
-  assert.ok(transitionPersistentAgentTask("agent-test-user", task.id, "executing", "confirmed"));
+  assert.equal(task.stage, "received");
+  assert.equal(task.standardVersion, "1.2");
+  assert.ok(transitionPersistentAgentTask("agent-test-user", task.id, "classified", "classified"));
+  assert.ok(transitionPersistentAgentTask("agent-test-user", task.id, "extracted", "extracted"));
+  assert.ok(transitionPersistentAgentTask("agent-test-user", task.id, "executing", "authorized_low_risk_action"));
   assert.ok(transitionPersistentAgentTask("agent-test-user", task.id, "verifying", "executed"));
   const entry = { id: `entry-${Date.now()}`, type: "memo" as const, raw: "测试待办", time: "",
     description: "测试待办", category: "测试", done: false, timestamp: new Date().toISOString() };
@@ -30,7 +32,7 @@ test("持久化 Agent 任务记录标准版本、事件和验收结果", () => {
   const verified = verifyPersistentAgentTask("agent-test-user", task.id, entry);
   assert.equal(verified?.stage, "verified");
   assert.equal(getPersistentAgentTask(task.id, "other-user"), null);
-  assert.equal(listAgentTaskEvents("agent-test-user", task.id).length, 4);
+  assert.equal(listAgentTaskEvents("agent-test-user", task.id).length, 6);
   assert.equal(verified?.acceptanceDetails.some(item => item.id === "server-side-effect-receipt" && item.passed), true);
 });
 
@@ -109,6 +111,17 @@ test("能力注册表公开任务契约、幂等和跟进策略", () => {
   assert.match(desktop?.inputContract || "", /资料/);
   assert.match(desktop?.idempotencyRule || "", /idempotencyKey/);
   assert.match(desktop?.followUpPolicy || "", /手机/);
+});
+
+test("用户明确发起的低风险待办、提醒和只读研究无需确认", () => {
+  const standards = registeredCapabilities();
+  for (const capability of ["todo", "reminder", "research"]) {
+    const standard = standards.find((item) => item.capability === capability);
+    assert.equal(standard?.requiresConfirmation, false, capability);
+    assert.equal(standard?.maxCalls, 1, capability);
+    assert.ok((standard?.programmaticAcceptance.length || 0) > 0, capability);
+  }
+  assert.equal(standards.find((item) => item.capability === "document_action")?.requiresConfirmation, true);
 });
 
 test("验收失败和用户纠正进入失败样本并计入质量审计", () => {

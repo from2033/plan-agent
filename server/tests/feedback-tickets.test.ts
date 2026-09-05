@@ -42,8 +42,8 @@ test("额度不足的反馈会延期，并在到期后重新进入待处理集�
   transitionFeedbackTicket(ticket.id, "submitted", "submitted", "已提交");
   const retryAt = new Date(Date.now() + 60_000).toISOString();
   transitionFeedbackTicket(ticket.id, "deferred", "retry_scheduled", "额度不足，稍后继续", { nextAttemptAt: retryAt });
-  assert.ok(!dueFeedbackTickets(new Date()).some(item => item.id === ticket.id));
-  assert.ok(dueFeedbackTickets(new Date(Date.now() + 120_000)).some(item => item.id === ticket.id));
+  assert.ok(!dueFeedbackTickets(new Date(), 5_000).some(item => item.id === ticket.id));
+  assert.ok(dueFeedbackTickets(new Date(Date.now() + 120_000), 5_000).some(item => item.id === ticket.id));
 });
 
 test("反馈工单能力公开确认、重试和关闭验收契约", () => {
