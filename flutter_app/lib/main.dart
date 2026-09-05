@@ -2969,14 +2969,13 @@ class _TomorrowBriefPaneState extends State<TomorrowBriefPane> {
                     ),
                   )
                 else
-                  const Padding(
-                    padding: EdgeInsets.only(top: 70),
-                    child: Center(
-                      child: Text(
-                        '暂时没有可展示的明日安排，请稍后下拉刷新',
-                        style: TextStyle(color: Color(0xff8a8680)),
-                      ),
-                    ),
+                  _ReportSection(
+                    title: '明天清单',
+                    icon: Icons.checklist_rounded,
+                    items: relevant
+                        .map((entry) => entry.displayDescription)
+                        .where((description) => description.isNotEmpty)
+                        .toList(),
                   ),
               ],
             ),

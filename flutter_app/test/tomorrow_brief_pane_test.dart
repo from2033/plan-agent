@@ -11,7 +11,9 @@ import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 void main() {
-  testWidgets('empty report response shows a visible fallback', (tester) async {
+  testWidgets('empty report response falls back to tomorrow entries', (
+    tester,
+  ) async {
     await initializeDateFormatting('zh_CN');
     final api = ApiClient(
       httpClient: MockClient((request) async {
@@ -43,6 +45,43 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('暂时没有可展示的明日安排，请稍后下拉刷新'), findsOneWidget);
+    expect(find.text('明天清单'), findsOneWidget);
+    expect(find.textContaining('准备明天的资料'), findsOneWidget);
+  });
+
+  testWidgets('entries outside tomorrow do not appear in the fallback', (
+    tester,
+  ) async {
+    await initializeDateFormatting('zh_CN');
+    final api = ApiClient(
+      httpClient: MockClient(
+        (request) async => http.Response(jsonEncode(<String, dynamic>{}), 200),
+      ),
+    );
+    final today = DateTime(2026, 8, 31);
+    final entry = AssistantEntry(
+      id: 'later-1',
+      type: EntryType.activity,
+      description: '后天的安排',
+      category: '日程',
+      timestamp: today,
+      scheduledDate: '2026-09-02',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TomorrowBriefPane(
+            api: api,
+            entries: [entry],
+            selectedDate: today,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('明天还没有安排'), findsOneWidget);
+    expect(find.text('后天的安排'), findsNothing);
   });
 }
