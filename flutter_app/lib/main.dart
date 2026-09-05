@@ -17,6 +17,7 @@ import 'agent_page.dart';
 import 'conversation_page.dart';
 import 'desktop_pairing_page.dart';
 import 'document_audio_player.dart';
+import 'document_image_preview.dart';
 import 'finance_page.dart';
 import 'feedback_center_page.dart';
 import 'models.dart';
@@ -4005,6 +4006,9 @@ class _KnowledgePaneState extends State<KnowledgePane> {
     final isAudio = (document['mimeType'] as String? ?? '').startsWith(
       'audio/',
     );
+    final isImage = isPreviewableImageMimeType(
+      document['mimeType'] as String? ?? '',
+    );
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -4040,6 +4044,12 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                 '${result['category'] ?? '其他'}${(result['documentDate'] as String? ?? '').isEmpty ? '' : ' · ${result['documentDate']}'}',
                 style: const TextStyle(color: Color(0xff8a8680)),
               ),
+              if (isImage)
+                DocumentImagePreview(
+                  api: widget.api,
+                  documentId: document['id'] as String,
+                  fileName: document['fileName'] as String? ?? '照片',
+                ),
               if ((result['summary'] as String? ?? '').isNotEmpty) ...[
                 const SizedBox(height: 18),
                 Text(
