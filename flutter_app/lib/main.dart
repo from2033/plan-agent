@@ -669,9 +669,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const shortcutChannel = MethodChannel(
     'com.from2033.assistant/shortcuts',
   );
-  static const documentChannel = MethodChannel(
-    'com.from2033.assistant/documents',
-  );
   static const _dismissedAnswerRunPreference =
       'daynote.dismissed-home-answer-run';
   static const _dismissedAnswerFingerprintPreference =
@@ -696,8 +693,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   _HomeAnswer? _homeAnswer;
   String? _dismissedHomeAnswerRunId;
   String? _dismissedHomeAnswerFingerprint;
-  final TextEditingController _homeTextController = TextEditingController();
-  bool _uploadingHomeDocument = false;
   int _startMeetingRecordingRequest = 0;
   bool showCompletedTodos = false;
   DateTime selectedDate = DateUtils.dateOnly(DateTime.now());
@@ -727,7 +722,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     shortcutChannel.setMethodCallHandler(_handleShortcutMethod);
-    _homeTextController.addListener(_handleHomeTextChanged);
     unawaited(_restoreDismissedHomeAnswer());
     refresh();
     if (!widget.isGuest) unawaited(refreshQqSyncStatus());
@@ -741,10 +735,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(refreshWorldPulse());
     if (!widget.isGuest) unawaited(_recoverMeetingRecordings());
     unawaited(_consumePendingShortcut());
-  }
-
-  void _handleHomeTextChanged() {
-    if (mounted && !_disposing) setState(() {});
   }
 
   String _answerFingerprint(String question, String answer) =>
@@ -1140,80 +1130,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _submitHomeText() {
-    final text = _homeTextController.text.trim();
-    if (text.isEmpty) return;
-    _homeTextController.clear();
-    final task = _PendingVoiceTask(
-      id: _nextPendingId++,
-      text: text,
-      fromHome: true,
-    );
-    setState(() {
-      task.status = '分类排队中';
-      pendingTasks.insert(0, task);
-      error = null;
-    });
-    unawaited(_processPending(task, inputMode: 'text'));
-  }
-
-  Future<void> _uploadHomeDocument() async {
-    if (_uploadingHomeDocument) return;
-    if (widget.api.isGuest) {
-      setState(() => error = '请先登录后再添加图片或文件');
-      return;
-    }
-    setState(() {
-      _uploadingHomeDocument = true;
-      error = null;
-    });
-    try {
-      final picked = await documentChannel.invokeMapMethod<String, dynamic>(
-        'pick',
-      );
-      if (picked == null || !mounted || _disposing) return;
-      final instruction = _homeTextController.text.trim();
-      final bytes = picked['bytes'] as Uint8List?;
-      final fileName = picked['fileName'] as String? ?? '资料';
-      final mimeType =
-          picked['mimeType'] as String? ?? 'application/octet-stream';
-      if (bytes == null || bytes.isEmpty) throw const ApiException('文件内容为空');
-      final result = await widget.api.uploadDocument(
-        fileName: fileName,
-        mimeType: mimeType,
-        bytes: bytes,
-        note: instruction,
-        waitForProcessing: false,
-      );
-      if (!mounted || _disposing) return;
-      if (instruction.isNotEmpty &&
-          _homeTextController.text.trim() == instruction) {
-        _homeTextController.clear();
-      }
-      setState(() => _knowledgeRevision += 1);
-      unawaited(_refreshAgentProgress());
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            result['duplicate'] == true
-                ? '这份资料已经存在，没有重复上传'
-                : instruction.isEmpty
-                ? '图片或文件已交给 Agent 整理'
-                : '图片或文件和你的要求已交给 Agent',
-          ),
-        ),
-      );
-    } on MissingPluginException {
-      if (mounted && !_disposing) setState(() => error = '当前设备暂不支持选择文件');
-    } catch (exception) {
-      if (mounted && !_disposing) setState(() => error = exception.toString());
-    } finally {
-      if (mounted && !_disposing) {
-        setState(() => _uploadingHomeDocument = false);
-      }
-    }
-  }
-
   Future<void> _transcribeAndProcess(
     _PendingVoiceTask task,
     List<int> audio,
@@ -1466,9 +1382,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     shortcutChannel.setMethodCallHandler(null);
     worldPulseAnalysisTimer?.cancel();
     agentProgressTimer?.cancel();
-    _homeTextController
-      ..removeListener(_handleHomeTextChanged)
-      ..dispose();
     voice.dispose();
     meetingRecorder.dispose();
     super.dispose();
@@ -2641,12 +2554,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 color: agentStageColor(task['stage']?.toString()),
               ),
               title: Text(
-                (task['input'] as Map?)?['title']?.toString() ?? '正在处理输入',
-                maxLines: 1,
+                task['stage'] == 'awaiting_confirmation'
+                    ? '需要你确认：${(task['input'] as Map?)?['title']?.toString() ?? '下一步操作'}'
+                    : (task['input'] as Map?)?['title']?.toString() ?? '正在处理输入',
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text(
                 () {
+                  if (task['stage'] == 'awaiting_confirmation') {
+                    final input = task['input'] as Map?;
+                    return input?['details']?.toString().trim().isNotEmpty ==
+                            true
+                        ? input!['details'].toString()
+                        : input?['confirmationReason']?.toString() ??
+                              '点开查看具体内容，再决定是否执行';
+                  }
                   final planItems = (task['planItems'] as List? ?? const []);
                   final verified = planItems
                       .where(
@@ -2696,98 +2619,71 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildVoiceInput() => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+    padding: const EdgeInsets.fromLTRB(24, 6, 24, 12),
     child: Column(
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: recording
-                  ? const Color(0xffffb4b4)
-                  : const Color(0xffe5ddd1),
+        Semantics(
+          button: true,
+          label: recording ? '正在录音，点击结束' : '点击开始说话',
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: recognizing ? null : () => unawaited(_toggleVoice()),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 86,
+              height: 86,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: recognizing
+                    ? const Color(0xffede9e1)
+                    : recording
+                    ? const Color(0xffffe2e2)
+                    : const Color(0xffd97706),
+                border: recording
+                    ? Border.all(color: const Color(0xffffb4b4), width: 2)
+                    : null,
+                boxShadow: recording || recognizing
+                    ? const []
+                    : [
+                        BoxShadow(
+                          color: const Color(0xffd97706).withValues(alpha: .28),
+                          blurRadius: 20,
+                          offset: const Offset(0, 7),
+                        ),
+                      ],
+              ),
+              child: recognizing
+                  ? const Padding(
+                      padding: EdgeInsets.all(31),
+                      child: CircularProgressIndicator(
+                        color: Color(0xff8a8680),
+                        strokeWidth: 2.5,
+                      ),
+                    )
+                  : Icon(
+                      recording ? Icons.stop_rounded : Icons.mic_rounded,
+                      size: recording ? 38 : 36,
+                      color: recording ? const Color(0xffdc2626) : Colors.white,
+                    ),
             ),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x12000000),
-                blurRadius: 14,
-                offset: Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              IconButton(
-                onPressed: _uploadingHomeDocument
-                    ? null
-                    : () => unawaited(_uploadHomeDocument()),
-                tooltip: '添加图片或文件',
-                icon: _uploadingHomeDocument
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.add_photo_alternate_outlined),
-              ),
-              Expanded(
-                child: TextField(
-                  controller: _homeTextController,
-                  minLines: 1,
-                  maxLines: 4,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _submitHomeText(),
-                  decoration: const InputDecoration(
-                    hintText: '输入你想做的事',
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(vertical: 13),
-                  ),
-                ),
-              ),
-              IconButton(
-                onPressed: recognizing ? null : () => unawaited(_toggleVoice()),
-                tooltip: recording ? '点击结束录音' : '点击开始说话',
-                style: IconButton.styleFrom(
-                  backgroundColor: recording
-                      ? const Color(0xffffe2e2)
-                      : const Color(0xffffead0),
-                  foregroundColor: recording
-                      ? const Color(0xffdc2626)
-                      : const Color(0xffb45f06),
-                ),
-                icon: recognizing
-                    ? const SizedBox.square(
-                        dimension: 19,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(recording ? Icons.stop_rounded : Icons.mic_rounded),
-              ),
-              if (_homeTextController.text.trim().isNotEmpty)
-                IconButton.filled(
-                  onPressed: _submitHomeText,
-                  tooltip: '发送',
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xffd97706),
-                    foregroundColor: Colors.white,
-                  ),
-                  icon: const Icon(Icons.arrow_upward_rounded),
-                ),
-            ],
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Text(
           recording
-              ? '正在聆听 · 点击红色按钮结束'
+              ? '正在聆听 · 点击结束'
               : recognizing
-              ? '正在发送语音…'
+              ? '正在识别并交给 Agent…'
               : pendingTasks.isNotEmpty
-              ? '信息处理中 · 可继续录入'
-              : '文字、语音和图片都直接交给总管 Agent',
-          style: const TextStyle(color: Color(0xff9b968e), fontSize: 11),
+              ? 'Agent 正在处理 · 仍可继续说话'
+              : '点击说话，再点一次结束',
+          style: TextStyle(
+            color: recording
+                ? const Color(0xffb42318)
+                : const Color(0xff8a8680),
+            fontSize: 12,
+            fontWeight: recording ? FontWeight.w700 : FontWeight.w500,
+          ),
         ),
       ],
     ),
