@@ -37,7 +37,9 @@ const documentSearchScript = path.join(scriptDir, "document-search.py");
 const pythonBin = process.env.ASSISTANT_PYTHON_BIN || "/usr/bin/python3";
 const once = process.argv.includes("--once");
 const queueProtocolVersion = 13;
-const researchModel = process.env.ASSISTANT_RESEARCH_MODEL || "gpt-5.6-sol";
+const qualityModel = process.env.ASSISTANT_QUALITY_MODEL
+  || process.env.ASSISTANT_RESEARCH_MODEL
+  || "gpt-5.6-sol";
 const researchTimeoutMs = Math.max(120_000, Number(process.env.ASSISTANT_RESEARCH_TIMEOUT_MS || 600_000));
 const projectRoot = process.env.ASSISTANT_PROJECT_ROOT || path.resolve(scriptDir, "..");
 
@@ -1120,12 +1122,16 @@ export async function runCodex(job) {
   try {
     const isResearch = job.kind === "research";
     const usesWebSearch = isResearch || job.kind === "world_discovery";
+    const reasoningEffort = ["research", "feedback_repair", "standard_evolution"].includes(job.kind)
+      ? "high"
+      : ["ingest", "summary", "world_pulse", "document", "document_question", "knowledge_question"].includes(job.kind)
+        ? "medium"
+        : "low";
     const args = [
       ...(usesWebSearch ? ["--search"] : []),
       "exec",
-      ...(usesWebSearch
-        ? ["--model", researchModel, "--config", 'model_reasoning_effort="high"']
-        : []),
+      "--model", qualityModel,
+      "--config", `model_reasoning_effort="${reasoningEffort}"`,
       "--ephemeral",
       "--ignore-user-config",
       "--ignore-rules",
@@ -1339,8 +1345,16 @@ export function ollamaModelForJob(job) {
   return job?.kind === "world_discovery" ? ollamaSmallModel : ollamaLargeModel;
 }
 
+const userVisibleCodexKinds = new Set([
+  "ingest", "summary", "world_pulse", "document", "document_question", "knowledge_question",
+]);
+
+export function inferenceProviderForJob(job) {
+  return userVisibleCodexKinds.has(String(job?.kind || "")) ? "codex" : llmProvider;
+}
+
 export async function runInference(job, options = {}) {
-  const provider = options.provider || llmProvider;
+  const provider = options.provider || inferenceProviderForJob(job);
   const localRunner = options.localRunner || runOllama;
   const cloudRunner = options.cloudRunner || runCodex;
   const allowFallback = options.codexFallback ?? codexFallback;
@@ -2238,7 +2252,7 @@ async function processJob(payload) {
         : job.kind === "research"
           ? {
               result: await runCodex(job),
-              provider: `codex-research:${researchModel}`,
+              provider: `codex-research:${qualityModel}`,
             }
         : job.kind === "feedback_triage"
           ? {

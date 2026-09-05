@@ -420,6 +420,61 @@ registerCapabilityStandard({
   }],
 });
 
+for (const standard of [
+  {
+    capability: "answer", version: "1.0", description: "回答当前问题并保持对话相关性",
+    inputContract: "当前问题、最多六轮相关对话和必要事实", outputContract: "直接、非空且不虚构执行动作的回答",
+    contextTypes: ["current_request", "recent_conversation", "structured_facts"], reasoningEffort: "low" as const,
+    programmaticAcceptance: ["non_empty", "current_question_relevance", "no_fabricated_action"], semanticAcceptance: ["answer_quality"],
+  },
+  {
+    capability: "personal_record", version: "1.0", description: "把用户明确提供的个人事实保存为记录",
+    inputContract: "用户原话和结构化事实", outputContract: "唯一数据库记录和持久化回执",
+    contextTypes: ["current_request", "structured_facts"], reasoningEffort: "medium" as const,
+    programmaticAcceptance: ["required_fact_coverage", "unique_receipt"], semanticAcceptance: [],
+  },
+  {
+    capability: "knowledge_organize", version: "1.0", description: "整理并归档用户资料",
+    inputContract: "原始资料、OCR 或转写文本", outputContract: "标题、摘要、分类、资料编号和归档回执",
+    contextTypes: ["current_request", "source_document"], reasoningEffort: "medium" as const,
+    programmaticAcceptance: ["document_receipt", "source_linked"], semanticAcceptance: ["summary_fidelity"],
+  },
+  {
+    capability: "knowledge_answer", version: "1.0", description: "基于实际资料证据回答问题",
+    inputContract: "问题和最多六条证据", outputContract: "答案、证据 ID 和证据充分性",
+    contextTypes: ["current_request", "retrieved_evidence"], reasoningEffort: "medium" as const,
+    programmaticAcceptance: ["non_empty", "evidence_ids_exist"], semanticAcceptance: ["evidence_entailment"],
+  },
+  {
+    capability: "final_summary", version: "1.0", description: "汇总已验收的必要子任务结果",
+    inputContract: "目标、依赖步骤结构化输出和逐项验收", outputContract: "覆盖全部目标的用户可见最终结果",
+    contextTypes: ["current_request", "dependency_outputs", "acceptance_results"], reasoningEffort: "medium" as const,
+    programmaticAcceptance: ["all_required_dependencies_verified", "non_empty"], semanticAcceptance: ["goal_coverage"],
+  },
+]) {
+  registerCapabilityStandard({
+    ...common({
+      ...standard,
+      requiresConfirmation: false,
+      allowedSideEffects: standard.capability === "personal_record" ? ["create_entry"]
+        : standard.capability === "knowledge_organize" ? ["archive_document"] : [],
+      failurePolicy: "retry",
+      confirmationPolicy: "明确的低风险内部处理自动执行",
+      idempotencyRule: "相同任务、输入版本和能力版本只产生一个有效结果",
+      retryPolicy: "最多一次，只携带精确失败差异",
+      followUpPolicy: "达到上限后明确延期或失败，不无限循环",
+      maxCalls: 1,
+      maxRetries: 1,
+      allowedTools: [],
+    }),
+    acceptance: () => [{
+      id: "result-present",
+      description: "能力产生非空结构化结果",
+      check: (result) => Boolean(result && (typeof result !== "object" || Object.keys(result as object).length)),
+    }],
+  });
+}
+
 // 已创建任务会固化旧契约版本；行为升级使用新版本，不能原地改写历史契约。
 for (const [capability, currentVersion, legacyVersion, legacyConfirmation] of [
   ["todo", "1.2", "1.1", true],

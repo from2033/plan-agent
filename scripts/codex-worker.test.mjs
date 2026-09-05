@@ -13,6 +13,7 @@ import {
   documentAnswerForIngest,
   documentSourcesForAnswer,
   evidenceWithinBudget,
+  inferenceProviderForJob,
   extractDocumentText,
   groundedAnswerFacts,
   hasConcreteEvidenceOverlap,
@@ -346,6 +347,14 @@ test("all ingest input uses the large model", () => {
   assert.equal(ollamaModelForJob({ kind: "summary" }), "qwen3:14b");
   assert.equal(ollamaModelForJob({ kind: "document" }), "qwen3:14b");
   assert.equal(ollamaModelForJob({ kind: "document_question" }), "qwen3:14b");
+});
+
+test("所有用户可见内容强制使用 Codex，本地模型只做机械处理", () => {
+  for (const kind of ["ingest", "summary", "world_pulse", "document", "document_question", "knowledge_question"]) {
+    assert.equal(inferenceProviderForJob({ kind }), "codex", kind);
+  }
+  assert.equal(inferenceProviderForJob({ kind: "knowledge_rerank" }), "ollama");
+  assert.equal(inferenceProviderForJob({ kind: "world_discovery" }), "ollama");
 });
 
 test("only explicit clock ranges are accepted from a local model", () => {
