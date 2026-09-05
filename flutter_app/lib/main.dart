@@ -9,6 +9,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
@@ -600,11 +601,13 @@ class _HomeAnswer {
     required this.question,
     required this.answer,
     this.conversationId,
+    this.runId,
   });
 
   final String question;
   final String answer;
   final String? conversationId;
+  final String? runId;
 }
 
 List<Map<String, dynamic>> selectHomeAgentTasks(
@@ -666,6 +669,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const shortcutChannel = MethodChannel(
     'com.from2033.assistant/shortcuts',
   );
+  static const documentChannel = MethodChannel(
+    'com.from2033.assistant/documents',
+  );
+  static const _dismissedAnswerRunPreference =
+      'daynote.dismissed-home-answer-run';
+  static const _dismissedAnswerFingerprintPreference =
+      'daynote.dismissed-home-answer-fingerprint';
   late final VoiceService voice = VoiceService(widget.api);
   late final PersistentMeetingRecorder meetingRecorder =
       PersistentMeetingRecorder(widget.api);
@@ -684,6 +694,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _conversationRevision = 0;
   String? _requestedConversationId;
   _HomeAnswer? _homeAnswer;
+  String? _dismissedHomeAnswerRunId;
+  String? _dismissedHomeAnswerFingerprint;
+  final TextEditingController _homeTextController = TextEditingController();
+  bool _uploadingHomeDocument = false;
   int _startMeetingRecordingRequest = 0;
   bool showCompletedTodos = false;
   DateTime selectedDate = DateUtils.dateOnly(DateTime.now());
@@ -713,6 +727,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     shortcutChannel.setMethodCallHandler(_handleShortcutMethod);
+    _homeTextController.addListener(_handleHomeTextChanged);
+    unawaited(_restoreDismissedHomeAnswer());
     refresh();
     if (!widget.isGuest) unawaited(refreshQqSyncStatus());
     if (!widget.isGuest) {
@@ -725,6 +741,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     unawaited(refreshWorldPulse());
     if (!widget.isGuest) unawaited(_recoverMeetingRecordings());
     unawaited(_consumePendingShortcut());
+  }
+
+  void _handleHomeTextChanged() {
+    if (mounted && !_disposing) setState(() {});
+  }
+
+  String _answerFingerprint(String question, String answer) =>
+      '$question\u0000$answer';
+
+  Future<void> _restoreDismissedHomeAnswer() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted || _disposing) return;
+    setState(() {
+      _dismissedHomeAnswerRunId = preferences.getString(
+        _dismissedAnswerRunPreference,
+      );
+      _dismissedHomeAnswerFingerprint = preferences.getString(
+        _dismissedAnswerFingerprintPreference,
+      );
+      final current = _homeAnswer;
+      if (current != null &&
+          (current.runId != null
+              ? current.runId == _dismissedHomeAnswerRunId
+              : _answerFingerprint(current.question, current.answer) ==
+                    _dismissedHomeAnswerFingerprint)) {
+        _homeAnswer = null;
+      }
+    });
+  }
+
+  Future<void> _dismissHomeAnswer(_HomeAnswer value) async {
+    final fingerprint = _answerFingerprint(value.question, value.answer);
+    setState(() {
+      _dismissedHomeAnswerRunId = value.runId;
+      _dismissedHomeAnswerFingerprint = fingerprint;
+      _homeAnswer = null;
+    });
+    final preferences = await SharedPreferences.getInstance();
+    if (value.runId == null) {
+      await preferences.remove(_dismissedAnswerRunPreference);
+    } else {
+      await preferences.setString(_dismissedAnswerRunPreference, value.runId!);
+    }
+    await preferences.setString(
+      _dismissedAnswerFingerprintPreference,
+      fingerprint,
+    );
   }
 
   Future<void> _refreshAgentProgress() async {
@@ -824,10 +887,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }, orElse: () => null);
     if (latestAnswer != null) {
       final result = (latestAnswer['result'] as Map).cast<String, dynamic>();
+      final runId = latestAnswer['id']?.toString();
+      final question = latestAnswer['raw']?.toString() ?? '';
+      final answer = result['answer']?.toString() ?? '';
+      final fingerprint = _answerFingerprint(question, answer);
+      final wasDismissed = runId != null
+          ? runId == _dismissedHomeAnswerRunId
+          : fingerprint == _dismissedHomeAnswerFingerprint;
+      if (wasDismissed) {
+        _homeAnswer = null;
+        return;
+      }
       _homeAnswer = _HomeAnswer(
-        question: latestAnswer['raw']?.toString() ?? '',
-        answer: result['answer']?.toString() ?? '',
+        question: question,
+        answer: answer,
         conversationId: result['conversationId']?.toString(),
+        runId: runId,
       );
     }
   }
@@ -1023,7 +1098,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       if (heldFor < const Duration(milliseconds: 350)) {
         await voice.cancel();
-        throw const ApiException('按住多说一会儿再松手哦');
+        throw const ApiException('录音时间太短，请重新点击开始说话');
       }
       await voice.beginProcessing();
       backgroundProcessing = true;
@@ -1052,6 +1127,89 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _pressStartedAt = null;
       if (!queued && mounted && !_disposing) {
         setState(() => recognizing = false);
+      }
+    }
+  }
+
+  Future<void> _toggleVoice() async {
+    if (recognizing) return;
+    if (recording) {
+      await stopVoice();
+    } else {
+      await startVoice();
+    }
+  }
+
+  void _submitHomeText() {
+    final text = _homeTextController.text.trim();
+    if (text.isEmpty) return;
+    _homeTextController.clear();
+    final task = _PendingVoiceTask(
+      id: _nextPendingId++,
+      text: text,
+      fromHome: true,
+    );
+    setState(() {
+      task.status = '分类排队中';
+      pendingTasks.insert(0, task);
+      error = null;
+    });
+    unawaited(_processPending(task, inputMode: 'text'));
+  }
+
+  Future<void> _uploadHomeDocument() async {
+    if (_uploadingHomeDocument) return;
+    if (widget.api.isGuest) {
+      setState(() => error = '请先登录后再添加图片或文件');
+      return;
+    }
+    setState(() {
+      _uploadingHomeDocument = true;
+      error = null;
+    });
+    try {
+      final picked = await documentChannel.invokeMapMethod<String, dynamic>(
+        'pick',
+      );
+      if (picked == null || !mounted || _disposing) return;
+      final instruction = _homeTextController.text.trim();
+      final bytes = picked['bytes'] as Uint8List?;
+      final fileName = picked['fileName'] as String? ?? '资料';
+      final mimeType =
+          picked['mimeType'] as String? ?? 'application/octet-stream';
+      if (bytes == null || bytes.isEmpty) throw const ApiException('文件内容为空');
+      final result = await widget.api.uploadDocument(
+        fileName: fileName,
+        mimeType: mimeType,
+        bytes: bytes,
+        note: instruction,
+        waitForProcessing: false,
+      );
+      if (!mounted || _disposing) return;
+      if (instruction.isNotEmpty &&
+          _homeTextController.text.trim() == instruction) {
+        _homeTextController.clear();
+      }
+      setState(() => _knowledgeRevision += 1);
+      unawaited(_refreshAgentProgress());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result['duplicate'] == true
+                ? '这份资料已经存在，没有重复上传'
+                : instruction.isEmpty
+                ? '图片或文件已交给 Agent 整理'
+                : '图片或文件和你的要求已交给 Agent',
+          ),
+        ),
+      );
+    } on MissingPluginException {
+      if (mounted && !_disposing) setState(() => error = '当前设备暂不支持选择文件');
+    } catch (exception) {
+      if (mounted && !_disposing) setState(() => error = exception.toString());
+    } finally {
+      if (mounted && !_disposing) {
+        setState(() => _uploadingHomeDocument = false);
       }
     }
   }
@@ -1098,12 +1256,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _processPending(
     _PendingVoiceTask task, {
     void Function()? onQueued,
+    String inputMode = 'voice',
   }) async {
     try {
       task.clientRequestId ??=
           'daynote-${DateTime.now().microsecondsSinceEpoch}-${task.id}';
       final result = await widget.api.ingest(
         task.text,
+        inputMode: inputMode,
         clientRequestId: task.clientRequestId,
         waitForCompletion: false,
         onQueued: () {
@@ -1151,6 +1311,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   question: task.text,
                   answer: answer,
                   conversationId: result['conversationId'] as String?,
+                  runId: result['agentRunId']?.toString(),
                 );
               });
             } else {
@@ -1160,6 +1321,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   question: task.text,
                   answer: answer,
                   conversationId: result['conversationId'] as String?,
+                  runId: result['agentRunId']?.toString(),
                 );
               });
             }
@@ -1184,12 +1346,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     if (exception is ApiException) return exception.message;
     return transcribing ? '录音上传或语音识别失败，请重新录入' : '信息处理失败，请稍后重试';
-  }
-
-  void queueStopVoice() {
-    Timer.run(() {
-      if (mounted && !_disposing) stopVoice();
-    });
   }
 
   Future<void> logout() async {
@@ -1310,6 +1466,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     shortcutChannel.setMethodCallHandler(null);
     worldPulseAnalysisTimer?.cancel();
     agentProgressTimer?.cancel();
+    _homeTextController
+      ..removeListener(_handleHomeTextChanged)
+      ..dispose();
     voice.dispose();
     meetingRecorder.dispose();
     super.dispose();
@@ -1833,7 +1992,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,
-                onPressed: () => setState(() => _homeAnswer = null),
+                onPressed: () => unawaited(_dismissHomeAnswer(value)),
                 icon: const Icon(Icons.close_rounded, size: 18),
               ),
             ],
@@ -2537,82 +2696,97 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildVoiceInput() => Padding(
-    padding: const EdgeInsets.fromLTRB(24, 6, 24, 12),
+    padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
     child: Column(
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            IconButton.filledTonal(
-              onPressed: _openConversationPage,
-              tooltip: '文字输入',
-              icon: const Icon(Icons.keyboard_alt_outlined),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: recording
+                  ? const Color(0xffffb4b4)
+                  : const Color(0xffe5ddd1),
             ),
-            const SizedBox(width: 22),
-            Listener(
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: (_) => startVoice(),
-              onPointerUp: (_) => queueStopVoice(),
-              onPointerCancel: (_) => queueStopVoice(),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                width: 92,
-                height: 92,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: recognizing
-                      ? const Color(0xffede9e1)
-                      : recording
-                      ? const Color(0xffffe2e2)
-                      : const Color(0xffd97706),
-                  boxShadow: recording || recognizing
-                      ? const []
-                      : [
-                          BoxShadow(
-                            color: const Color(
-                              0xffd97706,
-                            ).withValues(alpha: .32),
-                            blurRadius: 20,
-                            offset: const Offset(0, 7),
-                          ),
-                        ],
-                ),
-                child: recognizing
-                    ? const Padding(
-                        padding: EdgeInsets.all(34),
-                        child: CircularProgressIndicator(
-                          color: Color(0xff8a8680),
-                          strokeWidth: 2.5,
-                        ),
-                      )
-                    : Icon(
-                        recording
-                            ? Icons.graphic_eq_rounded
-                            : Icons.mic_rounded,
-                        size: 38,
-                        color: recording
-                            ? const Color(0xffdc2626)
-                            : Colors.white,
-                      ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x12000000),
+                blurRadius: 14,
+                offset: Offset(0, 4),
               ),
-            ),
-            const SizedBox(width: 22),
-            IconButton.filledTonal(
-              onPressed: _openConversationPage,
-              tooltip: '添加图片或文件',
-              icon: const Icon(Icons.add_photo_alternate_outlined),
-            ),
-          ],
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              IconButton(
+                onPressed: _uploadingHomeDocument
+                    ? null
+                    : () => unawaited(_uploadHomeDocument()),
+                tooltip: '添加图片或文件',
+                icon: _uploadingHomeDocument
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_photo_alternate_outlined),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: _homeTextController,
+                  minLines: 1,
+                  maxLines: 4,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _submitHomeText(),
+                  decoration: const InputDecoration(
+                    hintText: '输入你想做的事',
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 13),
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: recognizing ? null : () => unawaited(_toggleVoice()),
+                tooltip: recording ? '点击结束录音' : '点击开始说话',
+                style: IconButton.styleFrom(
+                  backgroundColor: recording
+                      ? const Color(0xffffe2e2)
+                      : const Color(0xffffead0),
+                  foregroundColor: recording
+                      ? const Color(0xffdc2626)
+                      : const Color(0xffb45f06),
+                ),
+                icon: recognizing
+                    ? const SizedBox.square(
+                        dimension: 19,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(recording ? Icons.stop_rounded : Icons.mic_rounded),
+              ),
+              if (_homeTextController.text.trim().isNotEmpty)
+                IconButton.filled(
+                  onPressed: _submitHomeText,
+                  tooltip: '发送',
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color(0xffd97706),
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.arrow_upward_rounded),
+                ),
+            ],
+          ),
         ),
-        const SizedBox(height: 7),
+        const SizedBox(height: 6),
         Text(
           recording
-              ? '正在聆听 · 松开即记录'
+              ? '正在聆听 · 点击红色按钮结束'
               : recognizing
               ? '正在发送语音…'
               : pendingTasks.isNotEmpty
               ? '信息处理中 · 可继续录入'
-              : '输入文字、语音或图片，其余交给 Agent',
+              : '文字、语音和图片都直接交给总管 Agent',
           style: const TextStyle(color: Color(0xff9b968e), fontSize: 11),
         ),
       ],
