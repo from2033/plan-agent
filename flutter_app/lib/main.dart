@@ -827,17 +827,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
       }
       if (mounted && !_disposing) {
+        var refreshEntries = false;
         setState(() {
           agentTasks = value;
-          _mergeAgentRuns(runs);
+          refreshEntries = _mergeAgentRuns(runs);
         });
+        if (refreshEntries) unawaited(refresh());
       }
     } catch (_) {
       // 首页继续显示本地处理状态；网络恢复后下一次轮询会自动补齐。
     }
   }
 
-  void _mergeAgentRuns(List<Map<String, dynamic>> runs) {
+  bool _mergeAgentRuns(List<Map<String, dynamic>> runs) {
     const activeStatuses = {
       'received',
       'queued',
@@ -849,6 +851,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       for (final task in pendingTasks)
         if (task.agentRunId != null) task.agentRunId!: task,
     };
+    var refreshEntries = false;
     for (final run in runs) {
       final id = run['id']?.toString() ?? '';
       final status = run['status']?.toString() ?? '';
@@ -866,6 +869,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (existing == null) pendingTasks.insert(0, task);
       } else if (existing != null) {
         pendingTasks.remove(existing);
+        // A queued voice command may create or update entries only after the
+        // Agent run finishes. Reload them before removing the progress card so
+        // the completed reminder is immediately visible without reopening App.
+        if (status == 'completed') refreshEntries = true;
       }
     }
 
@@ -887,7 +894,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           : fingerprint == _dismissedHomeAnswerFingerprint;
       if (wasDismissed) {
         _homeAnswer = null;
-        return;
+        return refreshEntries;
       }
       _homeAnswer = _HomeAnswer(
         question: question,
@@ -896,6 +903,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         runId: runId,
       );
     }
+    return refreshEntries;
   }
 
   Future<dynamic> _handleShortcutMethod(MethodCall call) async {
