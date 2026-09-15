@@ -208,11 +208,38 @@ export type IngestResult =
   | { kind: "save"; item: KnowledgeItem }
   | { kind: "ask"; answer: string; sources: KnowledgeItem[] };
 
+interface PendingIngestResult {
+  kind: "pending";
+  jobId?: string;
+}
+
+interface AiJobResult {
+  status: "QUEUED" | "PROCESSING" | "DEFERRED" | "COMPLETE" | "FAILED";
+  result: IngestResult | null;
+  error?: string | null;
+}
+
+const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
+
 export async function addEntry(raw: string): Promise<IngestResult> {
-  return request<IngestResult>("/entries", {
+  const submitted = await request<IngestResult | PendingIngestResult>("/entries", {
     method: "POST",
     body: JSON.stringify({ raw }),
   });
+  if (submitted.kind !== "pending") return submitted;
+  if (!submitted.jobId) throw new Error("后台任务未正确创建");
+
+  const deadline = Date.now() + 3 * 60_000;
+  while (Date.now() < deadline) {
+    await wait(1500);
+    const job = await request<AiJobResult>(`/ai-jobs/${encodeURIComponent(submitted.jobId)}`);
+    if (job.status === "COMPLETE") {
+      if (!job.result) throw new Error("后台任务完成但没有返回结果");
+      return job.result;
+    }
+    if (job.status === "FAILED") throw new Error(job.error || "后台处理失败");
+  }
+  throw new Error("后台处理时间较长，请稍后刷新查看结果");
 }
 
 export function listKnowledge(): Promise<KnowledgeItem[]> {

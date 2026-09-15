@@ -1147,9 +1147,9 @@ export default function App() {
 
   // 最终识别文字 → 入库；若处于「语音修正」模式则改为修正那条记录（在 onFinal 回调里调用）。
   async function finalizeUtterance(text: string) {
-    setVoiceBusy((n) => Math.max(0, n - 1));
     const t = text.trim();
     if (!t) {
+      setVoiceBusy((n) => Math.max(0, n - 1));
       setError("没听清，请再说一次");
       return;
     }
@@ -1171,6 +1171,8 @@ export default function App() {
       } else {
         setError(target ? "修正失败，请重试" : "记录失败，请重试");
       }
+    } finally {
+      setVoiceBusy((n) => Math.max(0, n - 1));
     }
   }
 
