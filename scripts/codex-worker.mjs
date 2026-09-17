@@ -549,7 +549,7 @@ const documentMetadataSchema = {
       },
     },
   },
-  required: ["title", "category", "summary", "people", "keywords", "documentDate"],
+  required: ["title", "category", "summary", "people", "keywords", "documentDate", "suggestedActions"],
 };
 
 const documentQuestionSchema = {
@@ -1130,6 +1130,7 @@ export async function runCodex(job) {
     const args = [
       ...(usesWebSearch ? ["--search"] : []),
       "exec",
+      "--json",
       "--model", qualityModel,
       "--config", `model_reasoning_effort="${reasoningEffort}"`,
       "--ephemeral",
@@ -1161,9 +1162,13 @@ export async function runCodex(job) {
         TMPDIR: dir,
         LANG: "zh_CN.UTF-8",
       },
-      stdio: ["pipe", "ignore", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
+    let stdout = "";
     let stderr = "";
+    child.stdout.on("data", chunk => {
+      stdout = (stdout + chunk.toString()).slice(-4000);
+    });
     child.stderr.on("data", chunk => {
       stderr = (stderr + chunk.toString()).slice(-4000);
     });
@@ -1179,8 +1184,11 @@ export async function runCodex(job) {
       child.once("exit", code => { clearTimeout(timer); resolve(code); });
     });
     if (exitCode !== 0) {
-      const safeHint = codexFailureHint(stderr, exitCode);
-      throw new Error(safeHint);
+      const resultOutput = fs.existsSync(resultFile) ? fs.readFileSync(resultFile, "utf8").slice(-4000) : "";
+      const failureOutput = `${stdout}\n${stderr}\n${resultOutput}`;
+      const error = new Error(codexFailureHint(failureOutput, exitCode));
+      error.retryAt = codexRetryAt(failureOutput);
+      throw error;
     }
     return JSON.parse(fs.readFileSync(resultFile, "utf8"));
   } finally {
@@ -1190,12 +1198,28 @@ export async function runCodex(job) {
 
 export function codexFailureHint(stderr, exitCode) {
   const text = String(stderr || "");
-  if (/usage limit|rate limit|quota|credits|too many requests|\b429\b/i.test(text)) return "codex_quota_exhausted";
+  if (/usage limit|rate limit|plan limit|quota|credits|too many requests|try again at|\b429\b/i.test(text)) return "codex_quota_exhausted";
   if (/not logged in|authentication|unauthorized|invalid token|\b401\b|\b403\b/i.test(text)) return "codex_auth_failed";
   if (/ECONN|ENOTFOUND|network|socket|connection|fetch failed|timed?\s*out/i.test(text)) return "codex_network_failed";
   if (/unavailable|overloaded|bad gateway|gateway timeout|\b502\b|\b503\b|\b504\b/i.test(text)) return "codex_service_unavailable";
-  if (/output schema|invalid json|validation|parse error/i.test(text)) return "codex_validation_failed";
+  if (/output schema|invalid[_ ]json(?:[_ ]schema)?|validation|parse error/i.test(text)) return "codex_validation_failed";
+  // Codex CLI occasionally exits 1 after emitting only transport/session
+  // diagnostics. Treat that opaque exit as transient so durable jobs are not
+  // permanently discarded merely because the useful upstream error vanished.
+  if (Number(exitCode) === 1) return "codex_service_unavailable";
   return `codex_exit_${exitCode}`;
+}
+
+export function codexRetryAt(output, now = new Date()) {
+  const match = String(output || "").match(/try again at\s+(\d{1,2}):(\d{2})\s*([AP]M)/i);
+  if (!match) return null;
+  let hour = Number(match[1]) % 12;
+  if (match[3].toUpperCase() === "PM") hour += 12;
+  const retryAt = new Date(now);
+  retryAt.setHours(hour, Number(match[2]), 0, 0);
+  if (retryAt.getTime() <= now.getTime()) retryAt.setDate(retryAt.getDate() + 1);
+  retryAt.setMinutes(retryAt.getMinutes() + 1);
+  return retryAt.toISOString();
 }
 
 async function feedbackInputWithScreenshots(job, leaseToken) {
@@ -2282,11 +2306,16 @@ async function processJob(payload) {
     log(`job_complete id=${job.id} provider=${inference.provider}`);
   } catch (error) {
     const reason = String(error?.message || error).replace(/[^a-zA-Z0-9:_-]/g, "_").slice(0, 160);
+    const retryAt = typeof error?.retryAt === "string" ? error.retryAt : null;
     log(`job_failed id=${job.id} reason=${reason}`);
     await request(`/internal/codex-worker/jobs/${job.id}/fail`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ reason, retryable: !reason.includes("auth_failed") }),
+      body: JSON.stringify({
+        reason,
+        retryable: !reason.includes("auth_failed"),
+        ...(retryAt ? { retryAt } : {}),
+      }),
     }, leaseToken).catch(() => {});
   } finally {
     clearInterval(heartbeat);

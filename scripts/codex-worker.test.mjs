@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   codexFailureHint,
+  codexRetryAt,
   appendVaultDocumentNote,
   conversationRecordProposal,
   deduplicateEvidenceSources,
@@ -47,11 +48,33 @@ const ingestJob = {
 };
 
 test("Codex 非零退出保留可处理的真实错误类别", () => {
-  assert.equal(codexFailureHint("Usage limit reached", 1), "codex_quota_exhausted");
+  assert.equal(codexFailureHint("You've hit your usage limit · try again at 12:59 PM", 1), "codex_quota_exhausted");
+  assert.equal(codexFailureHint("You've hit your plan limit. Try again at 12:59 PM", 1), "codex_quota_exhausted");
   assert.equal(codexFailureHint("Not logged in", 1), "codex_auth_failed");
   assert.equal(codexFailureHint("fetch failed: ECONNRESET", 1), "codex_network_failed");
   assert.equal(codexFailureHint("503 service unavailable", 1), "codex_service_unavailable");
+  assert.equal(codexFailureHint("invalid_json_schema", 1), "codex_validation_failed");
+  assert.equal(codexFailureHint("opaque session diagnostics", 1), "codex_service_unavailable");
   assert.equal(codexFailureHint("unexpected internal issue", 7), "codex_exit_7");
+});
+
+test("Codex 额度恢复时间可从标准输出解析，并留一分钟缓冲", () => {
+  const now = new Date(2026, 8, 17, 8, 0, 0);
+  assert.equal(
+    codexRetryAt("You've hit your usage limit · try again at 12:59 PM", now),
+    new Date(2026, 8, 17, 13, 0, 0).toISOString(),
+  );
+  assert.equal(codexRetryAt("unrelated failure", now), null);
+});
+
+test("Codex 使用结构化事件输出保留上游失败详情", () => {
+  const source = fs.readFileSync(new URL("./codex-worker.mjs", import.meta.url), "utf8");
+  assert.match(source, /"exec",\s*\n\s*"--json",/);
+});
+
+test("文档元数据严格 Schema 要求所有属性都有返回值", () => {
+  const source = fs.readFileSync(new URL("./codex-worker.mjs", import.meta.url), "utf8");
+  assert.match(source, /required: \["title", "category", "summary", "people", "keywords", "documentDate", "suggestedActions"\]/);
 });
 
 test("follow-up retrieval includes recent conversation context", () => {
@@ -487,7 +510,7 @@ test("runOllama accepts document metadata with a bounded output", async (t) => {
   });
   assert.equal(result.category, "合同");
   assert.equal(requestBody.options.num_predict, 320);
-  assert.deepEqual(requestBody.format.required, ["title", "category", "summary", "people", "keywords", "documentDate"]);
+  assert.deepEqual(requestBody.format.required, ["title", "category", "summary", "people", "keywords", "documentDate", "suggestedActions"]);
 });
 
 test("runOllama answers document questions with explicit source indexes", async (t) => {

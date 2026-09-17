@@ -562,7 +562,13 @@ export function completeAiJob(
   return rowToJob(db.prepare("SELECT * FROM ai_jobs WHERE id=?").get(id) as unknown as JobRow);
 }
 
-export function failAiJob(id: string, leaseToken: string, reason: string, retryable: boolean): boolean {
+export function failAiJob(
+  id: string,
+  leaseToken: string,
+  reason: string,
+  retryable: boolean,
+  requestedRetryAt?: string,
+): boolean {
   const row = leasedRow(id, leaseToken);
   if (!row) return false;
   const errorKind = classifyCodexFailure(reason);
@@ -573,8 +579,15 @@ export function failAiJob(id: string, leaseToken: string, reason: string, retrya
   const nowDate = new Date();
   const now = nowDate.toISOString();
   const delayMinutes = retryDelayMinutes(row.attempts);
+  const requestedRetryTime = requestedRetryAt ? Date.parse(requestedRetryAt) : Number.NaN;
+  const validQuotaRetryTime = errorKind === "quota"
+    && Number.isFinite(requestedRetryTime)
+    && requestedRetryTime > nowDate.getTime()
+    && requestedRetryTime <= nowDate.getTime() + 7 * 24 * 60 * 60_000;
   const availableAt = shouldDefer
-    ? new Date(nowDate.getTime() + delayMinutes * 60_000).toISOString()
+    ? validQuotaRetryTime
+      ? new Date(requestedRetryTime).toISOString()
+      : new Date(nowDate.getTime() + delayMinutes * 60_000).toISOString()
     : null;
   db.prepare(`UPDATE ai_jobs SET status=?,error=?,error_kind=?,available_at=?,worker_id=NULL,
     lease_hash=NULL,lease_until=NULL,heartbeat_at=NULL,updated_at=? WHERE id=?`)

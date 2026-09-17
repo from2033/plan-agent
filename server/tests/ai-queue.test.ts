@@ -297,6 +297,25 @@ test("Codex 临时异常进入熔断和分级退避，不立即重发完整任�
   failAiJob(job.id, resumed!.leaseToken, "test cleanup", false);
 });
 
+test("Codex 额度耗尽即使超过重试上限也等到额度恢复，不永久失败", () => {
+  const previousMaxAttempts = process.env.CODEX_WORKER_MAX_ATTEMPTS;
+  process.env.CODEX_WORKER_MAX_ATTEMPTS = "1";
+  try {
+    const job = enqueueAiJob("quota-user", "document", { fileName: "待处理.pdf" });
+    const claimed = claimAiJob("quota-worker", new Date(Date.now() + 2 * 60 * 60_000));
+    assert.equal(claimed?.job.id, job.id);
+    const retryAt = new Date(Date.now() + 3 * 60 * 60_000).toISOString();
+    failAiJob(job.id, claimed!.leaseToken, "codex_quota_exhausted", true, retryAt);
+    const deferred = getAiJob(job.id, "quota-user");
+    assert.equal(deferred?.status, "DEFERRED");
+    assert.equal(deferred?.errorKind, "quota");
+    assert.equal(deferred?.availableAt, retryAt);
+  } finally {
+    if (previousMaxAttempts === undefined) delete process.env.CODEX_WORKER_MAX_ATTEMPTS;
+    else process.env.CODEX_WORKER_MAX_ATTEMPTS = previousMaxAttempts;
+  }
+});
+
 test.after(() => {
   fs.rmSync(temporaryDir, { recursive: true, force: true });
 });

@@ -1528,6 +1528,7 @@ app.post(`${WORKER_API}/jobs/:id/fail`, requireWorker, (req, res) => {
     leaseToken,
     String(req.body?.reason || "worker_failed"),
     req.body?.retryable !== false,
+    typeof req.body?.retryAt === "string" ? req.body.retryAt : undefined,
   );
   if (!ok) {
     res.status(409).json({ error: "invalid_or_expired_lease" });
