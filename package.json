@@ -9,15 +9,18 @@
   },
   "scripts": {
     "build": "vite build",
+    "check": "bash scripts/check-project.sh",
     "dev": "vite",
+    "test:worker": "node --test scripts/codex-worker.test.mjs scripts/migrate-knowledge-space.test.mjs",
+    "test:python": "python3 scripts/document-search.test.py && (cd integrations/qq-group-center && python3 -m unittest test_onebot_sync.py test_qq_monitor.py test_qq_login_control.py)",
     "evaluate:ingest-model": "node scripts/evaluate-ingest-model.mjs",
     "build:native": "vite build --mode native",
     "ios:sync": "vite build --mode native && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 cap sync ios",
     "ios:open": "cap open ios"
   },
   "dependencies": {
-    "@capacitor/core": "^7.6.7",
-    "@capacitor/ios": "^7.6.7",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/ios": "^7.6.9",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@mui/icons-material": "7.3.5",
@@ -59,15 +62,15 @@
     "lucide-react": "0.487.0",
     "motion": "12.23.24",
     "next-themes": "0.4.6",
+    "qrcode": "^1.5.4",
     "react-day-picker": "8.10.1",
     "react-dnd": "16.0.1",
     "react-dnd-html5-backend": "16.0.1",
     "react-hook-form": "7.55.0",
     "react-popper": "2.3.0",
-    "qrcode": "^1.5.4",
     "react-resizable-panels": "2.1.7",
     "react-responsive-masonry": "2.7.1",
-    "react-router": "7.13.0",
+    "react-router": "^7.18.4",
     "react-slick": "0.31.0",
     "recharts": "2.15.2",
     "sonner": "2.0.3",
@@ -76,13 +79,13 @@
     "vaul": "1.1.2"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.6.7",
+    "@capacitor/cli": "^7.6.9",
     "@tailwindcss/vite": "4.1.12",
     "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-react": "4.7.0",
     "tailwindcss": "4.1.12",
     "typescript": "^5.9.3",
-    "vite": "6.3.5",
+    "vite": "^6.4.4",
     "vite-plugin-pwa": "^0.21.2"
   },
   "peerDependencies": {
@@ -99,7 +102,7 @@
   },
   "pnpm": {
     "overrides": {
-      "vite": "6.3.5"
+      "vite": "6.4.4"
     }
   }
 }

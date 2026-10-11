@@ -18,8 +18,19 @@ ios/DerivedData/
 # local env (secrets — never commit)
 .env
 .env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.native
+!.env.production
+!**/.env.example
 server/.env
+
+# Signing credentials and private deployment keys
+**/*.p8
+**/*.p12
+**/*.mobileprovision
+**/*.jks
+**/*.keystore
 
 # database
 *.db
