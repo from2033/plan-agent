@@ -1,0 +1,18 @@
+[Unit]
+Description=Private QQ login QR email controller
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/opt/qq-group-center/runtime/monitor.env
+EnvironmentFile=/opt/qq-group-center/runtime/login-control.env
+ExecStart=/usr/bin/python3 /opt/qq-group-center/runtime/qq_login_control.py
+Restart=on-failure
+RestartSec=5
+User=root
+Group=root
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

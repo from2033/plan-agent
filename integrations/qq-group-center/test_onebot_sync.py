@@ -1,4 +1,5 @@
 import contextlib
+from datetime import datetime
 import importlib.util
 import sqlite3
 import sys
@@ -116,6 +117,24 @@ class AssistantSyncReceiptTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self._sync())
         self.assertTrue(await self._sync())
         self.assertEqual(_AsyncClient.calls, 2)
+
+
+class SubjectExtractionTest(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.module = _load_onebot(Path(self.tempdir.name) / "app.db")
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_subject_is_inferred_for_printable_message_image(self):
+        self.assertEqual(self.module._guess_subject("今天数学作业：口算第 3 页"), "数学")
+        self.assertEqual(self.module._guess_subject("默写 1-20 号单词"), "英语")
+        self.assertIsNone(self.module._guess_subject("明天带水杯"))
+
+    def test_qq_timestamp_is_rendered_in_shanghai_time(self):
+        value = datetime.fromtimestamp(0, self.module.SHANGHAI_TZ)
+        self.assertEqual(value.strftime("%Y-%m-%d %H:%M"), "1970-01-01 08:00")
 
 
 if __name__ == "__main__":

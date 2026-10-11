@@ -12,7 +12,7 @@ import logging
 import time
 import mimetypes
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -26,11 +26,29 @@ from onebot_auth import authorize_onebot
 router = APIRouter(prefix="/api/integrations/onebot", tags=["onebot"])
 log = logging.getLogger("onebot")
 
+# QQ uses Unix timestamps.  The group center is a China-facing product, while
+# its Docker container runs in UTC, so all human-facing date/time fields must
+# be converted explicitly instead of inheriting the container timezone.
+SHANGHAI_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
+
 TYPE_KEYWORDS = {
     "homework": ["作业", "练习", "周记", "打卡", "课本"],
     "notice": ["通知", "家长会", "会议", "放假", "请假"],
     "praise": ["表扬", "优秀", "出色", "值得", "点赞"],
     "reminder": ["提醒", "订正", "检查", "注意", "截止"],
+}
+
+SUBJECT_KEYWORDS = {
+    "语文": ("语文", "生字", "词语", "古诗", "作文", "习作"),
+    "数学": ("数学", "口算", "计算", "方程", "几何"),
+    "英语": ("英语", "单词", "拼读"),
+    "物理": ("物理",),
+    "化学": ("化学",),
+    "生物": ("生物",),
+    "道法": ("道法", "道德与法治"),
+    "历史": ("历史",),
+    "地理": ("地理",),
+    "科学": ("科学",),
 }
 
 
@@ -39,6 +57,52 @@ def _classify(content: str) -> str:
         if any(keyword in content for keyword in keywords):
             return message_type
     return "notice"
+
+
+def _guess_subject(*values: str) -> Optional[str]:
+    text = " ".join(str(value or "") for value in values)
+    for subject, keywords in SUBJECT_KEYWORDS.items():
+        if any(keyword in text for keyword in keywords):
+            return subject
+    return None
+
+
+def _ensure_message_images_in_downloads(
+    *, message_id: int, image_urls: list[str], content: str, msg_date: str,
+    display_time: str, group_id: str, group_name: str,
+) -> int:
+    """Make QQ message images visible in the selected day's print area."""
+    inserted = 0
+    with db() as conn:
+        for index, image_url in enumerate(image_urls):
+            image_path = config.UPLOAD_DIR / Path(str(image_url)).name
+            if not image_path.exists():
+                continue
+            full_path = str(image_path)
+            existing = conn.execute(
+                "SELECT id FROM downloads WHERE file_path = ?", (full_path,)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE downloads SET created_at = ? WHERE id = ?",
+                    (f"{msg_date} {display_time or '00:00'}:00", existing["id"]),
+                )
+                continue
+            suffix = image_path.suffix.lower() or ".jpg"
+            subject = _guess_subject(content, image_path.name)
+            label = subject or "群图片"
+            name = f"{label}-{msg_date}-{message_id}-{index + 1}{suffix}"
+            conn.execute(
+                "INSERT INTO downloads "
+                "(name, subject, size_bytes, file_path, group_id, group_name, created_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    name, subject, image_path.stat().st_size, full_path,
+                    group_id, group_name, f"{msg_date} {display_time or '00:00'}:00",
+                ),
+            )
+            inserted += 1
+    return inserted
 
 
 def _parse_message(event: dict[str, Any]) -> tuple[str, list[dict], list[dict]]:
@@ -277,9 +341,11 @@ async def _handle_group_upload(event: dict) -> dict:
     # 文件的真实上传/修改时间（回填时由群文件列表带入），用作 created_at
     upload_ts = finfo.get("modify_time") or finfo.get("upload_time") or event.get("time")
     try:
-        created_at = datetime.fromtimestamp(int(upload_ts)).strftime("%Y-%m-%d %H:%M:%S")
+        created_at = datetime.fromtimestamp(
+            int(upload_ts), SHANGHAI_TZ
+        ).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, OSError):
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        created_at = datetime.now(SHANGHAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     with db() as conn:
         duplicate = conn.execute(
@@ -287,6 +353,11 @@ async def _handle_group_upload(event: dict) -> dict:
             (fname, int(size)),
         ).fetchone()
     if duplicate:
+        with db() as conn:
+            conn.execute(
+                "UPDATE downloads SET created_at = ? WHERE id = ?",
+                (created_at, duplicate["id"]),
+            )
         # 历史回填会重放已经下载过的文件；即使下载区已有记录，也要补送个人助手 OCR。
         await _sync_assistant_task(
             receipt_key=f"download:{duplicate['id']}:task",
@@ -401,9 +472,9 @@ async def receive_event(
 
     timestamp = event.get("time")
     try:
-        _dt = datetime.fromtimestamp(int(timestamp))
+        _dt = datetime.fromtimestamp(int(timestamp), SHANGHAI_TZ)
     except (TypeError, ValueError, OSError):
-        _dt = datetime.now()
+        _dt = datetime.now(SHANGHAI_TZ)
     display_time = _dt.strftime("%H:%M")
     msg_date = _dt.strftime("%Y-%m-%d")
 
@@ -413,10 +484,18 @@ async def receive_event(
 
     with db() as conn:
         exists = conn.execute(
-            "SELECT id, images_json FROM messages WHERE source = 'onebot' AND external_id = ?",
+            "SELECT id, images_json, content, date, time, group_id, group_name "
+            "FROM messages WHERE source = 'onebot' AND external_id = ?",
             (external_id,),
         ).fetchone()
         if exists:
+            # Replays are also a repair path for records written before the
+            # collector started converting UTC container time to Shanghai time.
+            with db() as conn:
+                conn.execute(
+                    "UPDATE messages SET time = ?, date = ? WHERE id = ?",
+                    (display_time, msg_date, exists["id"]),
+                )
             await _sync_assistant_task(
                 receipt_key=f"message:{exists['id']}:task",
                 external_id=external_id, group_id=group_id, group_name=group_name,
@@ -426,6 +505,14 @@ async def receive_event(
                 existing_images = json.loads(exists["images_json"] or "[]")
             except (TypeError, json.JSONDecodeError):
                 existing_images = []
+            _ensure_message_images_in_downloads(
+                message_id=exists["id"], image_urls=existing_images,
+                content=exists["content"] or content,
+                msg_date=msg_date,
+                display_time=display_time,
+                group_id=exists["group_id"] or group_id,
+                group_name=exists["group_name"] or group_name,
+            )
             for image_url in existing_images:
                 image_name = Path(str(image_url)).name
                 image_path = config.UPLOAD_DIR / image_name
@@ -466,6 +553,12 @@ async def receive_event(
         )
         row_id = cur.lastrowid
 
+    printable_images = _ensure_message_images_in_downloads(
+        message_id=row_id, image_urls=image_urls, content=content,
+        msg_date=msg_date, display_time=display_time,
+        group_id=group_id, group_name=group_name,
+    )
+
     sync_content = content or " ".join(f"[图片附件：{name}]" for _, name in downloaded_images)
     await _sync_assistant_task(
         receipt_key=f"message:{row_id}:task",
@@ -480,7 +573,10 @@ async def receive_event(
             group_name=group_name, sender=teacher, timestamp=timestamp,
         )
 
-    return {"status": "ok", "id": row_id, "type": message_type, "images": len(image_urls)}
+    return {
+        "status": "ok", "id": row_id, "type": message_type,
+        "images": len(image_urls), "printable_images": printable_images,
+    }
 
 
 @router.get("/status")
