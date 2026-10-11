@@ -1,98 +1,64 @@
-# 部署到自己的 Windows 服务器（PWA 前端 + Node 后端）
+# Personal Assistant 部署说明
 
-整套由两部分组成：
+## 当前生产架构
 
-- **前端**（本目录）：React + Vite + Tailwind 的 PWA，构建出静态 `dist/`，部署到网站根目录 `/`。
-- **后端**（[server/](server/)）：Node + Express + SQLite，提供 `/api/*`，负责数据持久化和调用 Claude 做自然语言解析。
+生产应用容器和数据库运行在 Mac mini 的受保护运行目录中，公共域名由香港入口服务器接入，并通过反向隧道访问 Mac 本地端口。
 
-```
-iPhone Safari (PWA) ──HTTPS──> 你的域名
-                                 ├─ /        → 静态前端 (dist/)
-                                 └─ /api/*   → 反代到 Node 后端 (127.0.0.1:8787)
-                                                  ├─ data.db (SQLite)
-                                                  └─ Claude API (解析)
-```
+服务器角色、连接方式和禁止事项以全局 `~/.codex/AGENTS.md` 为唯一事实来源。项目文档不重复保存主机地址、密钥、密码或令牌，避免配置过期或泄漏。
 
-## 一、构建前端
+以下路径均不是当前应用部署目标：
+
+- Windows 支付服务器：只承载共享 Windows 服务和支付中心。
+- 香港入口服务器：只负责公网入口、缓存和邮件中继。
+- 已退役的旧香港应用服务器：只保留为临时可恢复镜像，不得启动写入进程或部署新版本。
+
+## 发布前检查
+
+在仓库根目录运行：
 
 ```bash
-npm install        # 第一次
-npm run build      # 生成 dist/
+npm run check
 ```
 
-`dist/` 整个复制到服务器网站根目录。前端默认请求同源的 `/api`，**同源部署无需改任何配置**（如果前后端不同域，构建前在 `.env` 里设 `VITE_API_BASE`）。
+该命令会检查 Web、服务端、worker、Python/QQ 集成和 Flutter。随后再完成目标版本构建，并确认生产运行时配置、反向隧道和入口路由均已就绪。
 
-## 二、部署后端
+## Mac mini 发布
 
-1. 服务器装 **Node 22.5+**（后端用到内置 `node:sqlite`，Node 20 会报 `ERR_UNKNOWN_BUILTIN_MODULE`）。
-2. 拷 [server/](server/) 到服务器，进目录执行：
-   ```bash
-   npm ci
-   npm run build        # tsc 编译到 dist/
-   ```
-3. 复制 `server/.env.example` 为 `server/.env`，填写：
-   - `ANTHROPIC_API_KEY`：你的 Anthropic API key（不填则自动回退到正则解析，仍可用）。
-   - `ACCESS_TOKEN`：自己设一个长随机串，**前端首次进入时要输入它**。
-   - `PORT`：默认 8787。`DB_PATH`：SQLite 文件路径。`CORS_ORIGIN`：同源部署可留 `*`。
-4. **常驻运行**（开机自启 + 崩溃重启），用 [NSSM](https://nssm.cc/) 把它注册成 Windows 服务：
-   ```
-   nssm install PersonalAssistant "C:\Program Files\nodejs\node.exe" "C:\path\to\server\dist\index.js"
-   nssm set PersonalAssistant AppDirectory "C:\path\to\server"
-   nssm start PersonalAssistant
-   ```
-   （或用 `pm2` + `pm2-windows-startup`。）
-5. 验证：`curl http://localhost:8787/api/health` 返回 `{"ok":true,...}`。
+先查看将要使用的运行目录、镜像名和备份位置，不产生任何修改：
 
-## 三、关键：必须用 HTTPS
-
-- iOS 上 PWA 的「离线缓存（service worker）」**只有在 HTTPS 下才生效**（`localhost` 例外）。
-- **自签名证书不行**：iOS 不信任。需要域名 + Let's Encrypt 等被信任的证书。
-
-## 四、反向代理：前端 `/` + 后端 `/api`（IIS）
-
-1. 安装 IIS + 「URL Rewrite」+ 「Application Request Routing (ARR)」（反代 `/api` 需要 ARR）。
-2. 新建网站，物理路径指向 `dist/` 文件夹。
-3. `dist/web.config` 已配好 `.webmanifest` MIME、JS 不缓存、SPA 回退。**需在它的 `<rules>` 里，把 `/api` 反代规则放在 SPA 回退规则之前**：
-   ```xml
-   <rule name="API proxy" stopProcessing="true">
-     <match url="^api/(.*)" />
-     <action type="Rewrite" url="http://127.0.0.1:8787/api/{R:1}" />
-   </rule>
-   ```
-4. 配 HTTPS：用 [win-acme](https://www.win-acme.com/) 申请并自动续期 Let's Encrypt 证书，绑定 443。
-
-## 四（替代）、用 Caddy（更省事，自动 HTTPS + 反代）
-
-```
-your-domain.com {
-    encode gzip
-    handle /api/* {
-        reverse_proxy 127.0.0.1:8787
-    }
-    handle {
-        root * C:/path/to/dist
-        try_files {path} /index.html
-        file_server
-    }
-}
+```bash
+./deploy/deploy-mac-production.sh --dry-run
 ```
 
-`caddy run` 即可，证书自动申请续期。
+确认后执行正式发布：
 
-## 五、手机安装与首次使用
+```bash
+./deploy/deploy-mac-production.sh
+```
 
-1. iPhone 用 **Safari** 打开你的 HTTPS 网址。
-2. 底部「分享」→「添加到主屏幕」，主屏出现「Assistant」图标。
-3. 首次打开会让你**输入访问令牌**（即后端 `.env` 里的 `ACCESS_TOKEN`），输入后保存在本机，之后不再询问。
+脚本会运行完整检查、构建版本化 ARM64 镜像、停止旧容器、备份持久化 volume、重建容器，并验证本地与公开健康接口。任何切换后错误都会自动恢复上一镜像。需要人工回滚时运行：
 
-## 六、更新
+正式发布还会拒绝 `CORS_ORIGIN=*`。生产同源访问应将该变量留空；只有确有独立前端域名时才填写逗号分隔的明确来源列表。
 
-- **一键部署**：在服务器执行 `powershell -ExecutionPolicy Bypass -File deploy.ps1`。脚本会克隆/更新到 `C:\pa-build` 构建前后端，停掉计划任务 `personal-assistant`，用 robocopy 覆盖 `C:\personal-assistant` 下的 `dist/`、`server/dist/`、`server/node_modules`（保留 `server/.env` 和 `data.db`），再启动任务并健康检查。当前线上：后端 `PORT=8001`，Caddy（`C:\caddy\Caddyfile`）反代到 `127.0.0.1:8001`，公开地址 `https://139-224-226-80.sslip.io/app/`。
-- **改前端**：重新 `npm run build`，覆盖 `dist/`。已配 `registerType: 'autoUpdate'`，下次打开自动更新。
-- **改后端**：`npm run build` 后 `nssm restart PersonalAssistant`。
-- **数据**：都存在 `server/data.db`，记得纳入备份。
+```bash
+./deploy/rollback-mac-production.sh
+```
 
-## 安全说明
+回滚脚本只切换应用镜像，不自动覆盖数据库；部署前的数据快照保存在生产运行目录的 `backups/<release-id>/data` 下。
 
-- `ACCESS_TOKEN` 是「防陌生人」级别的共享令牌，够个人单用户用；不是多账号安全体系。
-- `ANTHROPIC_API_KEY` 只在后端，绝不会下发到前端/手机。
+## 发布原则
+
+1. 构建并验证新版本，不在生产目录中现场编译。
+2. 数据库、上传文件和运行时密钥必须位于版本目录之外。
+3. 切换前备份 SQLite 数据库及其 WAL/SHM 文件，并验证备份可读。
+4. 使用带回滚路径的版本切换，不覆盖唯一可运行版本。
+5. 切换后检查健康接口、登录、资料读取、队列 worker 和公开域名。
+6. 验证失败时先回滚应用版本；不要让旧服务器和 Mac 同时运行写入进程。
+
+## 历史脚本
+
+- `deploy.ps1` 已退役并会立即拒绝执行。
+- `deploy/build-and-deploy.sh` 是旧版远程容器部署工具，已移除默认目标，并拒绝向退役服务器或入口服务器部署应用。
+- `deploy/switch-blue-green.sh` 与 `deploy/rollback-blue-green.sh` 仅用于明确授权的兼容/恢复场景，不代表当前 Mac 生产发布流程。
+
+生产发布流程有变化时，应更新全局基础设施说明和本文件的流程描述，但不要在仓库中写入凭据。

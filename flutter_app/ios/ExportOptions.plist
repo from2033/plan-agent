@@ -7,7 +7,7 @@
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
 	<key>method</key>
-	<string>app-store-connect</string>
+	<string>app-store</string>
 	<key>signingStyle</key>
 	<string>automatic</string>
 	<key>stripSwiftSymbols</key>

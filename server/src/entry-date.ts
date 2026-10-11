@@ -66,7 +66,7 @@ export function reminderTimeAt(timestamp: string): string {
 export function inferDateFromText(raw: string, currentDate: string): string | undefined {
   if (/大后天/.test(raw)) return addDays(currentDate, 3);
   if (/后天/.test(raw)) return addDays(currentDate, 2);
-  if (/明天|明日/.test(raw)) return addDays(currentDate, 1);
+  if (/明天|明日|明早|明晨|明晚/.test(raw)) return addDays(currentDate, 1);
   if (/今天|今日/.test(raw)) return currentDate;
 
   const full = raw.match(/(20\d{2})[年/-](\d{1,2})[月/-](\d{1,2})[日号]?/);
@@ -88,7 +88,7 @@ export function inferDateFromText(raw: string, currentDate: string): string | un
 }
 
 export function hasExplicitDateExpression(raw: string): boolean {
-  return /(?:今天|今日|明天|明日|后天|大后天|(?:本|这|下|下下)?(?:周|星期|礼拜)[一二三四五六日天]|20\d{2}[\u5e74/-]\d{1,2}[\u6708/-]\d{1,2}[日号]?|\d{1,2}月\d{1,2}[日号])/.test(raw);
+  return /(?:今天|今日|明天|明日|明早|明晨|明晚|后天|大后天|(?:本|这|下|下下)?(?:周|星期|礼拜)[一二三四五六日天]|20\d{2}[\u5e74/-]\d{1,2}[\u6708/-]\d{1,2}[日号]?|\d{1,2}月\d{1,2}[日号])/.test(raw);
 }
 
 // 旧版会把未来活动的目标日期只编码在 timestamp 中，没有保存 scheduledDate。
@@ -109,7 +109,7 @@ export function normalizeScheduledDescription(description: string): string {
 }
 
 function normalizeHour(hour: number, period: string | undefined): number {
-  if (period === "晚上" || period === "今晚" || period === "夜里") {
+  if (period === "晚上" || period === "今晚" || period === "明晚" || period === "夜里") {
     if (hour === 12) return 0;
     return hour >= 1 && hour < 12 ? hour + 12 : hour;
   }
@@ -119,8 +119,8 @@ function normalizeHour(hour: number, period: string | undefined): number {
   if (period === "中午") {
     return hour >= 1 && hour < 11 ? hour + 12 : hour;
   }
-  if (period === "凌晨" && hour === 12) return 0;
-  if ((period === "上午" || period === "早上") && hour === 12) return 0;
+  if ((period === "凌晨" || period === "明晨") && hour === 12) return 0;
+  if ((period === "上午" || period === "早上" || period === "明早") && hour === 12) return 0;
   return hour;
 }
 
@@ -161,7 +161,7 @@ export function inferTimeRangeFromText(
 
 export function inferReminderTimeFromText(raw: string): string | undefined {
   const matches = [...raw.matchAll(
-    /(凌晨|早上|上午|中午|下午|晚上|今晚|夜里)?\s*(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})(?:[:：](\d{1,2}|[零〇一二两三四五六七八九十]{1,3})|点(?:(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})分?)?)/g,
+    /(凌晨|早上|上午|明早|明晨|中午|下午|晚上|今晚|明晚|夜里)?\s*(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})(?:[:：](\d{1,2}|[零〇一二两三四五六七八九十]{1,3})|点(?:(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})分?)?)/g,
   )].map((match) => ({
     match,
     time: hhmm(match[2], match[3] || match[4], match[1]),
@@ -185,7 +185,7 @@ export interface TemporalValidationResult {
 }
 
 function hasUnambiguousClock(raw: string): boolean {
-  return /(?:凌晨|早上|上午|中午|下午|晚上|今晚|夜里)\s*(?:\d{1,2}|[零〇一二两三四五六七八九十]{1,3})(?:[:：]|点)/.test(raw)
+  return /(?:凌晨|早上|上午|明早|明晨|中午|下午|晚上|今晚|明晚|夜里)\s*(?:\d{1,2}|[零〇一二两三四五六七八九十]{1,3})(?:[:：]|点)/.test(raw)
     || /(?:1[3-9]|2[0-3])[:：点]/.test(raw);
 }
 
@@ -229,15 +229,6 @@ export function validateTemporalModelFields(
     }
     if (explicitTime && field.type === "memo" && field.reminderTime !== explicitTime) {
       issues.push(`field_${index}_explicit_time_mismatch`);
-    }
-    if (field.type === "expense" && !/(?:花了?|消费|付款|支付|买了?|充值|转账|打车|元|块钱?|￥|¥|rmb)/i.test(raw)) {
-      issues.push(`field_${index}_expense_without_money_evidence`);
-    }
-    if (
-      field.type === "memo"
-      && !/(?:提醒我|别忘|记得|待办|待使用|待领取|待兑换|待处理|待办理|待支付|待缴费|待提交|待回复|待确认|未使用|未领取|未兑换|还没使用|还没处理|需要|必须|务必|一定要|得要|得去|拿药|取药|吃药|服药|喂药)/.test(raw)
-    ) {
-      issues.push(`field_${index}_memo_without_action_evidence`);
     }
   });
   return { ok: issues.length === 0, issues: [...new Set(issues)] };

@@ -7,11 +7,30 @@ repository="${ACR_REPOSITORY:-personal-assistant}"
 acr_username="${ACR_USERNAME:-sniper_2020}"
 keychain_service="${ACR_KEYCHAIN_SERVICE:-acr-personal-5656ai}"
 platform="${IMAGE_PLATFORM:-linux/amd64}"
-server="${DEPLOY_SERVER:-root@8.217.244.181}"
+server="${DEPLOY_SERVER:-}"
 ssh_key="${DEPLOY_SSH_KEY:-$HOME/.ssh/briefings_deploy}"
 tag="${IMAGE_TAG:-$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD 2>/dev/null || printf local)}"
 image="$registry/$namespace/$repository:$tag"
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -z "$server" ]]; then
+  echo "DEPLOY_SERVER is required. This legacy remote-host deploy script has no default target." >&2
+  echo "Production application containers run on the Mac mini; follow ~/.codex/AGENTS.md and the Mac production workflow." >&2
+  exit 2
+fi
+
+deploy_host="${server##*@}"
+deploy_host="${deploy_host%%:*}"
+case "$deploy_host" in
+  8.217.244.181)
+    echo "Refusing to deploy to retired host 8.217.244.181." >&2
+    exit 2
+    ;;
+  47.243.128.151)
+    echo "Refusing to deploy application containers to the ingress-only host 47.243.128.151." >&2
+    exit 2
+    ;;
+esac
 
 acr_password() {
   if [[ -n "${ACR_PASSWORD:-}" ]]; then printf '%s' "$ACR_PASSWORD"

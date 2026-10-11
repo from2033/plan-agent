@@ -1,0 +1,46 @@
+name: qq-group-login
+
+services:
+  napcat:
+    # Fixed stable tag: upgrade deliberately after validating QQ/OneBot compatibility.
+    image: mlikiowa/napcat-docker:v4.18.6@sha256:05cb72c91f565166c9800895914f7875edec8543f3e2954af78f23e5f653b2e7
+    container_name: qq-group-napcat
+    restart: unless-stopped
+    env_file: /opt/qq-group-center/runtime/napcat.env
+    volumes:
+      - /opt/qq-group-center/napcat/qq:/app/.config/QQ
+      - /opt/qq-group-center/napcat/config:/app/napcat/config
+      - /opt/qq-group-center/napcat/cache:/app/napcat/cache
+    ports:
+      # WebUI stays private; use a temporary SSH tunnel when login is required.
+      - 127.0.0.1:6099:6099
+    networks:
+      - shared_web
+    mem_limit: 1024m
+    cpus: 0.75
+
+  monitor:
+    image: ${QQ_GROUP_CENTER_IMAGE:-qq-group-center:20260830T0710-f2fb427}
+    container_name: qq-group-monitor
+    restart: unless-stopped
+    command: ["python", "/app/qq_monitor.py"]
+    env_file: /opt/qq-group-center/runtime/monitor.env
+    volumes:
+      - /opt/qq-group-center/overrides/qq_monitor.py:/app/qq_monitor.py:ro
+      - /opt/qq-group-center/napcat/cache:/app/napcat/cache:ro
+      - /opt/qq-group-center/data:/data
+    networks:
+      - shared_web
+    depends_on:
+      - napcat
+    # The application image's inherited healthcheck probes the web API, while
+    # this container intentionally runs only the monitor loop.
+    healthcheck:
+      disable: true
+    mem_limit: 128m
+    cpus: 0.10
+
+networks:
+  shared_web:
+    external: true
+    name: deploy_default

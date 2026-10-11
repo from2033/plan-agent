@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
 import { PRIMARY_USER, configuredUserIds, requireAuth, resolveUserId } from "./auth.js";
+import { consumeRequestLimit, corsOriginPolicy } from "./request-policy.js";
 import {
   listEntries,
   listEntriesForViewer,
@@ -30,9 +31,7 @@ import {
   importClientData,
   deleteAccountData,
 } from "./db.js";
-import { parseEntry } from "./parse.js";
 import { correctEntry } from "./correct.js";
-import { answerQuestion } from "./knowledge.js";
 import { encryptionEnabled } from "./crypto-field.js";
 import { generateReport, type Report, type ReportEntry, type ReportScope } from "./summary.js";
 import { getCachedReport, reportFingerprint, saveCachedReport } from "./report-cache.js";
@@ -44,7 +43,6 @@ import {
   hasExplicitDateExpression,
   hasFutureRelativeDateExpression,
   inferReminderTimeFromText,
-  inferTimeRangeFromText,
   isFutureObligation,
   normalizeScheduledDescription,
   reminderTimeAt,
@@ -54,19 +52,27 @@ import {
 } from "./entry-date.js";
 import type { Entry } from "./types.js";
 import { extractQqTasks, qqMessageKnowledge } from "./qq-task-import.js";
-import { knowledgeIntentHint, researchTopic, type IntentHint } from "./intent.js";
 import { requestEmailCode, verifyEmailCode } from "./email-auth.js";
 import { createGuestSession, isGuestUser } from "./guest-auth.js";
+import {
+  pushDeviceCount,
+  registerPushDevice,
+  sendPushToUser,
+  unregisterPushDevice,
+} from "./push-notifications.js";
 import {
   approveDesktopPairing,
   claimDesktopPairing,
   createDesktopPairing,
   inspectDesktopPairing,
 } from "./desktop-pairing.js";
+
+type IntentHint = "save" | "ask" | undefined;
 import { privacyPageHtml } from "./privacy-page.js";
 import { knowledgeSpaceIdForUser } from "./knowledge-space.js";
 import { finalizeTomorrowReport, includeEntryInTomorrowBrief } from "./tomorrow-brief.js";
 import { getQqSyncStatus, recordQqCollectorStatus, recordQqMessageSync } from "./qq-sync-status.js";
+import { assistantSystemContext } from "./assistant-system-context.js";
 import { conversationDocumentAccess, sharedDocumentScopesForViewer } from "./document-access.js";
 import {
   addConversationResource,
@@ -189,7 +195,7 @@ import {
   resolveDesktopIntakeSession,
   type DesktopIntakeSession,
 } from "./desktop-intake.js";
-import { getFinanceCategoryTransactions, getFinanceOverview, importAlipayBill } from "./finance.js";
+import { getFinanceOverview, importAlipayBill } from "./finance.js";
 import {
   auditStaleFeedbackTickets,
   addFeedbackAttachment,
@@ -217,13 +223,15 @@ import {
 } from "./world-pulse.js";
 
 const PORT = Number(process.env.PORT) || 8787;
-const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const CORS_ORIGIN = corsOriginPolicy(process.env.CORS_ORIGIN, process.env.NODE_ENV);
 // 前端在哪个路径前缀下提供（与 vite base 一致）。
 const BASE_PATH = process.env.BASE_PATH ?? "";
 const STUDY_APP_URL = process.env.STUDY_APP_URL || "https://sutyd.5656ai.com/app/";
 const STUDY_SSO_SECRET = process.env.STUDY_SSO_SECRET || "";
 const QQ_TASK_SYNC_SECRET = process.env.QQ_TASK_SYNC_SECRET || "";
 const QQ_TASK_SYNC_USER = process.env.QQ_TASK_SYNC_USER || process.env.PRIMARY_USER || "我";
+const QQ_LOGIN_CONTROL_URL = process.env.QQ_LOGIN_CONTROL_URL || "";
+const QQ_LOGIN_CONTROL_SECRET = process.env.QQ_LOGIN_CONTROL_SECRET || "";
 const DOCUMENT_MIME_TYPES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -239,33 +247,6 @@ const DOCUMENT_MIME_TYPES = new Set([
 
 hydrateActiveAcceptanceStandards();
 
-function isFinanceSubscriptionQuestion(raw: string): boolean {
-  return /(账单|消费|支出|支付宝)/.test(raw)
-    && /(数码|数字资料|数字订阅|互联网.*订阅|订阅.*互联网)/.test(raw);
-}
-
-function financeSubscriptionAnswer(userId: string): string {
-  const overview = getFinanceOverview(userId, 24);
-  const category = overview.categories.find((item) => item.category === "数码订阅");
-  const transactions = getFinanceCategoryTransactions(userId, "数码订阅", 24, 100);
-  if (!category || !transactions.length) {
-    return "我检查了最近 24 个月的账单，目前没有找到被归为“数码订阅”的成功支出。";
-  }
-  const grouped = new Map<string, { count: number; amount: number }>();
-  for (const item of transactions) {
-    const label = item.itemName || item.counterparty || "未标明项目";
-    const current = grouped.get(label) || { count: 0, amount: 0 };
-    current.count += 1;
-    current.amount += Math.max(0, item.amount - item.refundedAmount);
-    grouped.set(label, current);
-  }
-  const details = [...grouped.entries()]
-    .sort((left, right) => right[1].amount - left[1].amount)
-    .slice(0, 8)
-    .map(([label, value]) => `${label}（${value.count} 笔，¥${value.amount.toFixed(2)}）`)
-    .join("；");
-  return `账单里的“数码订阅”是系统按商户和商品关键词归出的消费类别，不代表每一笔都是自动续费。最近 24 个月共有 ${category.count} 笔，净支出 ¥${category.amount.toFixed(2)}。主要包括：${details}。归类规则会把 Apple/App Store/iTunes/GiftCard、云服务、服务器、软件、会员或充值类交易放进这一类。`;
-}
 
 function progressAutomaticTask(userId: string, id: string): void {
   const task = getPersistentAgentTask(id, userId);
@@ -405,10 +386,33 @@ function finishInputAgentTask(userId: string, taskId: string | undefined, result
 
 const app = express();
 app.set("trust proxy", 1);
-app.use(cors({ origin: CORS_ORIGIN === "*" ? true : CORS_ORIGIN.split(",").map((s) => s.trim()) }));
+app.disable("x-powered-by");
+app.use(cors({ origin: CORS_ORIGIN }));
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(self), geolocation=()");
+  next();
+});
 app.use(express.json());
 
 const API = `${BASE_PATH}/api`;
+
+function publicRateLimit(scope: string, limit: number, windowMs: number): express.RequestHandler {
+  return (req, res, next) => {
+    const identifier = req.ip || req.socket.remoteAddress || "unknown";
+    const result = consumeRequestLimit(scope, identifier, limit, windowMs);
+    res.setHeader("RateLimit-Limit", String(limit));
+    res.setHeader("RateLimit-Remaining", String(result.remaining));
+    if (!result.allowed) {
+      res.setHeader("Retry-After", String(result.retryAfterSeconds));
+      res.status(429).json({ error: "请求过于频繁，请稍后再试" });
+      return;
+    }
+    next();
+  };
+}
 
 app.get(`${BASE_PATH}/privacy`, (_req, res) => {
   res.type("html").send(privacyPageHtml);
@@ -556,7 +560,7 @@ app.post(
   },
 );
 
-app.post(`${API}/auth/email/code`, async (req, res) => {
+app.post(`${API}/auth/email/code`, publicRateLimit("email-code", 10, 60 * 60_000), async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     res.status(400).json({ error: "请输入有效的邮箱地址" });
@@ -575,7 +579,7 @@ app.post(`${API}/auth/email/code`, async (req, res) => {
   }
 });
 
-app.post(`${API}/auth/email/verify`, (req, res) => {
+app.post(`${API}/auth/email/verify`, publicRateLimit("email-verify", 30, 15 * 60_000), (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
   const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
   if (!/^\d{6}$/.test(code)) {
@@ -595,37 +599,11 @@ app.post(`${API}/auth/email/verify`, (req, res) => {
   }
 });
 
-const guestIssueLimits = new Map<string, { count: number; resetAt: number }>();
-app.post(`${API}/auth/guest`, (req, res) => {
-  const key = req.ip || req.socket.remoteAddress || "unknown";
-  const now = Date.now();
-  const current = guestIssueLimits.get(key);
-  const bucket = !current || current.resetAt <= now
-    ? { count: 0, resetAt: now + 60 * 60_000 }
-    : current;
-  bucket.count += 1;
-  guestIssueLimits.set(key, bucket);
-  if (bucket.count > 20) {
-    res.status(429).json({ error: "访客会话创建过于频繁，请稍后再试" });
-    return;
-  }
+app.post(`${API}/auth/guest`, publicRateLimit("guest-session", 20, 60 * 60_000), (req, res) => {
   res.status(201).json(createGuestSession());
 });
 
-const desktopPairingIssueLimits = new Map<string, { count: number; resetAt: number }>();
-app.post(`${API}/auth/desktop-sessions`, (req, res) => {
-  const key = req.ip || req.socket.remoteAddress || "unknown";
-  const now = Date.now();
-  const current = desktopPairingIssueLimits.get(key);
-  const bucket = !current || current.resetAt <= now
-    ? { count: 0, resetAt: now + 60 * 60_000 }
-    : current;
-  bucket.count += 1;
-  desktopPairingIssueLimits.set(key, bucket);
-  if (bucket.count > 30) {
-    res.status(429).json({ error: "配对请求过于频繁，请稍后再试" });
-    return;
-  }
+app.post(`${API}/auth/desktop-sessions`, publicRateLimit("desktop-pairing-create", 30, 60 * 60_000), (req, res) => {
   const label = typeof req.body?.deviceLabel === "string" ? req.body.deviceLabel : "电脑浏览器";
   const created = createDesktopPairing(label);
   const pairingUri = new URL("daynote://desktop-pair");
@@ -640,7 +618,7 @@ app.post(`${API}/auth/desktop-sessions`, (req, res) => {
   });
 });
 
-app.post(`${API}/auth/desktop-sessions/:id/inspect`, (req, res) => {
+app.post(`${API}/auth/desktop-sessions/:id/inspect`, publicRateLimit("desktop-pairing-inspect", 120, 15 * 60_000), (req, res) => {
   const secret = typeof req.body?.scanSecret === "string" ? req.body.scanSecret : "";
   const value = inspectDesktopPairing(req.params.id, secret);
   if (!value) {
@@ -664,7 +642,7 @@ app.post(`${API}/auth/desktop-sessions/:id/approve`, requireAuth, (req, res) => 
   res.json(value);
 });
 
-app.post(`${API}/auth/desktop-sessions/:id/claim`, (req, res) => {
+app.post(`${API}/auth/desktop-sessions/:id/claim`, publicRateLimit("desktop-pairing-claim", 900, 15 * 60_000), (req, res) => {
   const secret = typeof req.body?.desktopSecret === "string" ? req.body.desktopSecret : "";
   const value = claimDesktopPairing(req.params.id, secret);
   if (value.status === "invalid") {
@@ -823,7 +801,7 @@ app.post(`${WORKER_API}/local-documents`, requireWorker, (req, res) => {
 });
 
 interface WorkerIngestResult {
-  kind: "record" | "save" | "ask";
+  kind: "record" | "save" | "ask" | "research";
   fields?: Array<Omit<Entry, "id" | "raw" | "time" | "timestamp" | "scheduledDate" | "reminderAt"> & {
     date?: string;
     reminderTime?: string;
@@ -833,6 +811,7 @@ interface WorkerIngestResult {
   title?: string;
   content?: string;
   answer?: string;
+  researchTopic?: string;
   sourceIds?: string[];
   retrievalStatus?: "answered_with_sources" | "sources_found_insufficient" | "no_sources_found" | "general_answer";
   conversationTitle?: string;
@@ -1373,6 +1352,50 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
     finishInputAgentTask(job.userId, input.agentTaskId, response);
     return response;
   }
+  if (result.kind === "research") {
+    if (isGuestUser(job.userId)) throw new Error("research_requires_account");
+    const topic = String(result.researchTopic || "").trim().slice(0, 500);
+    if (!topic) throw new Error("research_topic_missing");
+    const document = createResearchDocument(job.userId, topic);
+    const researchConversationId = input.conversationId || createConversation(job.userId, "新对话");
+    try {
+      const contextPack = createContextPack(job.userId, {
+        runId: null,
+        stepId: input.agentTaskId || null,
+        capabilityRef: "research@1.2",
+        originalRequest: input.raw,
+        facts: { topic, inputMode: input.inputMode || "voice", requestedAt: new Date().toISOString(), context: input.context || assistantClock() },
+        conversation: (input.conversationHistory || []).map((message) => ({ ...message })),
+      });
+      const researchJob = enqueueAiJob(job.userId, "research", {
+        reportId: document.id,
+        query: topic,
+        originalRequest: input.raw,
+        requestedAt: new Date().toISOString(),
+        locale: "zh-CN",
+        audience: "中国普通用户",
+        conversationId: researchConversationId,
+        contextPackId: contextPack.id,
+        ...(input.conversationHistory?.length ? { conversationHistory: input.conversationHistory } : {}),
+      }, 70);
+      beginAiInteraction(job.userId, researchJob.id, input.raw, input.inputMode || "voice", researchConversationId);
+      bindDocumentJob(document.id, job.userId, researchJob.id);
+      const response = {
+        kind: "research",
+        reportId: document.id,
+        jobId: researchJob.id,
+        status: "QUEUED",
+        title: `研究报告：${topic}`,
+        conversationId: researchConversationId,
+        conversationTitle: result.conversationTitle,
+      };
+      finishInputAgentTask(job.userId, input.agentTaskId, response);
+      return response;
+    } catch (error) {
+      discardDocument(document.id, job.userId);
+      throw error;
+    }
+  }
   if (result.kind === "save") {
     const item = isGuestUser(job.userId)
       ? {
@@ -1445,19 +1468,12 @@ function finalizeWorkerResult(job: AiJob, value: unknown): unknown {
   }
   const entries = (result.fields || []).map((fields, i): Entry => {
     const { date: modelDate, reminderTime, dateEvidence: _dateEvidence, timeEvidence: _timeEvidence, ...entryFields } = fields;
-    const date = hasExplicitDateExpression(input.raw) ? modelDate : undefined;
-    const forceMemo = isFutureObligation(input.raw, date, reminderTime, clock);
-    if (forceMemo) {
-      entryFields.type = "memo";
-      entryFields.category = "备忘";
-      entryFields.priority ??= "medium";
-    }
-    const inferredRange =
-      fields.type === "activity" || fields.type === "memo"
-        ? inferTimeRangeFromText(input.raw)
-        : undefined;
+    // Codex owns semantic interpretation. Deterministic checks may reject a
+    // contradictory result, but must not silently erase a date the model
+    // extracted from natural language such as “明早”.
+    const date = modelDate;
     const modelRange = fields.timeRange?.start !== fields.timeRange?.end ? fields.timeRange : undefined;
-    const timeRange = inferredRange || modelRange;
+    const timeRange = modelRange;
     if (timeRange) entryFields.timeRange = timeRange;
     else delete entryFields.timeRange;
     if (entryFields.type !== "expense") {
@@ -1828,6 +1844,69 @@ app.get(`${API}/qq-sync-status`, (_req, res) => {
   res.json(getQqSyncStatus(Boolean(QQ_TASK_SYNC_SECRET)));
 });
 
+app.post(`${API}/qq-login-email`, async (req, res) => {
+  if (req.userId !== PRIMARY_USER) {
+    res.status(403).json({ error: "只有主账号可以请求 QQ 登录二维码" });
+    return;
+  }
+  if (!QQ_LOGIN_CONTROL_URL || QQ_LOGIN_CONTROL_SECRET.length < 32) {
+    res.status(503).json({ error: "QQ 登录二维码服务尚未配置" });
+    return;
+  }
+  try {
+    const response = await fetch(QQ_LOGIN_CONTROL_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${QQ_LOGIN_CONTROL_SECRET}` },
+      signal: AbortSignal.timeout(120_000),
+    });
+    const value = await response.json() as { status?: string; message?: string; error?: string };
+    if (!response.ok) {
+      res.status(503).json({ error: value.error || "暂时无法生成 QQ 登录二维码" });
+      return;
+    }
+    res.json({
+      status: value.status || "sent",
+      message: value.message || "新的 QQ 登录二维码已发送到通知邮箱",
+    });
+  } catch (error) {
+    console.error("[QQ login email] 请求失败:", error instanceof Error ? error.message : "unknown");
+    res.status(503).json({ error: "暂时无法连接 QQ 登录服务，请稍后重试" });
+  }
+});
+
+app.post(`${API}/qq-sync-missed`, async (req, res) => {
+  if (req.userId !== PRIMARY_USER) {
+    res.status(403).json({ error: "只有主账号可以同步遗漏的 QQ 消息" });
+    return;
+  }
+  if (!QQ_LOGIN_CONTROL_URL || QQ_LOGIN_CONTROL_SECRET.length < 32) {
+    res.status(503).json({ error: "QQ 消息同步服务尚未配置" });
+    return;
+  }
+  try {
+    const url = new URL(QQ_LOGIN_CONTROL_URL);
+    url.pathname = "/sync-missed";
+    url.search = "";
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${QQ_LOGIN_CONTROL_SECRET}` },
+      signal: AbortSignal.timeout(120_000),
+    });
+    const value = await response.json() as {
+      message?: string; error?: string; created?: number; duplicates?: number;
+      ignored?: number; errors?: number; days?: number;
+    };
+    if (!response.ok) {
+      res.status(503).json({ error: value.error || "同步遗漏消息失败" });
+      return;
+    }
+    res.json(value);
+  } catch (error) {
+    console.error("[QQ missed sync] 请求失败:", error instanceof Error ? error.message : "unknown");
+    res.status(503).json({ error: "暂时无法连接 QQ 消息同步服务，请稍后重试" });
+  }
+});
+
 app.get(`${API}/world-pulse`, async (req, res) => {
   try {
     const pulse = await getWorldPulse(req.query.refresh === "1");
@@ -1903,6 +1982,38 @@ app.get(`${API}/me`, (req, res) => {
     user: isGuestUser(req.userId) ? "访客" : req.userId,
     guest: isGuestUser(req.userId),
   });
+});
+
+const PushDeviceSchema = z.object({
+  token: z.string().trim().min(20).max(4096),
+  platform: z.enum(["ios", "android"]),
+});
+
+app.post(`${API}/push/devices`, (req, res) => {
+  const parsed = PushDeviceSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "推送设备信息无效" }); return; }
+  registerPushDevice(req.userId!, parsed.data.token, parsed.data.platform);
+  res.status(201).json({ ok: true, deviceCount: pushDeviceCount(req.userId!) });
+});
+
+app.delete(`${API}/push/devices`, (req, res) => {
+  const parsed = PushDeviceSchema.pick({ token: true }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "推送设备信息无效" }); return; }
+  res.json({ ok: unregisterPushDevice(req.userId!, parsed.data.token) });
+});
+
+app.post(`${API}/push/test`, async (req, res) => {
+  const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 80) : "Daynote 通知测试";
+  const body = typeof req.body?.body === "string" ? req.body.body.trim().slice(0, 300) : "远程通知配置成功";
+  try {
+    const result = await sendPushToUser(req.userId!, title || "Daynote 通知测试", body || "远程通知配置成功");
+    if (!result.configured) { res.status(503).json({ error: "FCM 服务账号尚未配置" }); return; }
+    if (!result.attempted) { res.status(409).json({ error: "当前账号尚未注册推送设备" }); return; }
+    res.status(result.sent ? 200 : 502).json(result);
+  } catch (error) {
+    console.error("[push] 发送失败:", error instanceof Error ? error.message : "unknown");
+    res.status(502).json({ error: "推送发送失败" });
+  }
 });
 
 app.get(`${API}/finance/overview`, (req, res) => {
@@ -2519,6 +2630,7 @@ app.post(`${API}/agent/tasks/:id/retry`, (req, res) => {
       context: assistantClock(),
       intentHint: input.intentHint === "save" ? "save" : undefined,
       knowledge: knowledgeFromRequest(req, conversationId),
+      authoritativeSystemContext: assistantSystemContext(getQqSyncStatus(Boolean(QQ_TASK_SYNC_SECRET))),
       ...(conversationId ? { conversationId } : {}),
       ...(conversationHistory.length ? { conversationHistory } : {}),
       retryDiagnosis: {
@@ -2595,6 +2707,7 @@ function replanOrchestration(userId: string, taskId: string, correction = "", re
       interactionMode: conversationHistory.length || conversationId ? "conversation" : "home",
       context: assistantClock(),
       knowledge: req ? knowledgeFromRequest(req, conversationId) : [],
+      authoritativeSystemContext: assistantSystemContext(getQqSyncStatus(Boolean(QQ_TASK_SYNC_SECRET))),
       ...(conversationId ? { conversationId } : {}),
       ...(conversationHistory.length ? { conversationHistory } : {}),
       retryDiagnosis: {
@@ -2650,6 +2763,7 @@ app.post(`${API}/agent/tasks/:id/corrections`, (req, res) => {
       interactionMode: "home",
       context: assistantClock(),
       knowledge: knowledgeFromRequest(req, ""),
+      authoritativeSystemContext: assistantSystemContext(getQqSyncStatus(Boolean(QQ_TASK_SYNC_SECRET))),
     });
     res.status(202).json({ ok: true, retried: true, jobId: job.id, task: getPersistentAgentTask(task.id, req.userId!) });
     return;
@@ -3296,77 +3410,18 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         return;
       }
     }
-    const topic = researchTopic(raw, conversationHistory || []);
-    if (topic) {
-      if (isGuestUser(req.userId)) {
-        res.status(403).json({ error: "请先登录后再创建后台研究报告" });
-        return;
+    // Natural-language intent is intentionally left to Codex. Server code only
+    // supplies context, permissions and deterministic execution primitives.
+    const intentHint: IntentHint = undefined;
+    if (!codexWorkerOnline()) {
+      if (agentRunId) failAgentRun(req.userId!, agentRunId, "codex_worker_unavailable");
+      if (inputAgentTaskId) {
+        transitionPersistentAgentTask(req.userId!, inputAgentTaskId, "failed", "codex_worker_unavailable");
       }
-      if (!codexQueueEnabled()) {
-        res.status(503).json({ error: "后台研究服务尚未就绪" });
-        return;
-      }
-      const document = createResearchDocument(req.userId!, topic);
-      const researchConversationId = interactionConversationId
-        || createConversation(req.userId!, "新对话");
-      try {
-        const contextPack = createContextPack(req.userId!, {
-          runId: agentRunId || null,
-          stepId: inputAgentTaskId || null,
-          capabilityRef: "research@1.2",
-          originalRequest: raw,
-          facts: { topic, inputMode, requestedAt: new Date().toISOString(), context: requestClock },
-          conversation: (conversationHistory || []).map((message) => ({ ...message })),
-        });
-        const job = enqueueAiJob(req.userId!, "research", {
-          reportId: document.id,
-          query: topic,
-          originalRequest: raw,
-          requestedAt: new Date().toISOString(),
-          locale: "zh-CN",
-          audience: "中国普通用户",
-          ...(conversationHistory?.length ? { conversationHistory } : {}),
-          conversationId: researchConversationId,
-          ...(agentRunId ? { agentRunId } : {}),
-          contextPackId: contextPack.id,
-        }, 70);
-        if (agentRunId) bindAgentRun(req.userId!, agentRunId, { jobId: job.id, rootTaskId: orchestrationTaskId });
-        beginAiInteraction(req.userId!, job.id, raw, inputMode, researchConversationId);
-        bindDocumentJob(document.id, req.userId!, job.id);
-        res.status(201).json({
-          kind: "research",
-          reportId: document.id,
-          jobId: job.id,
-          agentRunId,
-          status: "QUEUED",
-          title: `研究报告：${topic}`,
-        });
-      } catch (error) {
-        discardDocument(document.id, req.userId!);
-        throw error;
-      }
+      res.status(503).json({ error: "Codex 暂时不可用，已停止处理，没有改用低质量规则判断。" });
       return;
     }
-    if (isFinanceSubscriptionQuestion(raw) && !isGuestUser(req.userId)) {
-      const resultConversationId = interactionConversationId || createConversation(req.userId!, "新对话");
-      synchronousInteractionId = `sync-${crypto.randomUUID()}`;
-      beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode, resultConversationId);
-      const response = {
-        kind: "ask",
-        answer: financeSubscriptionAnswer(req.userId!),
-        sources: [],
-        retrievalStatus: "answered_from_finance_data",
-        conversationTitle: "数码订阅账单明细",
-        conversationId: resultConversationId,
-      };
-      if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
-      completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
-      finishInputAgentTask(req.userId!, inputAgentTaskId, response);
-      res.json(response);
-      return;
-    }
-    const intentHint = knowledgeIntentHint(raw);
-    if (codexWorkerOnline()) {
+    {
       const knowledge = knowledgeFromRequest(req, conversationId);
       const contextPack = createContextPack(req.userId!, {
         runId: agentRunId || null,
@@ -3385,6 +3440,7 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
         inputMode,
         context: requestClock,
         knowledge,
+        authoritativeSystemContext: assistantSystemContext(getQqSyncStatus(Boolean(QQ_TASK_SYNC_SECRET))),
         contextPackId: contextPack.id,
         ...(conversationHistory?.length ? { conversationHistory } : {}),
         ...(interactionConversationId ? { conversationId: interactionConversationId } : {}),
@@ -3396,137 +3452,6 @@ app.post(`${API}/entries`, requireGuestQuota("ingest", 120), async (req, res) =>
       res.status(202).json({ kind: "pending", jobId: job.id, agentRunId, agentTaskId: orchestrationTaskId || inputAgentTaskId });
       return;
     }
-    if (!isGuestUser(req.userId) && interactionConversationId) {
-      synchronousInteractionId = `sync-${crypto.randomUUID()}`;
-      beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode, interactionConversationId || undefined);
-    }
-    if (intentHint === "save") {
-      const knowledge = fallbackKnowledge(raw);
-      const item = isGuestUser(req.userId)
-        ? {
-            id: crypto.randomUUID(),
-            ...knowledge,
-            timestamp: new Date().toISOString(),
-          }
-        : insertKnowledge(req.userId!, knowledge.title, knowledge.content);
-      const response = { kind: "save", item };
-      if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
-      if (synchronousInteractionId) {
-        completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
-      }
-      finishInputAgentTask(req.userId!, inputAgentTaskId, response);
-      res.status(201).json(response);
-      return;
-    }
-    const result = await parseEntry(raw);
-
-    // 存入知识库
-    if (result.kind === "save") {
-      const item = isGuestUser(req.userId)
-        ? {
-            id: crypto.randomUUID(),
-            title: result.title,
-            content: result.content,
-            timestamp: new Date().toISOString(),
-          }
-        : insertKnowledge(req.userId!, result.title, result.content);
-      const response = { kind: "save", item };
-      if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
-      if (synchronousInteractionId) {
-        completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
-      }
-      finishInputAgentTask(req.userId!, inputAgentTaskId, response);
-      res.status(201).json(response);
-      return;
-    }
-
-    // 查询知识库
-    if (result.kind === "ask") {
-      const notes = knowledgeFromRequest(req, conversationId);
-      const ans = await answerQuestion(notes, result.query);
-      if (!ans) {
-        if (synchronousInteractionId) failAiInteraction(req.userId!, synchronousInteractionId);
-        if (inputAgentTaskId) transitionPersistentAgentTask(req.userId!, inputAgentTaskId, "failed", "answer_unavailable");
-        res.status(503).json({ kind: "ask", answer: "未配置 AI，无法查询知识库。", sources: [] });
-        return;
-      }
-      let resultConversationId = interactionConversationId;
-      if (!resultConversationId && !isGuestUser(req.userId)) {
-        resultConversationId = createConversation(req.userId!, "新对话");
-        synchronousInteractionId = `sync-${crypto.randomUUID()}`;
-        beginAiInteraction(req.userId!, synchronousInteractionId, raw, inputMode, resultConversationId);
-      }
-      const response = {
-        kind: "ask",
-        answer: ans.answer,
-        sources: ans.sources,
-        ...(resultConversationId ? { conversationId: resultConversationId } : {}),
-      };
-      if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
-      if (synchronousInteractionId) {
-        completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
-      }
-      finishInputAgentTask(req.userId!, inputAgentTaskId, response);
-      res.json(response);
-      return;
-    }
-
-    // 默认：记录入库
-    const now = new Date();
-    const clock = requestClock;
-    const temporalValidation = validateTemporalModelFields(raw, clock, result.fields, result.via === "claude");
-    if (!temporalValidation.ok) {
-      throw new Error(`ingest_semantic_invalid:${temporalValidation.issues.join(",")}`);
-    }
-    // 一句话可能拆成多条；逐条入库。timestamp 加毫秒偏移，保证拆出的顺序稳定。
-    const entries: Entry[] = result.fields.map((f, i) => {
-      const { date: modelDate, reminderTime, dateEvidence: _dateEvidence, timeEvidence: _timeEvidence, ...entryFields } = f;
-      const date = hasExplicitDateExpression(raw) ? modelDate : undefined;
-      const forceMemo = isFutureObligation(raw, date, reminderTime, clock);
-      if (forceMemo) {
-        entryFields.type = "memo";
-        entryFields.category = "备忘";
-        entryFields.priority ??= "medium";
-      }
-      const inferredRange =
-        f.type === "activity" || f.type === "memo" ? inferTimeRangeFromText(raw) : undefined;
-      const modelRange = f.timeRange?.start !== f.timeRange?.end ? f.timeRange : undefined;
-      const timeRange = inferredRange || modelRange;
-      if (timeRange) entryFields.timeRange = timeRange;
-      else delete entryFields.timeRange;
-      if (entryFields.type !== "expense") {
-        delete entryFields.amount;
-        delete entryFields.currency;
-      }
-      const reminderAt = entryFields.type === "memo"
-        ? reminderTimestamp(raw, date, reminderTime, clock)
-        : undefined;
-      const reminderClock = reminderAt ? reminderTimeAt(reminderAt) : undefined;
-      const scheduledDate = scheduledDateFor(date, reminderAt, timeRange, clock);
-      if (scheduledDate) {
-        entryFields.description = normalizeScheduledDescription(entryFields.description);
-      }
-      return {
-        id: crypto.randomUUID(),
-        raw,
-        ...(reminderAt
-          ? { time: reminderClock || "", timestamp: reminderAt }
-          : entryTiming(raw, date, timeRange, clock, i, now)),
-        ...entryFields,
-        ...(scheduledDate ? { scheduledDate } : {}),
-        ...(reminderAt ? { reminderAt } : {}),
-      };
-    });
-    if (!isGuestUser(req.userId)) {
-      for (const entry of entries) insertEntry(entry, req.userId!);
-    }
-    const response = { kind: "record", entries, via: result.via };
-    if (agentRunId) completeAgentRun(req.userId!, agentRunId, response);
-    if (synchronousInteractionId) {
-      completeAiInteraction(req.userId!, synchronousInteractionId, "ingest", response);
-    }
-    finishInputAgentTask(req.userId!, inputAgentTaskId, response);
-    res.status(201).json(response);
   } catch (err) {
     if (agentRunId) failAgentRun(req.userId!, agentRunId, "input_processing_failed");
     if (synchronousInteractionId) failAiInteraction(req.userId!, synchronousInteractionId);

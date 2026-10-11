@@ -1,3 +1,9 @@
+# RETIRED: the Personal Assistant application no longer deploys to Windows.
+# Keep this file only as historical reference; fail before performing any action.
+Write-Error 'This deployment path is retired. Follow ~/.codex/AGENTS.md and the Mac production deployment workflow.'
+exit 2
+
+# Historical implementation below (intentionally unreachable).
 # 在 Windows 服务器上一键部署 Personal Assistant。
 # 用法（服务器上任意目录 PowerShell 执行）：  powershell -ExecutionPolicy Bypass -File C:\path\to\deploy.ps1
 #
@@ -96,4 +102,4 @@ try {
   Get-Content "$RunDir\server\app.log" -Tail 20
   exit 1
 }
-Write-Host '部署完成。公开地址：https://139-224-226-80.sslip.io/app/' -ForegroundColor Green
+Write-Host '历史部署流程完成（当前脚本已在入口处禁用）。' -ForegroundColor Green

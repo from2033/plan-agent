@@ -1,6 +1,6 @@
-# assistant
+# Daynote Flutter App
 
-A new Flutter project.
+Personal Assistant 的 iOS/Android 客户端。
 
 ## Install on the paired iPhone
 
@@ -14,16 +14,12 @@ xcrun devicectl device install app --device <core-device-identifier> build/ios/i
 Do not use `flutter install` for routine updates. It uninstalls the existing
 app first and can clear local app state, including the remembered login.
 
-## Getting Started
+## Development
 
-This project is a starting point for a Flutter application.
+```bash
+flutter pub get
+flutter analyze
+flutter test
+```
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Production API defaults to `https://assistant.5656ai.com/api`. Override it for a build with `--dart-define=API_BASE=...`.

@@ -1,16 +1,19 @@
 # QQ / NapCat Windows 迁移运行手册
 
-## 当前状态（2026-09-02）
+## 当前状态（2026-09-06）
 
-本次旁路安装、登录、受限隧道和香港群中心切换均已验证成功，但 Windows 同时运行官方 QQ 9.9.33 与 NapCat 4.18.19 后，可用物理内存下降到约 429MB，触发既定的 `< 500MB` 自动回滚条件。因此当前生产状态为：
+QQ 登录端已从 Windows 正式迁回香港 Linux：
 
-- 香港 `qq-group-napcat` 已恢复在线，群中心与监控均已恢复原配置。
-- Windows `NapCatQQ-Windows` 计划任务已禁用，`3000/6099` 均无监听。
-- 香港 `windows-napcat-tunnel.service` 已停止并禁用。
-- Windows 支付中心全过程保持健康，回滚后可用内存约 1048MB。
-- Windows 安装包、NapCat Shell、固化配置、任务脚本和香港回滚容器均保留，未删除源数据。
+- Linux 使用官方 NapCat Docker 镜像的固定标签 `v4.18.6`，不跟随 `latest`自动漂移。
+- QQ 数据与 NapCat 配置持久化在 `/opt/qq-group-center/napcat/`，容器重启后已验证自动恢复登录。
+- `qq-group-center` 直连 `http://qq-group-napcat:3000`，`qq-group-monitor` 负责掉线监控和告警。
+- WebUI 只绑定 Linux 本机 `127.0.0.1:6099`，需要重新登录时使用临时 SSH 隧道，不对公网开放。
+- Windows `NapCatQQ-Windows` 计划任务、NapCat 文件、专用 QQ 程序和 `3000/6099` 监听已删除。
+- Windows 与 Linux 间的受限 SSH 隧道服务、私钥和 Windows 授权公钥均已删除。
+- Windows 支付中心在停机、切换和清理后均通过健康检查。
 
-再次切换前必须先解决容量问题。建议将 Windows 物理内存升级到至少 8GB；升级后从“启动前检查”重新执行完整验收。不得通过降低 500MB 安全门槛、停止支付服务或删除香港回滚环境来强行上线。
+Linux 启动定义保存在
+`/opt/qq-group-center/runtime/docker-compose.qq-linux.yml`。升级 NapCat 或 QQ 版本前，必须先备份持久化目录，并在新容器上验证登录、OneBot 接口、群消息、群文件和重启恢复。
 
 ## 架构边界
 

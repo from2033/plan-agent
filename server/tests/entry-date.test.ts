@@ -49,6 +49,24 @@ test("绝对时间提醒保持原有行为", () => {
   assert.equal(reminderTimeAt(timestamp!), "15:00");
 });
 
+test("明早由模型给出的日期保留为次日", () => {
+  const morningClock: AssistantClock = {
+    currentDate: "2026-09-07",
+    currentTime: "18:07",
+    timeZone: "Asia/Shanghai",
+  };
+  assert.equal(hasExplicitDateExpression("明早8点10分提醒我检查数据"), true);
+  assert.equal(
+    reminderTimestamp("明早8点10分提醒我检查数据", "2026-09-08", "08:10", morningClock),
+    "2026-09-08T00:10:00.000Z",
+  );
+  assert.equal(validateTemporalModelFields(
+    "明早8点10分提醒我检查数据",
+    morningClock,
+    [{ type: "memo", date: "2026-09-08", reminderTime: "08:10", dateEvidence: "明早", timeEvidence: "明早8点10分" }],
+  ).ok, true);
+});
+
 test("明确时刻的拿药短句自动作为提醒", () => {
   assert.equal(isFutureObligation("8点30拿药", undefined, "08:30", {
     currentDate: "2026-08-18",
@@ -163,12 +181,12 @@ test("今晚十二点允许跨到次日但证据仍须来自原话", () => {
   ).ok, true);
 });
 
-test("没有待办语义的健康记录不能误分为备忘", () => {
+test("时间校验器不再用关键词推翻模型的事项类型判断", () => {
   const result = validateTemporalModelFields(
-    "记录9月2号体重120.7斤",
+    "记录体重120.7斤",
     { currentDate: "2026-09-03", currentTime: "08:00", timeZone: "Asia/Shanghai" },
-    [{ type: "memo", date: "2026-09-02", dateEvidence: "9月2号" }],
+    [{ type: "memo" }],
   );
-  assert.equal(result.ok, false);
-  assert.ok(result.issues.includes("field_0_memo_without_action_evidence"));
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.issues, []);
 });

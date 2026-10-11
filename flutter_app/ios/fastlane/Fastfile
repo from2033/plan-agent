@@ -1,0 +1,118 @@
+ENV["FASTLANE_SKIP_UPDATE_CHECK"] = "1"
+
+require "base64"
+require "open3"
+
+SENTRY_ORG_SLUG = "sniper-0bx"
+SENTRY_PROJECT_SLUG = "flutter"
+SENTRY_KEYCHAIN_SERVICE = "assistant-sentry-auth-token"
+SENTRY_KEYCHAIN_ACCOUNT = "sentry-symbol-upload"
+
+def sentry_cli_path
+  plugin = Gem.loaded_specs.fetch("fastlane-plugin-sentry")
+  File.join(plugin.full_gem_path, "bin/sentry-cli-Darwin-universal")
+end
+
+def sentry_auth_token
+  environment_token = ENV["SENTRY_AUTH_TOKEN"].to_s.strip
+  return environment_token unless environment_token.empty?
+
+  token, _error, status = Open3.capture3(
+    "security",
+    "find-generic-password",
+    "-a", SENTRY_KEYCHAIN_ACCOUNT,
+    "-s", SENTRY_KEYCHAIN_SERVICE,
+    "-w"
+  )
+  token = token.strip
+
+  unless status.success? && !token.empty?
+    UI.user_error!(
+      "Sentry Auth Token not found in SENTRY_AUTH_TOKEN or macOS Keychain"
+    )
+  end
+
+  token
+end
+
+def upload_sentry_dsyms(dsym_path)
+  environment = {
+    "SENTRY_AUTH_TOKEN" => sentry_auth_token,
+    "SENTRY_ORG" => SENTRY_ORG_SLUG,
+    "SENTRY_PROJECT" => SENTRY_PROJECT_SLUG,
+    "SENTRY_PIPELINE" => "fastlane"
+  }
+  output, error, status = Open3.capture3(
+    environment,
+    sentry_cli_path,
+    "debug-files", "upload",
+    "--type", "dsym",
+    "--no-sources",
+    "--wait",
+    dsym_path
+  )
+
+  UI.message(output.strip) unless output.strip.empty?
+  UI.error(error.strip) unless error.strip.empty?
+  UI.user_error!("Failed to upload dSYM files to Sentry") unless status.success?
+end
+
+default_platform(:ios)
+
+platform :ios do
+  desc "Upload dSYM files from the existing iOS archive to Sentry"
+  lane :upload_symbols do
+    flutter_root = File.expand_path("../..", __dir__)
+    dsym_path = File.join(
+      flutter_root,
+      "build/ios/archive/Runner.xcarchive/dSYMs"
+    )
+    UI.user_error!("No archived dSYM files found at #{dsym_path}") unless Dir.exist?(dsym_path)
+    upload_sentry_dsyms(dsym_path)
+  end
+
+  desc "Run tests, build the IPA, and upload it to TestFlight"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+    )
+
+    ios_root = File.expand_path("..", __dir__)
+    flutter_root = File.expand_path("..", ios_root)
+    app_environment = ENV.fetch("APP_ENV", "production")
+    dart_define_values = ["APP_ENV=#{app_environment}"]
+    sentry_dsn = ENV["SENTRY_DSN"]
+    dart_define_values << "SENTRY_DSN=#{sentry_dsn}" unless sentry_dsn.to_s.empty?
+    dart_defines = dart_define_values.map do |value|
+      Base64.strict_encode64(value)
+    end.join(",")
+
+    Dir.chdir(flutter_root) do
+      sh("flutter", "pub", "get")
+      sh("flutter", "test")
+    end
+
+    ipa_path = build_app(
+      workspace: File.join(ios_root, "Runner.xcworkspace"),
+      scheme: "Runner",
+      archive_path: File.join(flutter_root, "build/ios/archive/Runner.xcarchive"),
+      output_directory: File.join(flutter_root, "build/ios/ipa"),
+      output_name: "assistant.ipa",
+      export_options: File.join(ios_root, "ExportOptions.plist"),
+      xcargs: "DART_DEFINES=#{dart_defines}",
+      export_xcargs: '-allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"'
+    )
+
+    upload_sentry_dsyms(
+      File.join(flutter_root, "build/ios/archive/Runner.xcarchive/dSYMs")
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: ipa_path,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end

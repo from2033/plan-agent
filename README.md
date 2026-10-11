@@ -1,13 +1,25 @@
+# Personal Assistant App
 
-  # Personal Assistant App
+Personal Assistant 包含 React/Vite Web 客户端、Node/Express 服务端、Flutter 移动端、macOS AI worker，以及 QQ 群消息集成。
 
-  This is a code bundle for Personal Assistant App. The original project is available at https://www.figma.com/design/SZE0QhRJD4H1qaBT9dQmMw/Personal-Assistant-App.
+## 本地开发
 
-  ## Running the code
+```bash
+npm install
+npm run dev
+```
 
-  Run `npm i` to install the dependencies.
+服务端与 Flutter 端分别位于 `server/` 和 `flutter_app/`。
 
-  Run `npm run dev` to start the development server.
+## 完整检查
+
+提交或发布前运行：
+
+```bash
+npm run check
+```
+
+部署架构与发布约束见 [DEPLOY.md](DEPLOY.md)。
 
 ## Personal Assistant worker
 

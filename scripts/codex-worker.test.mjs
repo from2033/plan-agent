@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   codexFailureHint,
   codexRetryAt,
+  codexModelForJob,
   appendVaultDocumentNote,
   conversationRecordProposal,
   deduplicateEvidenceSources,
@@ -143,6 +144,13 @@ test("knowledge evidence answer maps model source indexes back to source ids", (
   );
 });
 
+test("ingest schema lets the model reserve personal retrieval for personal evidence", () => {
+  const source = fs.readFileSync(new URL("./codex-worker.mjs", import.meta.url), "utf8");
+  assert.match(source, /evidenceMode: \{ type: "string", enum: \["none", "personal"\] \}/);
+  assert.match(source, /authoritativeSystemContext/);
+  assert.match(source, /classified\.result\?\.evidenceMode === "none"/);
+});
+
 test("semantic reranking is generic and prefers original evidence", async () => {
   const sources = [
     { id: "qq-message-chinese", title: "QQ群消息｜四8班｜语文-王老师13800138001", content: "原文：英语作业已发" },
@@ -250,7 +258,7 @@ test("runOllama sends a constrained non-thinking request and parses JSON", async
   assert.equal(requestBody.options.num_predict, 320);
   assert.equal(requestBody.format.type, "object");
   assert.deepEqual(requestBody.format.required, [
-    "kind", "fields", "title", "content", "answer", "sourceIds", "conversationTitle",
+    "kind", "fields", "title", "content", "answer", "researchTopic", "sourceIds", "evidenceMode", "conversationTitle",
   ]);
   assert.deepEqual(JSON.parse(requestBody.messages[1].content), { input: ingestJob.input });
 });
@@ -287,6 +295,7 @@ test("conversation mode defaults greetings to chat instead of records", async (t
             title: "",
             content: "",
             answer: "你好！今天想聊点什么？",
+            researchTopic: "",
             sourceIds: [],
             conversationTitle: "日常问候",
           }),
@@ -330,6 +339,7 @@ test("conversation mode asks before saving inferred long-term information", asyn
             title: "",
             content: "",
             answer: "知道了，之后聊到吃饭时我会注意。这个偏好可能以后会用到，需要我帮你记录为‘不吃香菜’吗？",
+            researchTopic: "",
             sourceIds: [],
             conversationTitle: "饮食偏好",
           }),
@@ -378,6 +388,32 @@ test("所有用户可见内容强制使用 Codex，本地模型只做机械处�
   }
   assert.equal(inferenceProviderForJob({ kind: "knowledge_rerank" }), "ollama");
   assert.equal(inferenceProviderForJob({ kind: "world_discovery" }), "ollama");
+});
+
+test("普通用户输入优先使用 Terra，研究任务保留 Sol", () => {
+  assert.equal(codexModelForJob({ kind: "ingest" }), "gpt-5.6-terra");
+  assert.equal(codexModelForJob({ kind: "knowledge_question" }), "gpt-5.6-terra");
+  assert.equal(codexModelForJob({ kind: "research" }), "gpt-5.6-sol");
+});
+
+test("Terra 验收失败后自动升级 Sol", async () => {
+  const calls = [];
+  const expected = {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-08-19", reminderTime: "15:00", dateEvidence: "明天", timeEvidence: "下午三点" }],
+  };
+  const inference = await runInference(ingestJob, {
+    cloudRunner: async (_job, options) => {
+      calls.push(options.model);
+      if (options.model === "gpt-5.6-terra") {
+        return { ...expected, fields: [{ ...expected.fields[0], date: "2026-08-18" }] };
+      }
+      return expected;
+    },
+  });
+  assert.deepEqual(calls, ["gpt-5.6-terra", "gpt-5.6-sol"]);
+  assert.equal(inference.provider, "codex-sol-fallback");
+  assert.equal(inference.result, expected);
 });
 
 test("only explicit clock ranges are accepted from a local model", () => {
@@ -452,16 +488,26 @@ test("temporal validation accepts tonight at midnight as the following date", ()
   assert.deepEqual(validation, { ok: true, issues: [] });
 });
 
-test("temporal validation rejects a memo classification without action evidence", () => {
+test("temporal validation accepts 明早 as the following date", () => {
   const validation = validateIngestTemporalResult({
-    raw: "记录9月2号体重120.7斤。",
+    raw: "明早8点10分提醒我检查数据。",
+    context: { currentDate: "2026-09-07", currentTime: "18:07", timeZone: "Asia/Shanghai" },
+  }, {
+    kind: "record",
+    fields: [{ type: "memo", date: "2026-09-08", reminderTime: "08:10", dateEvidence: "明早", timeEvidence: "明早8点10分" }],
+  });
+  assert.deepEqual(validation, { ok: true, issues: [] });
+});
+
+test("temporal validation does not override the model's semantic entry type", () => {
+  const validation = validateIngestTemporalResult({
+    raw: "记录体重120.7斤。",
     context: { currentDate: "2026-09-03", currentTime: "08:00", timeZone: "Asia/Shanghai" },
   }, {
     kind: "record",
-    fields: [{ type: "memo", date: "2026-09-02", dateEvidence: "9月2号" }],
+    fields: [{ type: "memo" }],
   });
-  assert.equal(validation.ok, false);
-  assert.ok(validation.issues.includes("field_0_memo_without_action_evidence"));
+  assert.deepEqual(validation, { ok: true, issues: [] });
 });
 
 test("runInference can disable the cloud fallback", async () => {
@@ -705,26 +751,26 @@ test("same-day meeting search ranks topic relevance ahead of archive time", () =
   }
 });
 
-test("explicit family document questions override an incorrect record classification", () => {
+test("document retrieval follows the model classification instead of keyword overrides", () => {
   assert.equal(shouldSearchDocumentsForIngest(
     "帮我总结今日家长会，总结成一二三这样的点，不能遗漏。",
     { kind: "record" },
-  ), true);
+  ), false);
   assert.equal(shouldSearchDocumentsForIngest(
     "请问今天晚上的会议主要内容有哪几点？",
     { kind: "record" },
-  ), true);
+  ), false);
   assert.equal(shouldSearchDocumentsForIngest(
     "明天下午三点提醒我参加家长会",
     { kind: "record" },
   ), false);
 });
 
-test("a follow-up asking to summarize this document always triggers document retrieval", () => {
+test("document follow-ups also follow the model classification", () => {
   assert.equal(shouldSearchDocumentsForIngest(
     "总结下这个资料",
     { kind: "record" },
-  ), true);
+  ), false);
 });
 
 test("a document answer keeps the generated conversation title required by the queue", () => {
