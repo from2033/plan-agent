@@ -7,8 +7,8 @@ const DB_PATH = process.env.DB_PATH || "./data.db";
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL");
 
-export const CODEX_QUEUE_PROTOCOL_VERSION = 13;
-export const CODEX_QUEUE_POLICY_VERSION = "2026-09-05.1";
+export const CODEX_QUEUE_PROTOCOL_VERSION = 14;
+export const CODEX_QUEUE_POLICY_VERSION = "2026-09-07.1";
 
 export type AiJobKind = "ingest" | "correct" | "summary" | "document" | "document_question" | "document_note" | "world_pulse" | "world_discovery" | "research" | "feedback_triage" | "feedback_repair" | "standard_evolution";
 export type AiJobStatus = "QUEUED" | "PROCESSING" | "DEFERRED" | "COMPLETE" | "FAILED";
@@ -133,6 +133,11 @@ const IngestResultSchema = z.discriminatedUnion("kind", [
       "no_sources_found",
       "general_answer",
     ]).optional(),
+    conversationTitle: z.string().min(2).max(30),
+  }),
+  z.object({
+    kind: z.literal("research"),
+    researchTopic: z.string().min(2).max(500),
     conversationTitle: z.string().min(2).max(30),
   }),
 ]);

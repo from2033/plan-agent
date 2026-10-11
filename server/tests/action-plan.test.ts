@@ -5,12 +5,16 @@ import { createPersistentAgentTask, transitionPersistentAgentTask, verifyPersist
 
 const birthdayRequest = "宝宝生日准备安排在中秋，你再去看下南京大厂周边有没有适合的地方";
 
-test("复合生日输入生成日期、待办、研究和反馈四项计划", () => {
+test("复合输入也只建立一个处理动作，语义规划交给模型", () => {
   const plan = buildActionPlan(birthdayRequest, "2026-09-01");
-  assert.deepEqual(plan.actions.map((item) => item.kind), ["resolve_date", "todo", "research", "feedback"]);
-  assert.deepEqual(plan.actions.at(-1)?.dependsOn, ["resolve_date", "todo", "research"]);
-  assert.ok(plan.actions.every((item) => item.required && item.evidence.length > 0));
-  assert.match(plan.actions.find((item) => item.kind === "research")?.instruction || "", /南京大厂/);
+  assert.deepEqual(plan.actions.map((item) => item.kind), ["process"]);
+  assert.equal(plan.actions[0]?.instruction, birthdayRequest);
+});
+
+test("查看已有作业只生成一次输入处理，不创建研究报告", () => {
+  const plan = buildActionPlan("帮我看一下呃，星期五都有哪些作业。", "2026-09-06");
+  assert.deepEqual(plan.actions.map((item) => item.kind), ["process"]);
+  assert.equal(plan.actions[0]?.capability, "input_processing");
 });
 
 test("计划项未全部验收时父任务不能完成", () => {
@@ -46,13 +50,9 @@ test("重新规划保留已完成和执行中的动作，但为失败动作创�
   const userId = `plan-revision-${Date.now()}`;
   const task = createPersistentAgentTask(userId, "input_orchestration", { title: birthdayRequest, raw: birthdayRequest });
   const first = saveActionPlan(userId, task.id, birthdayRequest, "2026-09-01");
-  linkPlanItem(userId, first.planItems[0].id, "date-child", "verified");
-  linkPlanItem(userId, first.planItems[1].id, "todo-child", "verified");
-  linkPlanItem(userId, first.planItems[2].id, "research-child", "failed");
+  linkPlanItem(userId, first.planItems[0].id, "process-child", "failed");
   const second = saveActionPlan(userId, task.id, birthdayRequest, "2026-09-01");
   assert.equal(second.planVersion, 2);
-  assert.equal(second.planItems[0].childTaskId, "date-child");
-  assert.equal(second.planItems[1].childTaskId, "todo-child");
-  assert.equal(second.planItems[2].childTaskId, null);
-  assert.equal(second.planItems[2].status, "planned");
+  assert.equal(second.planItems[0].childTaskId, null);
+  assert.equal(second.planItems[0].status, "planned");
 });

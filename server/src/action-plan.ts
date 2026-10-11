@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { decField, encField } from "./crypto-field.js";
-import { embeddedResearchTopic, researchTopic } from "./intent.js";
 
 const db = new DatabaseSync(process.env.DB_PATH || "./data.db");
 db.exec("PRAGMA busy_timeout = 5000");
@@ -46,49 +45,11 @@ function festivalDate(year: number, month: string, day: number): string | null {
 export const resolveMidAutumnDate = (year: number): string | null => festivalDate(year, "八月", 15);
 
 type PlannedAction = Omit<ActionPlanItem, "id" | "status" | "childTaskId" | "result" | "failure" | "dependsOn"> & { dependsOn?: string[] };
-export function buildActionPlan(raw: string, currentDate: string): { facts: string[]; goals: string[]; actions: PlannedAction[] } {
-  const birthday = /(?:宝宝|孩子|小孩).{0,12}生日/u.test(raw) && /中秋/u.test(raw);
-  const dachang = /(?:看下|看一下|看看|查下|查一下|找下|找一下|了解下|了解一下)/u.test(raw)
-    && /(?:南京)?大厂/u.test(raw) && /(?:周边|附近|场地|餐厅|酒店|适合)/u.test(raw);
-  if (birthday && dachang) {
-    const year = Number(currentDate.slice(0, 4));
-    const midAutumn = resolveMidAutumnDate(year);
-    return {
-      facts: ["宝宝生日计划安排在中秋", "地点范围为南京大厂周边"],
-      goals: ["确认中秋日期", "形成宝宝生日地点方案并反馈"],
-      actions: [{
-        kind: "resolve_date", capability: "date_resolution", title: `确认${year}年中秋日期`,
-        instruction: "将今年中秋转换为公历日期", evidence: "安排在中秋", risk: "none", requiresConfirmation: false, required: true,
-      }, {
-        kind: "todo", capability: "todo", title: "筹备宝宝中秋生日活动",
-        instruction: `建立宝宝生日筹备待办${midAutumn ? `，日期为${midAutumn}` : ""}`, evidence: "宝宝生日准备安排在中秋", risk: "internal", requiresConfirmation: false, required: true, dependsOn: ["resolve_date"],
-      }, {
-        kind: "research", capability: "research", title: "调研南京大厂周边宝宝生日场地",
-        instruction: "查询南京大厂周边中秋期间适合家庭生日聚会的场地，比较位置、环境、适合人数、价格线索和预订注意事项", evidence: "去看下南京大厂周边", risk: "none", requiresConfirmation: false, required: true,
-      }, {
-        kind: "feedback", capability: "feedback", title: "汇总生日安排方案",
-        instruction: "把中秋日期、地点调研结果、优缺点和下一步建议反馈给用户", evidence: "完整输入", risk: "none", requiresConfirmation: false, required: true, dependsOn: ["resolve_date", "todo", "research"],
-      }],
-    };
-  }
-  const directResearch = researchTopic(raw);
-  if (directResearch) return {
-    facts: [`用户明确要求研究：${directResearch}`], goals: [`完成并反馈${directResearch}的研究结果`],
-    actions: [{ kind: "research", capability: "research", title: `研究：${directResearch}`, instruction: directResearch,
-      evidence: raw, risk: "none", requiresConfirmation: false, required: true },
-    { kind: "feedback", capability: "feedback", title: "反馈研究结果", instruction: "汇总研究结论、来源和下一步建议",
-      evidence: raw, risk: "none", requiresConfirmation: false, required: true, dependsOn: ["research"] }],
-  };
-  const embeddedResearch = embeddedResearchTopic(raw);
-  if (embeddedResearch) return {
-    facts: [raw], goals: ["保存原始安排", `完成并反馈${embeddedResearch}的查询结果`],
-    actions: [{ kind: "process", capability: "input_processing", title: "记录原始安排", instruction: raw,
-      evidence: raw, risk: "internal", requiresConfirmation: false, required: true },
-    { kind: "research", capability: "research", title: `调研：${embeddedResearch}`, instruction: embeddedResearch,
-      evidence: embeddedResearch, risk: "none", requiresConfirmation: false, required: true },
-    { kind: "feedback", capability: "feedback", title: "汇总并反馈处理结果", instruction: "汇总记录和调研结果",
-      evidence: raw, risk: "none", requiresConfirmation: false, required: true, dependsOn: ["process", "research"] }],
-  };
+export function buildActionPlan(raw: string, _currentDate: string): { facts: string[]; goals: string[]; actions: PlannedAction[] } {
+  // The action-plan layer deliberately makes no semantic decisions. Codex owns
+  // intent classification and may return an answer, record, reminder, saved
+  // knowledge item, or an explicit research request. This layer only tracks the
+  // single processing operation and its execution state.
   return {
     facts: [raw], goals: ["完整处理用户输入"],
     actions: [{ kind: "process", capability: "input_processing", title: raw.slice(0, 80), instruction: raw, evidence: raw, risk: "none", requiresConfirmation: false, required: true }],
