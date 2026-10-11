@@ -1,0 +1,14 @@
+{
+  "flutter": {
+    "platforms": {
+      "ios": {
+        "default": {
+          "projectId": "assistant-40948",
+          "appId": "1:316343391737:ios:dc8b15fadd5825b36a1928",
+          "fileOutput": "ios/Runner/GoogleService-Info.plist",
+          "uploadDebugSymbols": true
+        }
+      }
+    }
+  }
+}

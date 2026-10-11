@@ -25,6 +25,18 @@ verify_deploy_guards() {
   fi
 }
 
+verify_flutterfire_config() {
+  node -e '
+    const fs = require("node:fs");
+    const path = "flutter_app/firebase.json";
+    const config = JSON.parse(fs.readFileSync(path, "utf8"));
+    const ios = config?.flutter?.platforms?.ios?.default;
+    if (!ios?.projectId || !ios?.appId || ios.fileOutput !== "ios/Runner/GoogleService-Info.plist") {
+      throw new Error(`${path} is missing the required iOS FlutterFire configuration`);
+    }
+  '
+}
+
 cd "$project_root"
 
 run_step "Shell syntax" bash -n \
@@ -37,6 +49,7 @@ run_step "Shell syntax" bash -n \
 run_step "Web build" npm run build
 run_step "Node dependency audit" npm audit
 run_step "Deployment safety guards" verify_deploy_guards
+run_step "FlutterFire configuration" verify_flutterfire_config
 run_step "Worker tests" npm run test:worker
 run_step "Python and QQ integration tests" npm run test:python
 
