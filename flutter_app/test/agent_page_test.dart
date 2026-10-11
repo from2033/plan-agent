@@ -54,8 +54,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('电脑资料投递'), findsOneWidget);
+    expect(find.text('整理三份合同'), findsOneWidget);
     expect(find.text('已完成 3 项资料的归档和联合整理。'), findsOneWidget);
+    await tester.tap(find.text('处理详情'));
+    await tester.pumpAndSettle();
     expect(find.text('全部资料均已完成处理'), findsOneWidget);
     expect(find.text('关联子任务 3 项'), findsOneWidget);
     expect(find.text('合同一.pdf'), findsOneWidget);
@@ -110,6 +112,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.text('处理详情'));
+    await tester.pumpAndSettle();
     expect(find.text('Agent 行动计划'), findsOneWidget);
     expect(find.text('行动覆盖标准 v1.0'), findsOneWidget);
     expect(find.text('确认2026年中秋日期'), findsOneWidget);

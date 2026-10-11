@@ -19,7 +19,10 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({http.Client? httpClient}) : _http = httpClient ?? http.Client();
+  ApiClient({
+    http.Client? httpClient,
+    this.requestTimeout = const Duration(seconds: 15),
+  }) : _http = httpClient ?? http.Client();
 
   static const apiBase = String.fromEnvironment(
     'API_BASE',
@@ -31,6 +34,7 @@ class ApiClient {
   static const _sessionModeKey = 'assistant_session_mode';
   static const _chunkedUploadThreshold = 8 * 1024 * 1024;
   final http.Client _http;
+  final Duration requestTimeout;
   GuestStore? _guestStoreInstance;
   GuestStore get _guestStore => _guestStoreInstance ??= GuestStore();
   StudySession? _studySession;
@@ -308,6 +312,18 @@ class ApiClient {
         .whereType<Map>()
         .map((item) => item.cast<String, dynamic>())
         .toList();
+  }
+
+  Future<void> registerPushToken(String token) async {
+    await _request(
+      'POST',
+      '/push/devices',
+      body: {'token': token, 'platform': 'ios'},
+    );
+  }
+
+  Future<void> unregisterPushToken(String token) async {
+    await _request('DELETE', '/push/devices', body: {'token': token});
   }
 
   Future<List<Map<String, dynamic>>> agentRuns({int limit = 50}) async {
@@ -685,6 +701,16 @@ class ApiClient {
       return {'configured': false, 'state': 'unknown'};
     }
     return await _request('GET', '/qq-sync-status') as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> requestQqLoginEmail() async {
+    if (_isGuest) throw const ApiException('请先登录主账号');
+    return await _request('POST', '/qq-login-email') as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> syncMissedQqMessages() async {
+    if (_isGuest) throw const ApiException('请先登录主账号');
+    return await _request('POST', '/qq-sync-missed') as Map<String, dynamic>;
   }
 
   Future<void> inviteFamilyMember(String account) async {
@@ -1107,13 +1133,15 @@ class ApiClient {
     final uri = Uri.parse('$apiBase$path');
     final encoded = body == null ? null : jsonEncode(body);
     try {
-      return await switch (method) {
+      return await (switch (method) {
         'POST' => _http.post(uri, headers: headers, body: encoded),
         'PUT' => _http.put(uri, headers: headers, body: encoded),
         'PATCH' => _http.patch(uri, headers: headers, body: encoded),
-        'DELETE' => _http.delete(uri, headers: headers),
+        'DELETE' => _http.delete(uri, headers: headers, body: encoded),
         _ => _http.get(uri, headers: headers),
-      };
+      }).timeout(requestTimeout);
+    } on TimeoutException {
+      throw const ApiException('连接服务器超时，请检查网络后重试');
     } catch (_) {
       throw const ApiException('暂时无法连接服务器，请检查网络后重试');
     }

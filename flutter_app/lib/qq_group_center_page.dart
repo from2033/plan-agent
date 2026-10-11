@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
 
 import 'api_client.dart';
+import 'qq_homework.dart';
 
 class QqGroupCenterPage extends StatefulWidget {
   const QqGroupCenterPage({super.key, required this.api});
@@ -19,6 +20,8 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
   DateTime day = DateTime.now();
   bool loading = true;
   bool printing = false;
+  bool sendingLoginQr = false;
+  bool syncingMissed = false;
   String? error;
   int tab = 0;
   String? groupId;
@@ -84,11 +87,14 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
             .where((item) => item['group_id']?.toString() == groupId)
             .toList();
 
+  List<QqHomeworkItem> get visibleHomework =>
+      extractQqHomework(visibleMessages);
+
   Future<void> pickDay() async {
     final value = await showDatePicker(
       context: context,
       initialDate: day,
-      firstDate: DateTime.now().subtract(const Duration(days: 90)),
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now(),
       locale: const Locale('zh', 'CN'),
     );
@@ -119,6 +125,49 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
     }
   }
 
+  Future<void> sendLoginQr() async {
+    if (sendingLoginQr) return;
+    setState(() => sendingLoginQr = true);
+    try {
+      final result = await widget.api.requestQqLoginEmail();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result['message']?.toString() ?? '新的 QQ 登录二维码已发送到通知邮箱'),
+        ),
+      );
+    } catch (value) {
+      if (!mounted) return;
+      final message = value is ApiException ? value.message : '发送登录二维码失败，请稍后重试';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) setState(() => sendingLoginQr = false);
+    }
+  }
+
+  Future<void> syncMissedMessages() async {
+    if (syncingMissed) return;
+    setState(() => syncingMissed = true);
+    try {
+      final result = await widget.api.syncMissedQqMessages();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result['message']?.toString() ?? '遗漏消息同步完成')),
+      );
+      await load();
+    } catch (value) {
+      if (!mounted) return;
+      final message = value is ApiException ? value.message : '同步遗漏消息失败，请稍后重试';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) setState(() => syncingMissed = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -127,6 +176,26 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
         title: const Text('QQ群消息'),
         backgroundColor: const Color(0xfff7f4ef),
         actions: [
+          IconButton(
+            onPressed: syncingMissed ? null : syncMissedMessages,
+            tooltip: syncingMissed ? '正在同步遗漏消息' : '同步遗漏消息',
+            icon: syncingMissed
+                ? const SizedBox.square(
+                    dimension: 19,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.sync_rounded),
+          ),
+          IconButton(
+            onPressed: sendingLoginQr ? null : sendLoginQr,
+            tooltip: '发送新的登录二维码',
+            icon: sendingLoginQr
+                ? const SizedBox.square(
+                    dimension: 19,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.mark_email_unread_outlined),
+          ),
           IconButton(
             onPressed: loading ? null : load,
             tooltip: '刷新',
@@ -140,16 +209,21 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
             child: SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(
+              segments: [
+                const ButtonSegment(
                   value: 0,
                   icon: Icon(Icons.forum_outlined),
                   label: Text('群消息'),
                 ),
-                ButtonSegment(
+                const ButtonSegment(
                   value: 1,
+                  icon: Icon(Icons.assignment_outlined),
+                  label: Text('当日作业'),
+                ),
+                const ButtonSegment(
+                  value: 2,
                   icon: Icon(Icons.print_outlined),
-                  label: Text('今日打印'),
+                  label: Text('打印'),
                 ),
               ],
               selected: {tab},
@@ -161,7 +235,7 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
           Expanded(child: _body()),
         ],
       ),
-      bottomNavigationBar: tab == 1 && visibleDownloads.isNotEmpty
+      bottomNavigationBar: tab == 2 && visibleDownloads.isNotEmpty
           ? SafeArea(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -225,7 +299,83 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
         ),
       );
     }
-    return tab == 0 ? _messageList() : _downloadList();
+    return switch (tab) {
+      0 => _messageList(),
+      1 => _homeworkList(),
+      _ => _downloadList(),
+    };
+  }
+
+  Widget _homeworkList() {
+    final values = visibleHomework;
+    if (values.isEmpty) {
+      return Center(child: Text('$dayKey 还没有识别到作业'));
+    }
+    final grouped = <String, List<QqHomeworkItem>>{};
+    for (final item in values) {
+      grouped.putIfAbsent(item.subject, () => []).add(item);
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 24),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xffffead5),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Text(
+            '$dayKey 共 ${values.length} 项作业 · ${grouped.length} 个学科',
+            style: const TextStyle(
+              color: Color(0xff8f4f0b),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        for (final subject in qqHomeworkSubjects)
+          if (grouped[subject]?.isNotEmpty == true) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(2, 18, 2, 8),
+              child: Text(
+                '$subject  ${grouped[subject]!.length}',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            for (final item in grouped[subject]!)
+              Card(
+                elevation: 0,
+                margin: const EdgeInsets.only(bottom: 9),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.content,
+                        style: const TextStyle(fontSize: 15, height: 1.5),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        [
+                          item.teacher,
+                          item.groupName,
+                          item.time,
+                        ].where((value) => value.isNotEmpty).join('  ·  '),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xff8a8680),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+      ],
+    );
   }
 
   Widget _messageList() {
@@ -296,7 +446,7 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
 
   Widget _downloadList() {
     if (visibleDownloads.isEmpty) {
-      return const Center(child: Text('这一天还没有可打印的群资料'));
+      return Center(child: Text('$dayKey 还没有可打印的群资料'));
     }
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 2, 16, 24),
@@ -320,7 +470,14 @@ class _QqGroupCenterPageState extends State<QqGroupCenterPage> {
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
             subtitle: Text(
-              '${item['group_name'] ?? ''}  ·  ${_fileSize(bytes)}',
+              [
+                    if ((item['subject']?.toString() ?? '').isNotEmpty)
+                      item['subject'],
+                    item['group_name'],
+                    _fileSize(bytes),
+                  ]
+                  .where((value) => value?.toString().isNotEmpty == true)
+                  .join('  ·  '),
             ),
             secondary: const Icon(
               Icons.description_outlined,

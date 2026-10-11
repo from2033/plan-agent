@@ -20,6 +20,9 @@ import 'document_audio_player.dart';
 import 'document_image_preview.dart';
 import 'finance_page.dart';
 import 'feedback_center_page.dart';
+import 'firebase_bootstrap.dart';
+import 'firebase_crash_reporting_service.dart';
+import 'firebase_messaging_service.dart';
 import 'models.dart';
 import 'persistent_meeting_recorder.dart';
 import 'reminder_service.dart';
@@ -76,6 +79,18 @@ Future<void> _startApp() async {
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   await initializeDateFormatting('zh_CN');
   runApp(const AssistantApp());
+  unawaited(_initializeOptionalServices());
+}
+
+Future<void> _initializeOptionalServices() {
+  return runBestEffortInitializers(
+    initializers: [
+      initializeFirebaseMessaging,
+      initializeFirebaseCrashReporting,
+    ],
+    onError: (error, stackTrace) =>
+        Sentry.captureException(error, stackTrace: stackTrace),
+  );
 }
 
 class AssistantApp extends StatefulWidget {
@@ -92,9 +107,28 @@ class _AssistantAppState extends State<AssistantApp> {
   @override
   void initState() {
     super.initState();
-    api.restoreSession().then((value) {
-      if (mounted) setState(() => sessionMode = value);
-    });
+    unawaited(_restoreSession());
+  }
+
+  Future<void> _restoreSession() async {
+    SessionMode restoredMode;
+    try {
+      // This outer deadline also covers platform storage calls, which are not
+      // controlled by the HTTP timeout in ApiClient.
+      restoredMode = await api.restoreSession().timeout(
+        const Duration(seconds: 20),
+      );
+    } catch (_) {
+      // Never leave the launch screen spinning forever. If local session
+      // recovery itself fails, the login screen is the safest usable fallback.
+      restoredMode = SessionMode.signedOut;
+    }
+    if (mounted) setState(() => sessionMode = restoredMode);
+    if (restoredMode == SessionMode.signedIn) {
+      unawaited(
+        activateFirebaseMessaging(registerToken: api.registerPushToken),
+      );
+    }
   }
 
   @override
@@ -125,8 +159,14 @@ class _AssistantAppState extends State<AssistantApp> {
             )
           : LoginScreen(
               api: api,
-              onSignedIn: () =>
-                  setState(() => sessionMode = SessionMode.signedIn),
+              onSignedIn: () {
+                setState(() => sessionMode = SessionMode.signedIn);
+                unawaited(
+                  activateFirebaseMessaging(
+                    registerToken: api.registerPushToken,
+                  ),
+                );
+              },
               onContinueAsGuest: () =>
                   setState(() => sessionMode = SessionMode.guest),
             ),
@@ -611,42 +651,6 @@ class _HomeAnswer {
   final String? runId;
 }
 
-List<Map<String, dynamic>> selectHomeAgentTasks(
-  List<Map<String, dynamic>> tasks, {
-  DateTime? now,
-}) {
-  const activeStages = {
-    'received',
-    'classified',
-    'extracted',
-    'executing',
-    'verifying',
-    'retrying',
-  };
-  const attentionStages = {'awaiting_confirmation', 'awaiting_user'};
-  final recentCutoff = (now ?? DateTime.now()).subtract(
-    const Duration(hours: 24),
-  );
-  bool wasUpdatedRecently(Map<String, dynamic> task) {
-    final updated = DateTime.tryParse(task['updatedAt']?.toString() ?? '');
-    return updated != null && updated.isAfter(recentCutoff);
-  }
-
-  final activeTasks = tasks.where(
-    (task) => activeStages.contains(task['stage']),
-  );
-  final attentionTasks = tasks.where(
-    (task) =>
-        attentionStages.contains(task['stage']) && wasUpdatedRecently(task),
-  );
-  return <Map<String, dynamic>>[
-    ...activeTasks,
-    ...attentionTasks.where(
-      (task) => !activeTasks.any((item) => item['id'] == task['id']),
-    ),
-  ].take(1).toList();
-}
-
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -704,6 +708,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _recoveringMeetingRecordings = false;
   Map<String, dynamic>? worldPulse;
   Map<String, dynamic>? qqSyncStatus;
+  bool qqLoginEmailSending = false;
+  bool qqStatusRefreshing = false;
+  bool qqMissedSyncing = false;
   bool worldPulseLoading = false;
   String? worldPulseError;
   Timer? worldPulseAnalysisTimer;
@@ -966,12 +973,99 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ]);
   }
 
-  Future<void> refreshQqSyncStatus() async {
+  Future<void> refreshQqSyncStatus({bool feedback = false}) async {
+    if (qqStatusRefreshing) return;
+    if (mounted) setState(() => qqStatusRefreshing = true);
+    if (feedback && mounted) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('正在刷新 QQ 同步状态…'),
+            duration: Duration(seconds: 30),
+          ),
+        );
+    }
     try {
       final value = await widget.api.qqSyncStatus();
-      if (mounted) setState(() => qqSyncStatus = value);
-    } catch (_) {
+      if (!mounted) return;
+      setState(() => qqSyncStatus = value);
+      if (feedback) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(const SnackBar(content: Text('QQ 同步状态已刷新')));
+      }
+    } catch (value) {
       // QQ 状态卡不能影响首页其它数据加载。
+      if (mounted && feedback) {
+        final message = value is ApiException ? value.message : '刷新 QQ 同步状态失败';
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(SnackBar(content: Text(message)));
+      }
+    } finally {
+      if (mounted) setState(() => qqStatusRefreshing = false);
+    }
+  }
+
+  Future<void> requestQqLoginEmail() async {
+    if (qqLoginEmailSending) return;
+    setState(() => qqLoginEmailSending = true);
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('正在生成新的 QQ 登录二维码…'),
+          duration: Duration(seconds: 120),
+        ),
+      );
+    try {
+      final result = await widget.api.requestQqLoginEmail();
+      if (!mounted) return;
+      final message = result['message']?.toString() ?? '新的 QQ 登录二维码已发送到通知邮箱';
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text(message)));
+      await refreshQqSyncStatus();
+    } catch (value) {
+      if (!mounted) return;
+      final message = value is ApiException ? value.message : '发送登录二维码失败，请稍后重试';
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) setState(() => qqLoginEmailSending = false);
+    }
+  }
+
+  Future<void> syncMissedQqMessages() async {
+    if (qqMissedSyncing) return;
+    setState(() => qqMissedSyncing = true);
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('正在检查最近 3 天的 QQ 群消息…'),
+          duration: Duration(seconds: 120),
+        ),
+      );
+    try {
+      final result = await widget.api.syncMissedQqMessages();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(content: Text(result['message']?.toString() ?? '遗漏消息同步完成')),
+        );
+      await refreshQqSyncStatus();
+    } catch (value) {
+      if (!mounted) return;
+      final message = value is ApiException ? value.message : '同步遗漏消息失败，请稍后重试';
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) setState(() => qqMissedSyncing = false);
     }
   }
 
@@ -1296,6 +1390,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     if (confirmed != true || !mounted) return;
     await voice.dispose();
+    await deactivateFirebaseMessaging(
+      unregisterToken: widget.api.unregisterPushToken,
+    );
     await widget.api.logout();
     widget.onLogout();
   }
@@ -1541,15 +1638,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => FeedbackCenterPage(api: widget.api),
-      ),
-    );
-    unawaited(_refreshAgentProgress());
-  }
-
-  Future<void> _openAgentTask(String id) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => AgentTaskDetailPage(api: widget.api, taskId: id),
       ),
     );
     unawaited(_refreshAgentProgress());
@@ -1845,43 +1933,85 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         borderRadius: BorderRadius.circular(15),
         border: Border.all(color: color.withValues(alpha: .2)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(
-            online
-                ? Icons.cloud_done_outlined
-                : offline
-                ? Icons.cloud_off_outlined
-                : Icons.sync_problem_outlined,
-            color: color,
-            size: 22,
+          Row(
+            children: [
+              Icon(
+                online
+                    ? Icons.cloud_done_outlined
+                    : offline
+                    ? Icons.cloud_off_outlined
+                    : Icons.sync_problem_outlined,
+                color: color,
+                size: 22,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: color,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '最后检查：${_qqStatusTime(value['lastCheckedAt'])} · '
+                      '最近消息：${_qqStatusTime(value['lastMessageAt'])}',
+                      style: const TextStyle(
+                        color: Color(0xff716b63),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: qqStatusRefreshing ? '正在刷新' : '重新检查',
+                onPressed: qqStatusRefreshing
+                    ? null
+                    : () => refreshQqSyncStatus(feedback: true),
+                icon: qqStatusRefreshing
+                    ? SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: color,
+                        ),
+                      )
+                    : Icon(Icons.refresh_rounded, color: color, size: 20),
+              ),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(color: color, fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  '最后检查：${_qqStatusTime(value['lastCheckedAt'])} · '
-                  '最近消息：${_qqStatusTime(value['lastMessageAt'])}',
-                  style: const TextStyle(
-                    color: Color(0xff716b63),
-                    fontSize: 11,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: qqMissedSyncing ? null : syncMissedQqMessages,
+            icon: qqMissedSyncing
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.sync_rounded, size: 18),
+            label: Text(qqMissedSyncing ? '正在检查遗漏消息…' : '同步遗漏消息'),
+          ),
+          if (!online) ...[
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: qqLoginEmailSending ? null : requestQqLoginEmail,
+              icon: qqLoginEmailSending
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.mark_email_unread_outlined, size: 18),
+              label: Text(qqLoginEmailSending ? '正在生成新二维码…' : '发送新的登录二维码'),
             ),
-          ),
-          IconButton(
-            tooltip: '重新检查',
-            onPressed: refreshQqSyncStatus,
-            icon: Icon(Icons.refresh_rounded, color: color, size: 20),
-          ),
+          ],
         ],
       ),
     );
@@ -2504,123 +2634,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   );
 
   Widget _buildPendingTasks() {
-    // 首页只承担实时进度提示，不承载 Agent 历史。最多保留一条当前状态，
-    // 避免长期失败、已完成任务或多条记录持续挤压首页的主要内容。
-    final visibleAgentTasks = selectHomeAgentTasks(agentTasks);
-    if (pendingTasks.isEmpty && visibleAgentTasks.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    // 首页只显示本次输入的瞬时进度。持久化 Agent 状态和历史统一放到
+    // “处理记录”，避免等待补充或长期任务一直挤占今天的内容。
+    if (pendingTasks.isEmpty) return const SizedBox.shrink();
+    final task = pendingTasks.first;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xffe5ded4)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
         children: [
-          InkWell(
-            onTap: _openAgentHistory,
-            child: const Padding(
-              padding: EdgeInsets.fromLTRB(10, 3, 6, 5),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.auto_awesome_rounded,
-                    size: 17,
-                    color: Color(0xffb45f06),
+          Icon(
+            task.failed
+                ? Icons.error_outline_rounded
+                : Icons.graphic_eq_rounded,
+            size: 19,
+            color: task.failed
+                ? const Color(0xffb42318)
+                : const Color(0xffb45f06),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  task.text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  task.errorMessage ?? task.status,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: task.failed
+                        ? const Color(0xffb42318)
+                        : const Color(0xff8a6a42),
                   ),
-                  SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      'Agent 当前状态',
-                      style: TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  Text(
-                    '全部记录',
-                    style: TextStyle(fontSize: 11, color: Color(0xff8a8680)),
-                  ),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 18,
-                    color: Color(0xff8a8680),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-          for (final task in visibleAgentTasks)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              onTap: () => _openAgentTask(task['id'].toString()),
-              leading: Icon(
-                agentStageIcon(task['stage']?.toString()),
-                size: 20,
-                color: agentStageColor(task['stage']?.toString()),
+          if (task.failed)
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => setState(() => pendingTasks.remove(task)),
+              icon: const Icon(Icons.close_rounded, size: 18),
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: SizedBox(
+                width: 15,
+                height: 15,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              title: Text(
-                task['stage'] == 'awaiting_confirmation'
-                    ? '需要你确认：${(task['input'] as Map?)?['title']?.toString() ?? '下一步操作'}'
-                    : (task['input'] as Map?)?['title']?.toString() ?? '正在处理输入',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                () {
-                  if (task['stage'] == 'awaiting_confirmation') {
-                    final input = task['input'] as Map?;
-                    return input?['details']?.toString().trim().isNotEmpty ==
-                            true
-                        ? input!['details'].toString()
-                        : input?['confirmationReason']?.toString() ??
-                              '点开查看具体内容，再决定是否执行';
-                  }
-                  final planItems = (task['planItems'] as List? ?? const []);
-                  final verified = planItems
-                      .where(
-                        (item) => item is Map && item['status'] == 'verified',
-                      )
-                      .length;
-                  final progress = planItems.isEmpty
-                      ? ''
-                      : ' · 计划 $verified/${planItems.length}';
-                  return '${agentCapabilityLabel(task['capability']?.toString())} · ${agentStageLabel(task['stage']?.toString())}$progress';
-                }(),
-                style: TextStyle(
-                  color: agentStageColor(task['stage']?.toString()),
-                ),
-              ),
-              trailing: const Icon(Icons.chevron_right_rounded, size: 19),
-            ),
-          for (final task in pendingTasks.take(1))
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.graphic_eq_rounded, size: 18),
-              title: Text(
-                task.text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                task.errorMessage ?? task.status,
-                style: TextStyle(
-                  color: task.failed
-                      ? const Color(0xffb42318)
-                      : const Color(0xffb45f06),
-                ),
-              ),
-              trailing: task.failed
-                  ? IconButton(
-                      onPressed: () =>
-                          setState(() => pendingTasks.remove(task)),
-                      icon: const Icon(Icons.close_rounded),
-                    )
-                  : null,
             ),
         ],
       ),
@@ -3344,6 +3420,7 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   List<KnowledgeItem> items = [];
   List<Map<String, dynamic>> documents = [];
   List<Map<String, dynamic>> assistantActions = [];
+  final Set<String> locallyDismissedActionIds = <String>{};
   bool loading = true;
   bool uploading = false;
   bool meetingRecording = false;
@@ -3481,11 +3558,24 @@ class _KnowledgePaneState extends State<KnowledgePane> {
   }
 
   Future<void> _dismissAction(Map<String, dynamic> action) async {
+    final id = action['id'] as String;
+    if (locallyDismissedActionIds.contains(id)) return;
+    // Hide immediately. Keep the local tombstone so an overlapping load()
+    // cannot briefly bring the action back with an older server response.
+    setState(() => locallyDismissedActionIds.add(id));
     try {
-      await widget.api.dismissAssistantAction(action['id'] as String);
-      await load();
+      await widget.api.dismissAssistantAction(id);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(const SnackBar(content: Text('已忽略后续动作')));
+      }
     } catch (e) {
-      if (mounted) setState(() => error = e.toString());
+      if (!mounted) return;
+      setState(() => locallyDismissedActionIds.remove(id));
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text('忽略失败：$e')));
     }
   }
 
@@ -4411,7 +4501,11 @@ class _KnowledgePaneState extends State<KnowledgePane> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                if (assistantActions.any((a) => a['status'] == 'PENDING')) ...[
+                if (assistantActions.any(
+                  (a) =>
+                      a['status'] == 'PENDING' &&
+                      !locallyDismissedActionIds.contains(a['id']),
+                )) ...[
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
@@ -4433,7 +4527,9 @@ class _KnowledgePaneState extends State<KnowledgePane> {
                         ),
                         const SizedBox(height: 10),
                         for (final action in assistantActions.where(
-                          (a) => a['status'] == 'PENDING',
+                          (a) =>
+                              a['status'] == 'PENDING' &&
+                              !locallyDismissedActionIds.contains(a['id']),
                         ))
                           Padding(
                             padding: const EdgeInsets.only(bottom: 8),
@@ -5019,6 +5115,29 @@ class EntryCard extends StatelessWidget {
   final bool reminderScheduled;
   final VoidCallback? onToggleDone;
 
+  Widget _metaPill(IconData icon, String text, {Color? color}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    decoration: BoxDecoration(
+      color: (color ?? const Color(0xff6b665f)).withValues(alpha: .08),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: color ?? const Color(0xff77716a)),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: color ?? const Color(0xff6f6a63),
+          ),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final amount = entry.amount == null
@@ -5030,29 +5149,47 @@ class EntryCard extends StatelessWidget {
         : reminderScheduled
         ? const Color(0xff16a34a)
         : const Color(0xffdc2626);
+    final dateText = entry.scheduledDate == null
+        ? null
+        : DateFormat(
+            'M月d日',
+            'zh_CN',
+          ).format(DateTime.parse(entry.scheduledDate!));
     return Container(
-      padding: const EdgeInsets.all(15),
+      padding: const EdgeInsets.fromLTRB(13, 13, 8, 13),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(15),
         border: Border.all(color: Colors.black.withValues(alpha: .06)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: const Color(0xfff2eee7),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: const Icon(
-              Icons.auto_awesome_rounded,
-              size: 18,
-              color: Color(0xffd97706),
+          Semantics(
+            button: onToggleDone != null,
+            label: entry.done ? '取消完成' : '标记完成',
+            child: InkWell(
+              onTap: onToggleDone,
+              customBorder: const CircleBorder(),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(
+                  onToggleDone == null
+                      ? Icons.auto_awesome_rounded
+                      : entry.done
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  size: 25,
+                  color: entry.done
+                      ? const Color(0xff16a34a)
+                      : onToggleDone == null
+                      ? const Color(0xffd97706)
+                      : const Color(0xffa49d93),
+                ),
+              ),
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 9),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -5061,6 +5198,7 @@ class EntryCard extends StatelessWidget {
                   entry.displayDescription,
                   style: TextStyle(
                     fontSize: 15,
+                    height: 1.45,
                     fontWeight: FontWeight.w600,
                     color: entry.done
                         ? const Color(0xff8a8680)
@@ -5070,128 +5208,77 @@ class EntryCard extends StatelessWidget {
                         : TextDecoration.none,
                   ),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  [
-                    entry.category,
-                    if (entry.time.isNotEmpty) entry.time,
-                  ].join('  '),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xff8a8680),
-                  ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _metaPill(Icons.folder_outlined, entry.category),
+                    if (entry.time.isNotEmpty)
+                      _metaPill(Icons.schedule_rounded, entry.time),
+                    if (dateText != null && entry.reminderAt == null)
+                      _metaPill(Icons.calendar_today_rounded, dateText),
+                    if (entry.hasTimeRange)
+                      _metaPill(
+                        Icons.timelapse_rounded,
+                        '${entry.timeStart} → ${entry.timeEnd}',
+                        color: const Color(0xffb45f06),
+                      ),
+                  ],
                 ),
-                if (entry.hasTimeRange) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    '${entry.timeStart} → ${entry.timeEnd}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xffd97706),
-                    ),
-                  ),
-                ],
-                if (entry.scheduledDate != null &&
-                    entry.reminderAt == null) ...[
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.calendar_today_rounded,
-                        size: 13,
-                        color: Color(0xff8a8680),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        DateFormat(
-                          'M月d日',
-                          'zh_CN',
-                        ).format(DateTime.parse(entry.scheduledDate!)),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xff8a8680),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
                 if (entry.reminderAt != null) ...[
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(
-                        reminderScheduled
-                            ? Icons.alarm_on_rounded
-                            : Icons.alarm_off_rounded,
-                        size: 13,
-                        color: reminderColor,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        reminderExpired
-                            ? '${DateFormat('M月d日 HH:mm', 'zh_CN').format(entry.reminderAt!)} · 时间已过'
-                            : reminderScheduled
-                            ? '${DateFormat('M月d日 HH:mm', 'zh_CN').format(entry.reminderAt!)} · 系统闹钟已安排'
-                            : '${DateFormat('M月d日 HH:mm', 'zh_CN').format(entry.reminderAt!)} · 闹钟未创建',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: reminderColor,
-                        ),
-                      ),
-                    ],
+                  const SizedBox(height: 7),
+                  _metaPill(
+                    reminderScheduled
+                        ? Icons.alarm_on_rounded
+                        : Icons.alarm_off_rounded,
+                    reminderExpired
+                        ? '${DateFormat('M月d日 HH:mm', 'zh_CN').format(entry.reminderAt!)} · 时间已过'
+                        : reminderScheduled
+                        ? '${DateFormat('M月d日 HH:mm', 'zh_CN').format(entry.reminderAt!)} · 闹钟已安排'
+                        : '${DateFormat('M月d日 HH:mm', 'zh_CN').format(entry.reminderAt!)} · 闹钟未创建',
+                    color: reminderColor,
                   ),
                 ],
               ],
             ),
           ),
+          const SizedBox(width: 4),
           Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               if (amount != null)
-                Text(
-                  amount,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xffd97706),
+                Padding(
+                  padding: const EdgeInsets.only(top: 3, right: 7, bottom: 3),
+                  child: Text(
+                    amount,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xffd97706),
+                    ),
                   ),
                 ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (onToggleDone != null)
-                    IconButton(
-                      onPressed: onToggleDone,
-                      tooltip: entry.done ? '取消完成' : '标记完成',
-                      constraints: const BoxConstraints.tightFor(
-                        width: 32,
-                        height: 32,
-                      ),
-                      padding: EdgeInsets.zero,
-                      icon: Icon(
-                        entry.done
-                            ? Icons.check_circle_rounded
-                            : Icons.check_circle_outline_rounded,
-                        size: 19,
-                        color: entry.done
-                            ? const Color(0xff16a34a)
-                            : const Color(0xffaaa59c),
-                      ),
-                    ),
-                  IconButton(
-                    onPressed: onDelete,
-                    tooltip: '删除记录',
-                    constraints: const BoxConstraints.tightFor(
-                      width: 32,
-                      height: 32,
-                    ),
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(
-                      Icons.delete_outline_rounded,
-                      size: 19,
-                      color: Color(0xffaaa59c),
+              PopupMenuButton<String>(
+                tooltip: '更多操作',
+                padding: EdgeInsets.zero,
+                icon: const Icon(
+                  Icons.more_horiz_rounded,
+                  size: 21,
+                  color: Color(0xff8a8680),
+                ),
+                onSelected: (value) {
+                  if (value == 'delete') onDelete();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline_rounded, size: 19),
+                        SizedBox(width: 10),
+                        Text('删除'),
+                      ],
                     ),
                   ),
                 ],

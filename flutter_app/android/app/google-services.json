@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "316343391737",
+    "project_id": "assistant-40948",
+    "storage_bucket": "assistant-40948.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:316343391737:android:c60ddcee910e48246a1928",
+        "android_client_info": {
+          "package_name": "com.from2033.assistant"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDXvY0VoS1v1qm9Jmio7Qv6kP82lGJhCB8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
